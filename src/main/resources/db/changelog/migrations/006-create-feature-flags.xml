@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="006-create-feature-flags" author="dev">
+        <createTable tableName="feature_flags">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="project_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_feature_flags_project"
+                             references="projects(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="name" type="VARCHAR(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="key" type="VARCHAR(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="description" type="TEXT"/>
+            <column name="value_type" type="VARCHAR(20)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="archived" type="BOOLEAN" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="feature_flags"
+                             columnNames="project_id, key"
+                             constraintName="uq_feature_flags_project_key"/>
+        <sql>ALTER TABLE feature_flags ADD CONSTRAINT chk_feature_flag_value_type
+            CHECK (value_type IN ('BOOLEAN', 'STRING', 'INTEGER', 'JSON'))</sql>
+        <rollback>
+            <dropTable tableName="feature_flags"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

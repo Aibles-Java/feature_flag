@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="007-create-flag-environment-states" author="dev">
+        <createTable tableName="flag_environment_states">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="feature_flag_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_flag_states_feature_flag"
+                             references="feature_flags(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="environment_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_flag_states_environment"
+                             references="environments(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="enabled" type="BOOLEAN" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="value" type="TEXT"/>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="flag_environment_states"
+                             columnNames="feature_flag_id, environment_id"
+                             constraintName="uq_flag_states_flag_env"/>
+        <rollback>
+            <dropTable tableName="flag_environment_states"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

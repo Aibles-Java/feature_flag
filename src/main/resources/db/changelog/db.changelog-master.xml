@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <include file="db/changelog/migrations/001-create-users.xml"/>
+    <include file="db/changelog/migrations/002-create-organizations.xml"/>
+    <include file="db/changelog/migrations/003-create-organization-members.xml"/>
+    <include file="db/changelog/migrations/004-create-projects.xml"/>
+    <include file="db/changelog/migrations/005-create-environments.xml"/>
+    <include file="db/changelog/migrations/006-create-feature-flags.xml"/>
+    <include file="db/changelog/migrations/007-create-flag-environment-states.xml"/>
+
+</databaseChangeLog>
