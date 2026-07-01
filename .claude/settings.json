@@ -27,6 +27,12 @@
         "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/load-memory.sh\""}]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-push-memory-gate.sh\" claude"}]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|Bash",

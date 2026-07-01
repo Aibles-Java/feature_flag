@@ -157,6 +157,8 @@ DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`)
 - **Code review:** Run the code-reviewer agent after every significant change. Address all CRITICAL and HIGH findings.
 - **Security review:** Before committing to `security/`, JWT config, `db/changelog/migrations/`, or `ApiKeyGenerator`, run a security review.
 
+**Working a GitHub issue:** follow the `issue-workflow` skill — `.claude/scripts/issue-board.sh start <issue#>` assigns it and moves the Digital banking board card to *In progress*; after opening the PR, `issue-board.sh ready <issue#>` moves it to *Ready For Testing*. A push is **blocked** by the memory gate (`.claude/hooks/pre-push-memory-gate.sh`) if its commits touch code but not `.claude/memory/` — run `/save-memory` first so memory ships with the work (override: `SKIP_MEMORY_CHECK=1 git push`). Enable the git-level backstop once per clone with `git config core.hooksPath .githooks`.
+
 ---
 
 ## Harness config

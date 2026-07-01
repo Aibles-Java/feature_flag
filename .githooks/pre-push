@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# git pre-push backstop — enforces the save-memory gate even for plain `git push`
+# outside Claude Code. Enable in this repo with:
+#     git config core.hooksPath .githooks
+# Bypass a single push with:  SKIP_MEMORY_CHECK=1 git push …
+exec bash "$(git rev-parse --show-toplevel)/.claude/hooks/pre-push-memory-gate.sh" git
