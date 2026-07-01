@@ -9,6 +9,7 @@ import java.util.UUID;
 
 public interface FeatureFlagRepository extends JpaRepository<FeatureFlag, UUID> {
     List<FeatureFlag> findAllByProjectIdAndArchivedFalse(UUID projectId);
+    List<FeatureFlag> findAllByProjectIdAndArchivedTrue(UUID projectId);
     Optional<FeatureFlag> findByProjectIdAndKey(UUID projectId, String key);
     boolean existsByProjectIdAndKey(UUID projectId, String key);
 }

@@ -15,6 +15,8 @@ public interface FeatureFlagService {
     FeatureFlagResponse get(UUID id);
     FeatureFlagResponse update(UUID id, UpdateFeatureFlagRequest request);
     void archive(UUID id);
+    void unarchive(UUID id);
+    List<FeatureFlagResponse> listArchivedByProject(UUID projectId);
     FlagStateResponse getState(UUID flagId, UUID environmentId);
     FlagStateResponse updateState(UUID flagId, UUID environmentId, UpdateFlagStateRequest request);
 }

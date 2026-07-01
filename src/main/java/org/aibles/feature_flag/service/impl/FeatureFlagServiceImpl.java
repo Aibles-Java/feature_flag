@@ -105,6 +105,23 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     }
 
     @Override
+    @Transactional
+    public void unarchive(UUID id) {
+        FeatureFlag flag = findById(id);
+        permissionService.requireRoleForProject(flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+        flag.setArchived(false);
+        featureFlagRepository.save(flag);
+    }
+
+    @Override
+    public List<FeatureFlagResponse> listArchivedByProject(UUID projectId) {
+        permissionService.requireRoleForProject(projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+        return featureFlagRepository.findAllByProjectIdAndArchivedTrue(projectId).stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Override
     public FlagStateResponse getState(UUID flagId, UUID environmentId) {
         FeatureFlag flag = findById(flagId);
         permissionService.requireRoleForProject(flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);

@@ -49,6 +49,17 @@ public class FeatureFlagController {
         featureFlagService.archive(flagId);
     }
 
+    @PostMapping("/{flagId}/unarchive")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unarchive(@PathVariable UUID flagId) {
+        featureFlagService.unarchive(flagId);
+    }
+
+    @GetMapping("/archived")
+    public List<FeatureFlagResponse> listArchived(@RequestParam UUID projectId) {
+        return featureFlagService.listArchivedByProject(projectId);
+    }
+
     @GetMapping("/{flagId}/environments/{envId}")
     public FlagStateResponse getState(@PathVariable UUID flagId, @PathVariable UUID envId) {
         return featureFlagService.getState(flagId, envId);
