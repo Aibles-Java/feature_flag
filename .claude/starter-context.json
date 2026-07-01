@@ -1,0 +1,75 @@
+{
+  "version": "1.4",
+  "tier": "full",
+  "stack": {
+    "language": "Java 21",
+    "framework": "Spring Boot 4.1.0",
+    "build_tool": "Maven",
+    "test_framework": "JUnit 5 (spring-boot-starter-test + H2)",
+    "package_manager": "Maven",
+    "detected_tools": ["liquibase", "lombok", "mapstruct", "springdoc-openapi", "jjwt"]
+  },
+  "project": {
+    "name": "feature_flag",
+    "type": "api",
+    "team_size": 2,
+    "stage": "active"
+  },
+  "architecture": {
+    "style": "modular-monolith",
+    "key_layers": [
+      { "name": "Controller", "dir": "src/main/java/org/aibles/feature_flag/controller/", "responsibility": "HTTP handlers, split into admin/ auth/ sdk/" },
+      { "name": "Service", "dir": "src/main/java/org/aibles/feature_flag/service/", "responsibility": "Business logic (interfaces + impl/)" },
+      { "name": "Repository", "dir": "src/main/java/org/aibles/feature_flag/repository/", "responsibility": "Spring Data JPA repositories" },
+      { "name": "Domain", "dir": "src/main/java/org/aibles/feature_flag/domain/", "responsibility": "JPA entities + enums" },
+      { "name": "Security", "dir": "src/main/java/org/aibles/feature_flag/security/", "responsibility": "Two filter chains: JWT admin auth + API-key SDK auth" },
+      { "name": "DTO", "dir": "src/main/java/org/aibles/feature_flag/dto/", "responsibility": "request/ and response/ payloads" }
+    ],
+    "entry_points": [
+      "src/main/java/org/aibles/feature_flag/ (Spring Boot main application class)",
+      "controller/admin/ — JWT-secured Admin API",
+      "controller/sdk/ — API-key-secured SDK evaluation API"
+    ],
+    "external_deps": [
+      { "service": "PostgreSQL", "purpose": "Primary datastore, schema owned by Liquibase", "env_var": "spring.datasource.url" }
+    ],
+    "gotchas": [
+      "FeatureFlag.key is immutable — set at creation, never updated; FeatureFlagServiceImpl.update() intentionally ignores it",
+      "FlagEnvironmentState is auto-created per environment on FeatureFlag creation — never query flags without joining this table",
+      "Two separate SecurityFilterChain beans: SDK chain (order=1, X-Environment-Key header) and Admin chain (order=2, JWT Bearer) — order matters",
+      "PermissionService (not controllers) enforces OrganizationMember.role checks before mutations"
+    ],
+    "build_order": [],
+    "test_isolation": ["Uses H2 for tests; PostgreSQL via docker-compose for local/integration runs"],
+    "sensitive_areas": [
+      "security/ and JWT config — two-filter-chain auth design",
+      "src/main/resources/db/changelog/migrations/ — never modify an already-run changeset, always add a new one",
+      "ApiKeyGenerator / API key rotation endpoint (SecureRandom-based)"
+    ]
+  },
+  "conventions": {
+    "formatter": "none — no linter/formatter detected, follow existing code style by convention",
+    "branch_strategy": "gitflow",
+    "commit_format": "conventional",
+    "coverage_target": "80%",
+    "workflow_gates": ["plan-before-code", "code-review", "security-review"]
+  },
+  "permissions": {
+    "preset": "java",
+    "disallowed_tools": [],
+    "readonly_paths": []
+  },
+  "hooks_selected": ["observability"],
+  "mcp_selected": [],
+  "agents_selected": ["drift-monitor"],
+  "skills_selected": ["git-workflow"],
+  "stack_plugins_selected": ["shipwithai-java-backend-toolkit"],
+  "ssot": {
+    "adr": true,
+    "codemaps": true
+  },
+  "observability": {
+    "enabled": true
+  },
+  "collected_at": "2026-07-01T00:00:00Z"
+}
