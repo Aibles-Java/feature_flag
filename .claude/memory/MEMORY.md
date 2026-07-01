@@ -5,6 +5,7 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [Shared board → scope by repo](conventions/shared-board-repo-scoping.md) — issue #12: the "Digital banking" board is multi-repo, so `issue-board.sh` must match cards by `.content.repository` + number (number alone moved another repo's card); pass `--limit 200`
 - [Issue-workflow: board status + memory gate](decisions/0005-issue-workflow-board-and-memory-gate.md) — issue #8: `issue-board.sh` assign/status on Digital banking board + pre-push gate that blocks code pushes lacking `.claude/memory/` changes; `gh` needs `project` scope
 - [JaCoCo coverage ratchet + CI gate](decisions/0004-jacoco-coverage-ratchet-and-ci.md) — issue #3: JaCoCo on `verify` + CI, threshold starts at 0.00 ratchet (not 80%) since coverage is ~0%
 - [Stop-hook nudge needs commit tracking](conventions/stop-hook-nudge-needs-commit-tracking.md) — dirty-tree-only check went silent for commit-before-stop sessions; also gitignore hook state files

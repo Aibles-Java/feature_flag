@@ -74,6 +74,16 @@ The card moves to **Ready For Testing**, signalling the work is up for review/QA
 `Todo` · `In progress` · `Ready For Testing` · `Done` — the script resolves the
 field/option IDs at runtime, so refer to statuses by these names.
 
+## Shared, multi-repo board (important)
+
+The "Digital banking" board (project #3) is **org-wide** and holds cards from several
+repos, so an issue *number* is not unique across the board — e.g. `feature_flag#4` and
+`banking-knowledge-base#4` coexist. `issue-board.sh` disambiguates by filtering every
+card lookup on `.content.repository == "Aibles-Java/feature_flag"`; it only ever touches
+this repo's cards. If you mutate the board by hand (raw `gh project ...`), you **must**
+apply the same repo filter — a bare `.content.number==N` match can move another team's
+card. (Regression once did exactly this; see issue #12.)
+
 ## Boundaries
 
 - Don't move a card to **Ready For Testing** before the PR actually opens.
