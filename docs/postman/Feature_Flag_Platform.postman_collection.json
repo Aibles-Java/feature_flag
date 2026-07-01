@@ -1,0 +1,1549 @@
+{
+  "info": {
+    "name": "Feature Flag Platform — Full Flow",
+    "description": "Complete test collection covering every endpoint and scenario. Run folders in order: 01 → 02 → ... → 09. Variables are auto-captured via test scripts so you can run sequentially without manual copy-paste.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",        "value": "http://localhost:8080",  "type": "string" },
+    { "key": "ownerToken",     "value": "",  "type": "string" },
+    { "key": "adminToken",     "value": "",  "type": "string" },
+    { "key": "viewerToken",    "value": "",  "type": "string" },
+    { "key": "ownerUserId",    "value": "",  "type": "string" },
+    { "key": "adminUserId",    "value": "",  "type": "string" },
+    { "key": "viewerUserId",   "value": "",  "type": "string" },
+    { "key": "orgId",          "value": "",  "type": "string" },
+    { "key": "projectId",      "value": "",  "type": "string" },
+    { "key": "prodEnvId",      "value": "",  "type": "string" },
+    { "key": "prodApiKey",     "value": "",  "type": "string" },
+    { "key": "stagingEnvId",   "value": "",  "type": "string" },
+    { "key": "stagingApiKey",  "value": "",  "type": "string" },
+    { "key": "boolFlagId",     "value": "",  "type": "string" },
+    { "key": "strFlagId",      "value": "",  "type": "string" },
+    { "key": "intFlagId",      "value": "",  "type": "string" },
+    { "key": "jsonFlagId",     "value": "",  "type": "string" }
+  ],
+  "item": [
+
+    {
+      "name": "01 — Auth",
+      "description": "Register 3 users (Owner, Admin, Viewer) then login all of them. Tokens and userIds are auto-saved to collection variables.",
+      "item": [
+
+        {
+          "name": "01-01 Register Owner",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/register", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","register"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"owner@example.com\",\n  \"password\": \"password123\",\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Owner\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.test('Has token', () => pm.expect(body.token).to.be.a('string'));",
+              "pm.collectionVariables.set('ownerToken', body.token);",
+              "pm.collectionVariables.set('ownerUserId', body.userId);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "01-02 Register Admin",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/register", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","register"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"password123\",\n  \"firstName\": \"Bob\",\n  \"lastName\": \"Admin\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('adminToken', body.token);",
+              "pm.collectionVariables.set('adminUserId', body.userId);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "01-03 Register Viewer",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/register", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","register"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"viewer@example.com\",\n  \"password\": \"password123\",\n  \"firstName\": \"Carol\",\n  \"lastName\": \"Viewer\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('viewerToken', body.token);",
+              "pm.collectionVariables.set('viewerUserId', body.userId);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "01-04 Login Owner (refresh token)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","login"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"owner@example.com\",\n  \"password\": \"password123\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('token type is Bearer', () => pm.expect(body.type).to.eql('Bearer'));",
+              "pm.collectionVariables.set('ownerToken', body.token);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Register — invalid email",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/register", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","register"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"not-an-email\",\n  \"password\": \"password123\",\n  \"firstName\": \"Bad\",\n  \"lastName\": \"User\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 400', () => pm.response.to.have.status(400));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Register — password too short",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/register", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","register"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"short\",\n  \"firstName\": \"Test\",\n  \"lastName\": \"User\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 400', () => pm.response.to.have.status(400));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Register — duplicate email",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/register", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","register"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"owner@example.com\",\n  \"password\": \"password123\",\n  \"firstName\": \"Dup\",\n  \"lastName\": \"User\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 409', () => pm.response.to.have.status(409));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Login — wrong password",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","login"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"owner@example.com\",\n  \"password\": \"wrongpassword\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 401 or 403', () => pm.expect(pm.response.code).to.be.oneOf([401,403]));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Admin endpoint without JWT",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations"] }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 401 or 403', () => pm.expect(pm.response.code).to.be.oneOf([401,403]));"
+            ]}
+          }]
+        }
+
+      ]
+    },
+
+    {
+      "name": "02 — Organizations",
+      "description": "Full CRUD for organizations. Owner is auto-added as OWNER on creation.",
+      "item": [
+
+        {
+          "name": "02-01 Create Organization",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Corp\",\n  \"slug\": \"acme-corp\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.test('Has id', () => pm.expect(body.id).to.be.a('string'));",
+              "pm.test('Slug matches', () => pm.expect(body.slug).to.eql('acme-corp'));",
+              "pm.collectionVariables.set('orgId', body.id);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "02-02 List My Organizations",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+              "pm.test('Contains created org', () => {",
+              "  const ids = pm.response.json().map(o => o.id);",
+              "  pm.expect(ids).to.include(pm.collectionVariables.get('orgId'));",
+              "});"
+            ]}
+          }]
+        },
+
+        {
+          "name": "02-03 Get Organization by ID",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Name is Acme Corp', () => pm.expect(pm.response.json().name).to.eql('Acme Corp'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "02-04 Update Organization",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Corporation\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Name updated', () => pm.expect(pm.response.json().name).to.eql('Acme Corporation'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Create Organization — duplicate slug",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Another Corp\",\n  \"slug\": \"acme-corp\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 409', () => pm.response.to.have.status(409));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Create Organization — invalid slug (uppercase)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Bad Slug\",\n  \"slug\": \"Bad_Slug\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 400', () => pm.response.to.have.status(400));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Get Org — not found",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/00000000-0000-0000-0000-000000000000", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","00000000-0000-0000-0000-000000000000"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 404', () => pm.response.to.have.status(404));"
+            ]}
+          }]
+        }
+
+      ]
+    },
+
+    {
+      "name": "03 — Members",
+      "description": "Invite Admin and Viewer users, list members, test permission restrictions, remove Viewer.",
+      "item": [
+
+        {
+          "name": "03-01 List Members (only Owner so far)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}/members", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}","members"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const members = pm.response.json();",
+              "pm.test('1 member (owner)', () => pm.expect(members).to.have.lengthOf(1));",
+              "pm.test('Member is OWNER', () => pm.expect(members[0].role).to.eql('OWNER'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "03-02 Invite Admin User",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}/members", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}","members"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{adminUserId}}\",\n  \"role\": \"ADMIN\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "pm.test('Role is ADMIN', () => pm.expect(pm.response.json().role).to.eql('ADMIN'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "03-03 Invite Viewer User",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}/members", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}","members"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{viewerUserId}}\",\n  \"role\": \"VIEWER\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "pm.test('Role is VIEWER', () => pm.expect(pm.response.json().role).to.eql('VIEWER'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "03-04 List Members (3 total)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}/members", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}","members"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('3 members', () => pm.expect(pm.response.json()).to.have.lengthOf(3));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Admin tries to invite another OWNER",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}/members", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}","members"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{viewerUserId}}\",\n  \"role\": \"OWNER\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 403', () => pm.response.to.have.status(403));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "03-05 Remove Viewer from Org",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}/members/{{viewerUserId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}","members","{{viewerUserId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 204', () => pm.response.to.have.status(204));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Remove last OWNER (should fail)",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}/members/{{ownerUserId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}","members","{{ownerUserId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 4xx — cannot remove last owner', () => pm.expect(pm.response.code).to.be.within(400,499));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "03-06 Re-invite Viewer (for later tests)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}/members", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}","members"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{viewerUserId}}\",\n  \"role\": \"VIEWER\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));"
+            ]}
+          }]
+        }
+
+      ]
+    },
+
+    {
+      "name": "04 — Projects",
+      "description": "CRUD for projects under the organization.",
+      "item": [
+
+        {
+          "name": "04-01 Create Project",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/projects", "host": ["{{baseUrl}}"], "path": ["api","v1","projects"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organisationId\": \"{{orgId}}\",\n  \"name\": \"Web App\",\n  \"description\": \"Main web application project\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.test('Name matches', () => pm.expect(body.name).to.eql('Web App'));",
+              "pm.collectionVariables.set('projectId', body.id);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "04-02 List Projects by Organization",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects?organisationId={{orgId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","projects"],
+              "query": [{ "key": "organisationId", "value": "{{orgId}}" }]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+              "pm.test('Contains project', () => {",
+              "  const ids = pm.response.json().map(p => p.id);",
+              "  pm.expect(ids).to.include(pm.collectionVariables.get('projectId'));",
+              "});"
+            ]}
+          }]
+        },
+
+        {
+          "name": "04-03 Get Project by ID",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","projects","{{projectId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Name is Web App', () => pm.expect(pm.response.json().name).to.eql('Web App'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "04-04 Update Project",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","projects","{{projectId}}"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Web App v2\",\n  \"description\": \"Updated description\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Name updated', () => pm.expect(pm.response.json().name).to.eql('Web App v2'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Viewer tries to create Project",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/projects", "host": ["{{baseUrl}}"], "path": ["api","v1","projects"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{viewerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organisationId\": \"{{orgId}}\",\n  \"name\": \"Unauthorized Project\",\n  \"description\": \"Should fail\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 403', () => pm.response.to.have.status(403));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Duplicate project name in same org",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/projects", "host": ["{{baseUrl}}"], "path": ["api","v1","projects"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organisationId\": \"{{orgId}}\",\n  \"name\": \"Web App v2\",\n  \"description\": \"Dup\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 409', () => pm.response.to.have.status(409));"
+            ]}
+          }]
+        }
+
+      ]
+    },
+
+    {
+      "name": "05 — Environments",
+      "description": "Create Production and Staging environments. API keys are auto-captured.",
+      "item": [
+
+        {
+          "name": "05-01 Create Production Environment",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments", "host": ["{{baseUrl}}"], "path": ["api","v1","environments"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"name\": \"Production\",\n  \"description\": \"Live production environment\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.test('Has apiKey (64 chars)', () => pm.expect(body.apiKey).to.have.lengthOf(64));",
+              "pm.collectionVariables.set('prodEnvId', body.id);",
+              "pm.collectionVariables.set('prodApiKey', body.apiKey);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "05-02 Create Staging Environment",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments", "host": ["{{baseUrl}}"], "path": ["api","v1","environments"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"name\": \"Staging\",\n  \"description\": \"Pre-production staging environment\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('stagingEnvId', body.id);",
+              "pm.collectionVariables.set('stagingApiKey', body.apiKey);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "05-03 List Environments by Project",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/environments?projectId={{projectId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","environments"],
+              "query": [{ "key": "projectId", "value": "{{projectId}}" }]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('2 environments', () => pm.expect(pm.response.json()).to.have.lengthOf(2));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "05-04 Get Environment by ID",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{prodEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{prodEnvId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Name is Production', () => pm.expect(pm.response.json().name).to.eql('Production'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "05-05 Update Environment",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{stagingEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{stagingEnvId}}"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Staging\",\n  \"description\": \"QA + Pre-production environment\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Description updated', () => pm.expect(pm.response.json().description).to.include('QA'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "05-06 Rotate API Key",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{stagingEnvId}}/api-key/rotate", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{stagingEnvId}}","api-key","rotate"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('New key is 64 chars', () => pm.expect(body.apiKey).to.have.lengthOf(64));",
+              "pm.test('API key changed', () => pm.expect(body.apiKey).to.not.eql(pm.collectionVariables.get('stagingApiKey')));",
+              "pm.collectionVariables.set('stagingApiKey', body.apiKey);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Viewer tries to create Environment",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments", "host": ["{{baseUrl}}"], "path": ["api","v1","environments"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{viewerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"name\": \"Dev\",\n  \"description\": \"Should fail\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 403', () => pm.response.to.have.status(403));"
+            ]}
+          }]
+        }
+
+      ]
+    },
+
+    {
+      "name": "06 — Feature Flags (Create)",
+      "description": "Create 4 flags with different value types. States are auto-created for both Production and Staging.",
+      "item": [
+
+        {
+          "name": "06-01 Create BOOLEAN flag — dark-mode",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","flags"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"name\": \"Dark Mode\",\n  \"key\": \"dark-mode\",\n  \"description\": \"Enable dark mode UI\",\n  \"valueType\": \"BOOLEAN\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.test('key is immutable', () => pm.expect(body.key).to.eql('dark-mode'));",
+              "pm.test('valueType is BOOLEAN', () => pm.expect(body.valueType).to.eql('BOOLEAN'));",
+              "pm.test('not archived', () => pm.expect(body.archived).to.be.false);",
+              "pm.collectionVariables.set('boolFlagId', body.id);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "06-02 Create STRING flag — checkout-variant",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","flags"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"name\": \"Checkout Variant\",\n  \"key\": \"checkout-variant\",\n  \"description\": \"Which checkout flow to use\",\n  \"valueType\": \"STRING\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('strFlagId', pm.response.json().id);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "06-03 Create INTEGER flag — max-retry-count",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","flags"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"name\": \"Max Retry Count\",\n  \"key\": \"max-retry-count\",\n  \"description\": \"Maximum number of retries\",\n  \"valueType\": \"INTEGER\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('intFlagId', pm.response.json().id);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "06-04 Create JSON flag — payment-config",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","flags"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"name\": \"Payment Config\",\n  \"key\": \"payment-config\",\n  \"description\": \"Payment gateway configuration object\",\n  \"valueType\": \"JSON\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('jsonFlagId', pm.response.json().id);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Create flag — invalid key format (uppercase)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","flags"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"name\": \"Bad Key\",\n  \"key\": \"BadKey!\",\n  \"description\": \"Should fail\",\n  \"valueType\": \"BOOLEAN\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 400', () => pm.response.to.have.status(400));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Create flag — duplicate key in project",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","flags"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"name\": \"Dark Mode Again\",\n  \"key\": \"dark-mode\",\n  \"description\": \"Dup key\",\n  \"valueType\": \"BOOLEAN\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 409', () => pm.response.to.have.status(409));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Viewer tries to create flag",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","flags"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{viewerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"name\": \"Blocked Flag\",\n  \"key\": \"blocked-flag\",\n  \"description\": \"Should fail\",\n  \"valueType\": \"BOOLEAN\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 403', () => pm.response.to.have.status(403));"
+            ]}
+          }]
+        }
+
+      ]
+    },
+
+    {
+      "name": "07 — Feature Flags (Read & Update)",
+      "description": "List, get, update flags and their states per environment.",
+      "item": [
+
+        {
+          "name": "07-01 List Flags by Project",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/flags?projectId={{projectId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","flags"],
+              "query": [{ "key": "projectId", "value": "{{projectId}}" }]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('4 flags', () => pm.expect(pm.response.json()).to.have.lengthOf(4));",
+              "pm.test('All not archived', () => {",
+              "  pm.response.json().forEach(f => pm.expect(f.archived).to.be.false);",
+              "});"
+            ]}
+          }]
+        },
+
+        {
+          "name": "07-02 Get Flag by ID",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{boolFlagId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{boolFlagId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Key is dark-mode', () => pm.expect(pm.response.json().key).to.eql('dark-mode'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "07-03 Update Flag (name/description only — key is immutable)",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{boolFlagId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{boolFlagId}}"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Dark Mode Toggle\",\n  \"description\": \"Updated description\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Name updated', () => pm.expect(pm.response.json().name).to.eql('Dark Mode Toggle'));",
+              "pm.test('Key unchanged (immutable)', () => pm.expect(pm.response.json().key).to.eql('dark-mode'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "07-04 Get Flag State — Production (disabled by default)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{boolFlagId}}/environments/{{prodEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{boolFlagId}}","environments","{{prodEnvId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Disabled by default', () => pm.expect(pm.response.json().enabled).to.be.false);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "07-05 Enable dark-mode on Production",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{boolFlagId}}/environments/{{prodEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{boolFlagId}}","environments","{{prodEnvId}}"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"value\": null\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Enabled is true', () => pm.expect(pm.response.json().enabled).to.be.true);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "07-06 Set checkout-variant value on Production",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{strFlagId}}/environments/{{prodEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{strFlagId}}","environments","{{prodEnvId}}"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"value\": \"v2-express\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Value is v2-express', () => pm.expect(pm.response.json().value).to.eql('v2-express'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "07-07 Set max-retry-count value on Production",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{intFlagId}}/environments/{{prodEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{intFlagId}}","environments","{{prodEnvId}}"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"value\": \"3\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Value is 3', () => pm.expect(pm.response.json().value).to.eql('3'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "07-08 Set payment-config JSON value on Production",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{jsonFlagId}}/environments/{{prodEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{jsonFlagId}}","environments","{{prodEnvId}}"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"value\": \"{\\\"gateway\\\":\\\"stripe\\\",\\\"timeout\\\":30,\\\"retries\\\":3}\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Value contains gateway', () => pm.expect(pm.response.json().value).to.include('stripe'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "07-09 Set checkout-variant differently on Staging",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{strFlagId}}/environments/{{stagingEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{strFlagId}}","environments","{{stagingEnvId}}"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"value\": \"v3-beta\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Staging value is v3-beta', () => pm.expect(pm.response.json().value).to.eql('v3-beta'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Viewer tries to update flag state",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{boolFlagId}}/environments/{{prodEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{boolFlagId}}","environments","{{prodEnvId}}"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{viewerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false,\n  \"value\": null\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 403', () => pm.response.to.have.status(403));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "07-10 Viewer CAN read flag state (read-only)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{boolFlagId}}/environments/{{prodEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{boolFlagId}}","environments","{{prodEnvId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{viewerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Viewer can read', () => pm.expect(pm.response.json().enabled).to.be.true);"
+            ]}
+          }]
+        }
+
+      ]
+    },
+
+    {
+      "name": "08 — SDK Evaluation",
+      "description": "Simulate SDK client calls using X-Environment-Key header. No JWT required.",
+      "item": [
+
+        {
+          "name": "08-01 SDK: Get all flags (Production)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/sdk/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","sdk","flags"] },
+            "header": [{ "key": "X-Environment-Key", "value": "{{prodApiKey}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const flags = pm.response.json();",
+              "pm.test('Returns array', () => pm.expect(flags).to.be.an('array'));",
+              "pm.test('Has 4 flags', () => pm.expect(flags).to.have.lengthOf(4));",
+              "pm.test('All have flagKey, enabled, valueType', () => {",
+              "  flags.forEach(f => {",
+              "    pm.expect(f.flagKey).to.be.a('string');",
+              "    pm.expect(f.enabled).to.be.a('boolean');",
+              "    pm.expect(f.valueType).to.be.oneOf(['BOOLEAN','STRING','INTEGER','JSON']);",
+              "  });",
+              "});",
+              "const darkMode = flags.find(f => f.flagKey === 'dark-mode');",
+              "pm.test('dark-mode is enabled', () => pm.expect(darkMode.enabled).to.be.true);",
+              "const checkout = flags.find(f => f.flagKey === 'checkout-variant');",
+              "pm.test('checkout-variant value is v2-express', () => pm.expect(checkout.value).to.eql('v2-express'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "08-02 SDK: Get all flags (Staging)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/sdk/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","sdk","flags"] },
+            "header": [{ "key": "X-Environment-Key", "value": "{{stagingApiKey}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const flags = pm.response.json();",
+              "const checkout = flags.find(f => f.flagKey === 'checkout-variant');",
+              "pm.test('Staging has different value from Prod', () => pm.expect(checkout.value).to.eql('v3-beta'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "08-03 SDK: Get specific flag by key",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/sdk/flags/dark-mode", "host": ["{{baseUrl}}"], "path": ["api","v1","sdk","flags","dark-mode"] },
+            "header": [{ "key": "X-Environment-Key", "value": "{{prodApiKey}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const flag = pm.response.json();",
+              "pm.test('flagKey matches', () => pm.expect(flag.flagKey).to.eql('dark-mode'));",
+              "pm.test('enabled is true', () => pm.expect(flag.enabled).to.be.true);",
+              "pm.test('valueType is BOOLEAN', () => pm.expect(flag.valueType).to.eql('BOOLEAN'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "08-04 SDK: Get payment-config (JSON type)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/sdk/flags/payment-config", "host": ["{{baseUrl}}"], "path": ["api","v1","sdk","flags","payment-config"] },
+            "header": [{ "key": "X-Environment-Key", "value": "{{prodApiKey}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const flag = pm.response.json();",
+              "pm.test('valueType is JSON', () => pm.expect(flag.valueType).to.eql('JSON'));",
+              "pm.test('value is parseable JSON', () => {",
+              "  const parsed = JSON.parse(flag.value);",
+              "  pm.expect(parsed.gateway).to.eql('stripe');",
+              "});"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] SDK: Wrong API key",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/sdk/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","sdk","flags"] },
+            "header": [{ "key": "X-Environment-Key", "value": "0000000000000000000000000000000000000000000000000000000000000000" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 401 or 403', () => pm.expect(pm.response.code).to.be.oneOf([401,403]));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] SDK: Missing API key header",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/sdk/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","sdk","flags"] }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 401 or 403', () => pm.expect(pm.response.code).to.be.oneOf([401,403]));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] SDK: Flag key not found",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/sdk/flags/non-existent-flag", "host": ["{{baseUrl}}"], "path": ["api","v1","sdk","flags","non-existent-flag"] },
+            "header": [{ "key": "X-Environment-Key", "value": "{{prodApiKey}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 404', () => pm.response.to.have.status(404));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] SDK: JWT token on SDK endpoint (wrong auth)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/sdk/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","sdk","flags"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 401 or 403 — JWT not accepted on SDK chain', () => pm.expect(pm.response.code).to.be.oneOf([401,403]));"
+            ]}
+          }]
+        }
+
+      ]
+    },
+
+    {
+      "name": "09 — Archive & Cleanup",
+      "description": "Archive a flag (soft delete), verify it disappears from SDK. Then clean up via hard deletes.",
+      "item": [
+
+        {
+          "name": "09-01 Archive payment-config flag",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/flags/{{jsonFlagId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","flags","{{jsonFlagId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 204', () => pm.response.to.have.status(204));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "09-02 SDK: Verify archived flag not in evaluation",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/sdk/flags", "host": ["{{baseUrl}}"], "path": ["api","v1","sdk","flags"] },
+            "header": [{ "key": "X-Environment-Key", "value": "{{prodApiKey}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const flags = pm.response.json();",
+              "pm.test('3 active flags (archived excluded)', () => pm.expect(flags).to.have.lengthOf(3));",
+              "const keys = flags.map(f => f.flagKey);",
+              "pm.test('payment-config not returned', () => pm.expect(keys).to.not.include('payment-config'));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "09-03 SDK: Archived flag returns 404 by key",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/sdk/flags/payment-config", "host": ["{{baseUrl}}"], "path": ["api","v1","sdk","flags","payment-config"] },
+            "header": [{ "key": "X-Environment-Key", "value": "{{prodApiKey}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 404', () => pm.response.to.have.status(404));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "09-04 Admin: List flags (shows archived)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/flags?projectId={{projectId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","flags"],
+              "query": [{ "key": "projectId", "value": "{{projectId}}" }]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('3 active flags visible in admin', () => pm.expect(pm.response.json()).to.have.lengthOf(3));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "09-05 Delete Staging Environment",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{stagingEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{stagingEnvId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 204', () => pm.response.to.have.status(204));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "09-06 Delete Production Environment",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{prodEnvId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{prodEnvId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 204', () => pm.response.to.have.status(204));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "09-07 Delete Project",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","projects","{{projectId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 204', () => pm.response.to.have.status(204));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "09-08 Delete Organization",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 204', () => pm.response.to.have.status(204));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "09-09 Verify Organization deleted",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/organisations/{{orgId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","organisations","{{orgId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 404', () => pm.response.to.have.status(404));"
+            ]}
+          }]
+        }
+
+      ]
+    }
+
+  ]
+}
