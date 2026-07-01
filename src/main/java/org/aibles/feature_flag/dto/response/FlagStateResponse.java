@@ -12,4 +12,5 @@ public class FlagStateResponse {
     private UUID environmentId;
     private boolean enabled;
     private String value;
+    private int rolloutPercent;
 }

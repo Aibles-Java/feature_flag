@@ -6,6 +6,6 @@ import org.aibles.feature_flag.dto.response.FlagEvaluationResponse;
 import java.util.List;
 
 public interface EvaluationService {
-    List<FlagEvaluationResponse> getAllFlags(Environment environment);
-    FlagEvaluationResponse getFlag(Environment environment, String flagKey);
+    List<FlagEvaluationResponse> getAllFlags(Environment environment, String identifier);
+    FlagEvaluationResponse getFlag(Environment environment, String flagKey, String identifier);
 }

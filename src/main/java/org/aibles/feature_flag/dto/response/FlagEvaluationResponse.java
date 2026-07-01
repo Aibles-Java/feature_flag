@@ -12,13 +12,5 @@ public class FlagEvaluationResponse {
     private boolean enabled;
     private String value;
     private FlagValueType valueType;
-
-    public static FlagEvaluationResponse from(FlagEnvironmentState state) {
-        return FlagEvaluationResponse.builder()
-                .flagKey(state.getFeatureFlag().getKey())
-                .enabled(state.isEnabled())
-                .value(state.getValue())
-                .valueType(state.getFeatureFlag().getValueType())
-                .build();
-    }
+    private int rolloutPercent;
 }

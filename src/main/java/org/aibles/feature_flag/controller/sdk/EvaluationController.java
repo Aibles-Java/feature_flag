@@ -17,15 +17,19 @@ public class EvaluationController {
     private final EvaluationService evaluationService;
 
     @GetMapping("/flags")
-    public List<FlagEvaluationResponse> getAllFlags(Authentication authentication) {
+    public List<FlagEvaluationResponse> getAllFlags(
+            Authentication authentication,
+            @RequestParam(required = false) String identifier) {
         Environment env = (Environment) authentication.getPrincipal();
-        return evaluationService.getAllFlags(env);
+        return evaluationService.getAllFlags(env, identifier);
     }
 
     @GetMapping("/flags/{flagKey}")
-    public FlagEvaluationResponse getFlag(Authentication authentication,
-                                          @PathVariable String flagKey) {
+    public FlagEvaluationResponse getFlag(
+            Authentication authentication,
+            @PathVariable String flagKey,
+            @RequestParam(required = false) String identifier) {
         Environment env = (Environment) authentication.getPrincipal();
-        return evaluationService.getFlag(env, flagKey);
+        return evaluationService.getFlag(env, flagKey, identifier);
     }
 }
