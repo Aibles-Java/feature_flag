@@ -4,33 +4,29 @@
 
 ## Current WIP
 
-Nothing in progress. PR #2 (`feature/release-flow-skill` → `develop`) is open awaiting
-review/merge: https://github.com/Aibles-Java/feature_flag/pull/2
+Nothing in progress. **PR #7** (`feature/jacoco-ci-coverage-gate` → `develop`) is open,
+CI green, awaiting review/merge: https://github.com/Aibles-Java/feature_flag/pull/7
 
-It contains:
-- Release/hotfix flow added to the `git-workflow` skill (step-gated, STOPs before
-  merge-to-main / tag / merge-back)
-- `docs/adr/ADR-0002-release-process.md`
-- Fix to `.claude/hooks/remind-save.sh` (now fires on new commits, not just a dirty
-  tree) + `.gitignore` entries for its state files
+It closes issue #3 and contains:
+- `jacoco-maven-plugin` in `pom.xml` (prepare-agent + report + a ratchet `check`, all on
+  `verify`); floor is a `jacoco.line.coverage` property currently `0.00` (non-blocking)
+- `.github/workflows/ci.yml` — runs `./mvnw verify` on PRs to `develop`/`main`; JDK 21;
+  uploads JaCoCo report artifact. Verified green on PR #7 itself.
+- Removed a duplicate `spring-security-test` dependency in `pom.xml`
 
-PR #1 (`feature/claude-harness-setup` → `develop`) from the prior session is still open,
-unmerged.
+Still open from prior sessions: PR #1 (`feature/claude-harness-setup`) and PR #2
+(`feature/release-flow-skill`), both → `develop`, unmerged.
 
 ## Context to Load
 
-- `decisions/0003-release-flow-in-git-workflow-skill.md` — if asked about the release
-  process or why it's in `git-workflow` vs. a separate skill
-- `conventions/stop-hook-nudge-needs-commit-tracking.md` — before touching
-  `remind-save.sh` again, or if the save-memory reminder seems to misfire
-- `decisions/0001-claude-code-harness-setup.md` — if asked about harness config choices
-- `decisions/0002-pr-template-and-create-pr-skill.md` — if asked about PR format or `create-pr`
-- `conventions/hook-changes-require-explicit-confirmation.md` — before editing
-  `.claude/settings.json` hooks or hook scripts under `.claude/hooks/`
+- `decisions/0004-jacoco-coverage-ratchet-and-ci.md` — before raising the coverage
+  threshold or touching JaCoCo / `ci.yml`; explains why the floor starts at 0.00
+- `decisions/0003-release-flow-in-git-workflow-skill.md` — if asked about the release process
+- `conventions/stop-hook-nudge-needs-commit-tracking.md` — before touching `remind-save.sh`
+- `decisions/0001-claude-code-harness-setup.md` — harness config choices (incl. 80% target)
 
 ## Next steps
 
-- Review/merge PR #1 (`feature/claude-harness-setup` → `develop`) — still open from prior session
-- Review/merge PR #2 (`feature/release-flow-skill` → `develop`)
-- Optional: install `shipwithai-java-backend-toolkit` plugin via `/plugin`, then re-run
-  `/shipwithai-starter:init --update` to wire it in
+- Review/merge PR #7 (JaCoCo + CI) → `develop`
+- Raise `jacoco.line.coverage` in `pom.xml` as real tests land (companion test-coverage issues)
+- Review/merge the still-open PR #1 and PR #2

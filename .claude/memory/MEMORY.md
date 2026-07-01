@@ -5,6 +5,7 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [JaCoCo coverage ratchet + CI gate](decisions/0004-jacoco-coverage-ratchet-and-ci.md) — issue #3: JaCoCo on `verify` + CI, threshold starts at 0.00 ratchet (not 80%) since coverage is ~0%
 - [Stop-hook nudge needs commit tracking](conventions/stop-hook-nudge-needs-commit-tracking.md) — dirty-tree-only check went silent for commit-before-stop sessions; also gitignore hook state files
 - [Release flow in git-workflow skill](decisions/0003-release-flow-in-git-workflow-skill.md) — develop→release→main process added as step-gated instructions, not a new skill
 - [PR template + create-pr skill](decisions/0002-pr-template-and-create-pr-skill.md) — fixed 6-section PR format; requires `gh` CLI installed + authenticated locally
