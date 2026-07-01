@@ -5,6 +5,7 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [Spring Boot 4 security-testing gotchas](conventions/springboot4-security-testing.md) — issue #4: `@AutoConfigureMockMvc` gone in Boot 4.1 (build MockMvc via `webAppContextSetup(ctx).apply(springSecurity())`); don't tamper JWTs by flipping the last sig char (padding bits → flaky) — splice a foreign payload instead
 - [Issue-workflow: board status + memory gate](decisions/0005-issue-workflow-board-and-memory-gate.md) — issue #8: `issue-board.sh` assign/status on Digital banking board + pre-push gate that blocks code pushes lacking `.claude/memory/` changes; `gh` needs `project` scope
 - [JaCoCo coverage ratchet + CI gate](decisions/0004-jacoco-coverage-ratchet-and-ci.md) — issue #3: JaCoCo on `verify` + CI, threshold starts at 0.00 ratchet (not 80%) since coverage is ~0%
 - [Stop-hook nudge needs commit tracking](conventions/stop-hook-nudge-needs-commit-tracking.md) — dirty-tree-only check went silent for commit-before-stop sessions; also gitignore hook state files
