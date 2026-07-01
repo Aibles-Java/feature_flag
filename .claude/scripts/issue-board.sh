@@ -15,6 +15,12 @@
 # Requires: gh CLI authenticated WITH the `project` scope (read:project alone
 # is not enough to mutate the board). If a mutation fails with a scope error,
 # run:  gh auth refresh -s project
+#
+# NOTE: the "Digital banking" board is org-wide and hosts cards from MULTIPLE
+# repos, so an issue number alone is NOT a unique key (e.g. feature_flag#4 and
+# banking-knowledge-base#4 both exist). Every card lookup below therefore filters
+# on `.content.repository == "$REPO"` as well as the number. Do not relax that or
+# a command can silently move another repo's card. See issue #12.
 set -euo pipefail
 
 REPO="Aibles-Java/feature_flag"
@@ -43,12 +49,12 @@ issue_url() { echo "https://github.com/$REPO/issues/$issue"; }
 # Return the board item id for this issue, adding it to the board if missing.
 ensure_item() {
   local item
-  item=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
-    -q ".items[] | select(.content.type==\"Issue\" and .content.number==$issue) | .id" 2>/dev/null | head -1)
+  item=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 200 --format json \
+    -q ".items[] | select(.content.type==\"Issue\" and .content.number==$issue and .content.repository==\"$REPO\") | .id" 2>/dev/null | head -1)
   if [ -z "$item" ]; then
     gh project item-add "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --url "$(issue_url)" >/dev/null
-    item=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
-      -q ".items[] | select(.content.type==\"Issue\" and .content.number==$issue) | .id" 2>/dev/null | head -1)
+    item=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 200 --format json \
+      -q ".items[] | select(.content.type==\"Issue\" and .content.number==$issue and .content.repository==\"$REPO\") | .id" 2>/dev/null | head -1)
   fi
   [ -n "$item" ] || die "could not locate or create board item for issue #$issue"
   echo "$item"
@@ -67,8 +73,8 @@ set_status() { # $1 = option name
 }
 
 print_status() {
-  gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
-    -q ".items[] | select(.content.type==\"Issue\" and .content.number==$issue) | .status" 2>/dev/null
+  gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 200 --format json \
+    -q ".items[] | select(.content.type==\"Issue\" and .content.number==$issue and .content.repository==\"$REPO\") | .status" 2>/dev/null
 }
 
 case "$cmd" in
