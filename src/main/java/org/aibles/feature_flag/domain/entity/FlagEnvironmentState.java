@@ -37,6 +37,10 @@ public class FlagEnvironmentState {
     @Column(columnDefinition = "TEXT")
     private String value;
 
+    @Column(name = "rollout_percent", nullable = false)
+    @Builder.Default
+    private int rolloutPercent = 100;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
