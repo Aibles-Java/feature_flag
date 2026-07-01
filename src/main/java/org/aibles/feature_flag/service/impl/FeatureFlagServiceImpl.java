@@ -126,6 +126,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
 
         state.setEnabled(request.getEnabled());
         state.setValue(request.getValue());
+        if (request.getRolloutPercent() != null) state.setRolloutPercent(request.getRolloutPercent());
         return toStateResponse(flagStateRepository.save(state));
     }
 
@@ -153,6 +154,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
                 .environmentId(state.getEnvironment().getId())
                 .enabled(state.isEnabled())
                 .value(state.getValue())
+                .rolloutPercent(state.getRolloutPercent())
                 .build();
     }
 }
