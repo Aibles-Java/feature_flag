@@ -19,3 +19,4 @@ considered, and the rationale behind the choice.
 | ADR | Title | Status | Date |
 |-----|-------|--------|------|
 | [ADR-0001](ADR-0001-initial-architecture.md) | Initial Architecture | Accepted | 2026-07-01 |
+| [ADR-0002](ADR-0002-release-process.md) | Release Process (develop → release → main) | Accepted | 2026-07-01 |
