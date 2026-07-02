@@ -5,6 +5,8 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [Decision comments: cross-issue gh writes blocked](conventions/decision-comments-cross-issue-blocked.md) — issue #15: auto-mode classifier denies `gh issue comment` on any issue other than the one being worked; decision comments target the current branch's issue only; use quoted-heredoc for `--body`
+
 - [Shared board → scope by repo](conventions/shared-board-repo-scoping.md) — issue #12: the "Digital banking" board is multi-repo, so `issue-board.sh` must match cards by `.content.repository` + number (number alone moved another repo's card); pass `--limit 200`
 - [Spring Boot 4 security-testing gotchas](conventions/springboot4-security-testing.md) — issue #4: `@AutoConfigureMockMvc` gone in Boot 4.1 (build MockMvc via `webAppContextSetup(ctx).apply(springSecurity())`); don't tamper JWTs by flipping the last sig char (padding bits → flaky) — splice a foreign payload instead
 - [Issue-workflow: board status + memory gate](decisions/0005-issue-workflow-board-and-memory-gate.md) — issue #8: `issue-board.sh` assign/status on Digital banking board + pre-push gate that blocks code pushes lacking `.claude/memory/` changes; `gh` needs `project` scope

@@ -39,6 +39,9 @@ This assigns the issue to the authenticated `gh` user and moves its board card t
 Do the work. Follow the repo's plan-first / code-review / security-review gates in
 `CLAUDE.md` for anything non-trivial or touching sensitive areas.
 
+If the human makes a substantive in-terminal decision along the way, post it back to
+the issue — see **Decision comments** below.
+
 ### 3 — Save memory BEFORE pushing (enforced)
 
 Run `/save-memory` so decisions + `HANDOFF.md` are recorded, and commit it. The
@@ -69,6 +72,44 @@ The card moves to **Ready For Testing**, signalling the work is up for review/QA
 .claude/scripts/issue-board.sh done <issue#>
 ```
 
+## Decision comments (human-in-the-loop)
+
+Human-in-the-loop decisions made in the terminal are invisible to teammates reviewing
+the issue/PR async. So: whenever the human makes a **substantive** decision while you
+are working a linked issue — one that changes scope/plan or spawns a follow-up work
+item (e.g. "fix this here vs. file a follow-up issue", "which status to restore a
+board card to") — post a short **Decision** comment to that issue, using exactly this
+template:
+
+```bash
+gh issue comment <issue#> --repo Aibles-Java/feature_flag --body "$(cat <<'EOF'
+🧑‍⚖️ Decision (human-in-the-loop)
+Q: <one-line question>
+Options: <a> / <b> / <c>
+Chosen: <answer> — <one-line rationale>
+EOF
+)"
+```
+
+(The quoted heredoc — same pattern as `create-pr` — keeps apostrophes/quotes in the
+filled-in text from breaking the shell command.)
+
+Rules:
+
+- **Post after the decision resolves**, so the comment captures the answer, not just
+  the question. Fire-and-forget: never block or delay the human answering
+  in-terminal, and a failed comment must never fail the actual work.
+- **Substantive decisions only.** Routine clarifications (which base branch, "is this
+  file supposed to be empty?", naming/formatting picks) get **no** comment.
+- **Which issue:** derive it from the current branch (`feature/issue-N-…`) or the
+  board card moved at step 1. If no issue is linked to the current work, **skip
+  silently** — never guess a number.
+- **Sanitize.** The repo is public: post only the templated summary above — never raw
+  question/prompt text, file contents, secrets, or internal reasoning.
+- **No duplication.** Issue comments capture *in-flight decisions*;
+  `.claude/memory/` captures *durable conventions*; the PR body is the *final
+  summary*. Don't repeat the same content across all three.
+
 ## Board status vocabulary (exact, case-sensitive)
 
 `Todo` · `In progress` · `Ready For Testing` · `Done` — the script resolves the
@@ -91,3 +132,5 @@ card. (Regression once did exactly this; see issue #12.)
   `SKIP_MEMORY_CHECK`, unless the push genuinely has no session context worth keeping.
 - The board lives under the `Aibles-Java` org; the `gh` token must carry the
   `project` scope for any board mutation (read-only `read:project` is not enough).
+- Decision comments: substantive decisions only, templated + sanitized, and only when
+  an issue is actually linked — when in doubt about the issue number, post nothing.
