@@ -8,6 +8,7 @@
 #   issue-board.sh ready <issue#>              # move card to "Ready For Testing"
 #   issue-board.sh done  <issue#>              # move card to "Done"
 #   issue-board.sh status <issue#>             # print the card's current status
+#   issue-board.sh estimate <issue#> <SIZE> <hours>  # set Size (XS|S|M|L|XL) + Estimate
 #
 # `assignee` defaults to the authenticated gh user (whoever is driving), so the
 # board reflects the actual developer rather than a hardcoded name.
@@ -27,12 +28,14 @@ REPO="Aibles-Java/feature_flag"
 PROJECT_OWNER="Aibles-Java"
 PROJECT_NUMBER="3"           # "Digital banking"
 STATUS_FIELD="Status"
+SIZE_FIELD="Size"
+ESTIMATE_FIELD="Estimate"
 
 die() { echo "issue-board: $*" >&2; exit 1; }
 
 cmd="${1:-}"
 issue="${2:-}"
-[ -n "$cmd" ]   || die "usage: issue-board.sh <start|ready|done|status> <issue#> [assignee]"
+[ -n "$cmd" ]   || die "usage: issue-board.sh <start|ready|done|status|estimate> <issue#> [args]"
 [ -n "$issue" ] || die "missing issue number"
 command -v gh >/dev/null 2>&1 || die "gh CLI not found on PATH"
 
@@ -43,6 +46,13 @@ status_field_id() { gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OW
 status_option_id() { # $1 = option name
   gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
     -q ".fields[] | select(.name==\"$STATUS_FIELD\") | .options[] | select(.name==\"$1\") | .id"; }
+
+field_id() { # $1 = field name
+  gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
+    -q ".fields[] | select(.name==\"$1\") | .id"; }
+option_id() { # $1 = field name, $2 = option name
+  gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json \
+    -q ".fields[] | select(.name==\"$1\") | .options[] | select(.name==\"$2\") | .id"; }
 
 issue_url() { echo "https://github.com/$REPO/issues/$issue"; }
 
@@ -72,6 +82,24 @@ set_status() { # $1 = option name
   echo "issue #$issue → status '$option'"
 }
 
+set_estimate() { # $1 = size option name, $2 = estimate in hours
+  local size="$1" hours="$2" item pid sfid soid efid
+  soid=$(option_id "$SIZE_FIELD" "$size")
+  [ -n "$soid" ] || die "size '$size' not found on the board (expected XS|S|M|L|XL)"
+  efid=$(field_id "$ESTIMATE_FIELD")
+  [ -n "$efid" ] || die "field '$ESTIMATE_FIELD' not found on the board"
+  item=$(ensure_item)
+  pid=$(project_id)
+  sfid=$(field_id "$SIZE_FIELD")
+  gh project item-edit --id "$item" --project-id "$pid" \
+    --field-id "$sfid" --single-select-option-id "$soid" >/dev/null \
+    || die "failed to set Size for issue #$issue (no fields changed)"
+  gh project item-edit --id "$item" --project-id "$pid" \
+    --field-id "$efid" --number "$hours" >/dev/null \
+    || die "Size '$size' was set but the Estimate write failed — card is inconsistent; re-run: issue-board.sh estimate $issue $size $hours"
+  echo "issue #$issue → Size '$size', Estimate ${hours}h"
+}
+
 print_status() {
   gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 200 --format json \
     -q ".items[] | select(.content.type==\"Issue\" and .content.number==$issue and .content.repository==\"$REPO\") | .status" 2>/dev/null
@@ -88,5 +116,13 @@ case "$cmd" in
   ready) set_status "Ready For Testing" ;;
   done)  set_status "Done" ;;
   status) print_status ;;
-  *) die "unknown command '$cmd' (expected start|ready|done|status)" ;;
+  estimate)
+    size="${3:-}"; hours="${4:-}"
+    [ -n "$size" ] && [ -n "$hours" ] || die "usage: issue-board.sh estimate <issue#> <SIZE> <hours>"
+    [[ "$size" =~ ^(XS|S|M|L|XL)$ ]] || die "size must be one of XS|S|M|L|XL (got '$size')"
+    [[ "$hours" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "hours must be a number (got '$hours')"
+    [[ "$hours" =~ ^0+([.]0+)?$ ]] && die "hours must be greater than 0"
+    set_estimate "$size" "$hours"
+    ;;
+  *) die "unknown command '$cmd' (expected start|ready|done|status|estimate)" ;;
 esac
