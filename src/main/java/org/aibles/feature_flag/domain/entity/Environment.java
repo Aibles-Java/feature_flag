@@ -2,6 +2,7 @@ package org.aibles.feature_flag.domain.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.aibles.feature_flag.domain.enums.EnvType;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -34,6 +35,17 @@ public class Environment {
 
     @Column(name = "api_key", nullable = false, unique = true, length = 64)
     private String apiKey;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private EnvType type = EnvType.DEVELOPMENT;
+
+    @Column(name = "change_window_start_hour")
+    private Integer changeWindowStartHour;
+
+    @Column(name = "change_window_end_hour")
+    private Integer changeWindowEndHour;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

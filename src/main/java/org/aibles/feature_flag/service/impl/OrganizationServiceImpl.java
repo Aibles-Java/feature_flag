@@ -4,7 +4,10 @@ import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.OrganizationMember;
 import org.aibles.feature_flag.domain.entity.User;
+import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.MemberRole;
+import org.aibles.feature_flag.domain.enums.ScopeType;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
 import org.aibles.feature_flag.dto.request.InviteMemberRequest;
 import org.aibles.feature_flag.dto.request.UpdateOrganizationRequest;
@@ -15,6 +18,8 @@ import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.OrganizationMemberRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
+import org.aibles.feature_flag.repository.PermissionGrantRepository;
+import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.aibles.feature_flag.service.OrganizationService;
 import org.springframework.stereotype.Service;
@@ -30,6 +35,8 @@ public class OrganizationServiceImpl implements OrganizationService {
     private final OrganizationRepository organizationRepository;
     private final OrganizationMemberRepository memberRepository;
     private final UserRepository userRepository;
+    private final ProjectRepository projectRepository;
+    private final PermissionGrantRepository grantRepository;
     private final PermissionService permissionService;
 
     @Override
@@ -77,7 +84,7 @@ public class OrganizationServiceImpl implements OrganizationService {
     @Override
     @Transactional
     public OrganizationResponse update(UUID id, UpdateOrganizationRequest request) {
-        permissionService.requireRole(id, MemberRole.OWNER, MemberRole.ADMIN);
+        permissionService.check(Action.ORG_UPDATE, PermissionService.ResourceRef.org(id));
         Organization org = findById(id);
         if (request.getName() != null) org.setName(request.getName());
         return toResponse(organizationRepository.save(org));
@@ -86,7 +93,7 @@ public class OrganizationServiceImpl implements OrganizationService {
     @Override
     @Transactional
     public void delete(UUID id) {
-        permissionService.requireRole(id, MemberRole.OWNER);
+        permissionService.check(Action.ORG_DELETE, PermissionService.ResourceRef.org(id));
         organizationRepository.deleteById(id);
     }
 
@@ -109,7 +116,11 @@ public class OrganizationServiceImpl implements OrganizationService {
     @Override
     @Transactional
     public MemberResponse inviteMember(UUID orgId, InviteMemberRequest request) {
-        permissionService.requireRole(orgId, MemberRole.OWNER, MemberRole.ADMIN);
+        permissionService.check(Action.MEMBER_INVITE, PermissionService.ResourceRef.org(orgId));
+        if (!permissionService.effectiveActionsForOrg(permissionService.currentUserId(), orgId)
+                .containsAll(PermissionService.actionsForRole(request.getRole()))) {
+            throw new UnauthorizedException("You cannot invite a member with a role higher than your own");
+        }
         if (memberRepository.existsByOrganizationIdAndUserId(orgId, request.getUserId())) {
             throw new DuplicateResourceException("User is already a member of this organisation");
         }
@@ -136,7 +147,7 @@ public class OrganizationServiceImpl implements OrganizationService {
     @Override
     @Transactional
     public void removeMember(UUID orgId, UUID userId) {
-        permissionService.requireRole(orgId, MemberRole.OWNER, MemberRole.ADMIN);
+        permissionService.check(Action.MEMBER_MANAGE, PermissionService.ResourceRef.org(orgId));
         OrganizationMember member = memberRepository.findByOrganizationIdAndUserId(orgId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Member not found in organisation"));
         if (member.getRole() == MemberRole.OWNER &&
@@ -144,6 +155,14 @@ public class OrganizationServiceImpl implements OrganizationService {
             throw new UnauthorizedException("Cannot remove the only OWNER of an organisation");
         }
         memberRepository.delete(member);
+
+        // Grants outlive membership, so revoke this user's project grants in the org too.
+        List<UUID> projectIds = projectRepository.findAllByOrganizationId(orgId).stream()
+                .map(Project::getId)
+                .toList();
+        if (!projectIds.isEmpty()) {
+            grantRepository.deleteByUser_IdAndScopeTypeAndScopeIdIn(userId, ScopeType.PROJECT, projectIds);
+        }
     }
 
     private Organization findById(UUID id) {
