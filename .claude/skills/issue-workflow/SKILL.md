@@ -23,6 +23,11 @@ scope — `gh auth refresh -s project` if a board step errors on scope).
 
 ## The loop
 
+### 0 — (Optional) Estimate first
+
+If the issue's card has no Size/Estimate yet, run the `estimate-issue` skill
+before starting — estimating is cleanest before any work biases the number.
+
 ### 1 — Start work (do this the moment you pick up an issue)
 
 ```bash
