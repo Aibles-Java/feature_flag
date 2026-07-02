@@ -4,37 +4,36 @@
 
 ## Current WIP
 
-**Issue #15** (Decision comments for human-in-the-loop calls) on branch
-`feature/issue-15-decision-comments` (→ `develop`). The `issue-workflow` skill
-(`.claude/skills/issue-workflow/SKILL.md`) now documents the **Decision comments**
-convention: after a substantive in-terminal decision (scope/plan change or spawned
-follow-up) resolves, post a templated 🧑‍⚖️ comment to the linked issue via
-`gh issue comment` with a quoted-heredoc body. Reviewed by code-reviewer (1 fix
-applied: heredoc instead of single-quoted `--body`). Commit / push / PR happening
-this session.
+**Issue #14** (viewable code-coverage dashboard) — researched and **parked** on branch
+`feature/issue-14-sonarqube-coverage-board` (off up-to-date `develop`). Human decided:
+**self-hosted SonarQube**, infra in a **separate repository** (not yet created); this
+repo only wires CI analysis + quality gate. Decision comment posted on the card
+(first real use of the #15 convention):
+<https://github.com/Aibles-Java/feature_flag/issues/14#issuecomment-4865687139>
+No implementation yet — this branch carries only memory. Full plan (server-independent
+slice vs. blocked-on-infra remainder) is in `decisions/0006`.
 
-**Acceptance checkbox still open on #15:** “Verified on a real decision.” No live
-human decision occurred this session; the retroactive post of the real #10-spawn
-decision to issue #4 was **blocked by the auto-mode classifier** (cross-issue write),
-and the user was AFK when asked how to proceed. → Verify on the next naturally
-occurring live decision: post the comment to that session’s linked issue, then tick
-the box on #15.
+**#15 verification:** the convention IS now verified on a real decision, but ticking
+the last acceptance checkbox in #15's body was **classifier-blocked** (cross-issue
+`gh issue edit`). → Human ticks it, or agent does it in a session working #15.
 
 ## Context to Load
 
-- `conventions/decision-comments-cross-issue-blocked.md` — classifier scope gotcha +
-  heredoc pattern for decision comments (new this session).
-- `decisions/0005-issue-workflow-board-and-memory-gate.md` — board script + memory gate.
+- `decisions/0006-selfhosted-sonarqube-coverage-board.md` — the #14 decision + agreed
+  implementation plan (read before resuming #14).
+- `conventions/decision-comments-cross-issue-blocked.md` — classifier scope gotcha
+  (now includes `gh issue edit`).
 
 ## Next steps
 
-- This session (if not already done): commit skill + memory, push, open PR
-  (`Closes #15`, note the unchecked verification criterion in Test plan), then
-  `.claude/scripts/issue-board.sh ready 15`.
-- Next live human-in-the-loop decision in any session: exercise the new convention
-  for real, then check the last acceptance box on #15.
+- **When SonarQube infra exists** (user will say so): resume #14 on this branch —
+  `issue-board.sh start 14`, then the plan in decisions/0006 (guarded `sonar:sonar`
+  step, pom sonar props, ratchet 0.00→~0.25, jacoco.csv job summary, create README).
+  Update #14's body from the stale Codecov plan first. Infra constraint to relay:
+  server reachable from GitHub Actions runners + GitHub ALM configured.
+- The server-independent slice of #14 was assessed as doable *now* if the user wants
+  it before infra lands — they chose to wait.
+- Tick the last acceptance box on #15 (see above).
 - Still parked: uncommitted `.gitignore` (adds `.omc/`) + regenerated
   `docs/ARCHITECTURE.md` — land or discard separately.
-- Follow-up from #3/#4: raise `jacoco.line.coverage` above 0.00 now that the security
-  package has real coverage.
 - Open PRs from prior sessions: #8, #7, #2, #1 (all → `develop`, unmerged).

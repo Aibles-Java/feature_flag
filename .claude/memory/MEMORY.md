@@ -5,7 +5,8 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
-- [Decision comments: cross-issue gh writes blocked](conventions/decision-comments-cross-issue-blocked.md) — issue #15: auto-mode classifier denies `gh issue comment` on any issue other than the one being worked; decision comments target the current branch's issue only; use quoted-heredoc for `--body`
+- [Self-hosted SonarQube for coverage board](decisions/0006-selfhosted-sonarqube-coverage-board.md) — issue #14: self-hosted SonarQube (infra in separate repo) over Codecov/SonarCloud; server-independent CI slice doable now, dashboard/badge/PR-decoration blocked on infra; repo has **no README** yet
+- [Decision comments: cross-issue gh writes blocked](conventions/decision-comments-cross-issue-blocked.md) — issue #15: auto-mode classifier denies `gh issue comment` **and `gh issue edit`** on any issue other than the one being worked; decision comments target the current branch's issue only; use quoted-heredoc for `--body`
 
 - [Shared board → scope by repo](conventions/shared-board-repo-scoping.md) — issue #12: the "Digital banking" board is multi-repo, so `issue-board.sh` must match cards by `.content.repository` + number (number alone moved another repo's card); pass `--limit 200`
 - [Spring Boot 4 security-testing gotchas](conventions/springboot4-security-testing.md) — issue #4: `@AutoConfigureMockMvc` gone in Boot 4.1 (build MockMvc via `webAppContextSetup(ctx).apply(springSecurity())`); don't tamper JWTs by flipping the last sig char (padding bits → flaky) — splice a foreign payload instead

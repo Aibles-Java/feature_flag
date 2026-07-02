@@ -16,3 +16,10 @@ blocked as an external-system write unrelated to the task).
   (or an allowlist rule in settings); don't retry them unprompted in auto mode.
 - Use the quoted-heredoc `--body "$(cat <<'EOF' … EOF)"` pattern (as documented in the
   skill) so apostrophes in free-text rationales don't break the shell command.
+
+**Addendum (2026-07-02, while researching #14):** the block covers **`gh issue edit`
+too**, not just comments — ticking the "Verified on a real decision" checkbox in
+issue #15's body was denied while the session's work was #14. The convention got its
+first real verification that day (decision comment posted to #14:
+self-hosted-SonarQube choice), but the #15 checkbox itself must be ticked by the
+human, or by the agent in a session where #15 is the linked work.
