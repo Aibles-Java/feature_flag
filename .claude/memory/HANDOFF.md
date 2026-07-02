@@ -4,56 +4,37 @@
 
 ## Current WIP
 
-**Issue #4** (security test coverage) on branch `feature/issue-4-security-tests`
-(→ `develop`). Tests are written and **all 35 pass** (`./mvnw test` → BUILD SUCCESS).
-Board card for #4 assigned to @trinhvandat and at **In progress**. Commit / push / PR are
-happening this session.
+**Issue #15** (Decision comments for human-in-the-loop calls) on branch
+`feature/issue-15-decision-comments` (→ `develop`). The `issue-workflow` skill
+(`.claude/skills/issue-workflow/SKILL.md`) now documents the **Decision comments**
+convention: after a substantive in-terminal decision (scope/plan change or spawned
+follow-up) resolves, post a templated 🧑‍⚖️ comment to the linked issue via
+`gh issue comment` with a quoted-heredoc body. Reviewed by code-reviewer (1 fix
+applied: heredoc instead of single-quoted `--body`). Commit / push / PR happening
+this session.
 
-New test files (all under `src/test/java/org/aibles/feature_flag/`):
-- `security/JwtTokenProviderTest` (5) — valid / expired / malformed / tampered /
-  wrong-secret; claim round-trip.
-- `security/JwtAuthenticationFilterTest` (4) — sets auth on valid Bearer; no auth on
-  missing / non-Bearer / invalid.
-- `security/ApiKeyAuthenticationFilterTest` (3) — 401 problem-detail on missing / unknown
-  key; sets `Environment` principal + proceeds on valid key.
-- `security/CustomUserDetailsServiceTest` (2) — maps `User`→`UserPrincipal`; throws
-  `UsernameNotFoundException` when absent.
-- `security/SecurityChainIntegrationTest` (6, `@SpringBootTest`) — both chains reject
-  unauth; API key can't hit admin routes, JWT can't hit SDK routes.
-- `service/impl/PermissionServiceTest` (12) — OWNER/ADMIN/VIEWER gate on
-  org/project/environment + membership + not-found paths.
-- `util/ApiKeyGeneratorTest` (2) — 64-char lowercase hex + uniqueness.
-
-Coverage: the six issue-named classes (JwtTokenProvider, JwtAuthenticationFilter,
-ApiKeyAuthenticationFilter, CustomUserDetailsService, PermissionService, ApiKeyGenerator)
-are all at **100% instruction coverage**. 40 tests total after folding in a `java-reviewer`
-pass (strengthened cross-chain proof with real valid JWTs; tightened admin status asserts to
-403; added `currentUserId` null/wrong-type + JWT edge cases).
-
-**Spun off issue #10** (assigned to `oanhhkim`, board=Todo): the review + a new integration
-test proved a real production defect — a valid JWT for a deleted user throws
-`UsernameNotFoundException` out of `JwtAuthenticationFilter` (it runs *before*
-`ExceptionTranslationFilter`, so it's never translated) → HTTP 500 instead of 401/403. Per
-the user's call this PR stays **test-only**: `SecurityChainIntegrationTest`
-.adminValidTokenForDeletedUser_currentlyLeaksException pins the current behaviour; flip it to
-`isForbidden()` when #10 is fixed.
+**Acceptance checkbox still open on #15:** “Verified on a real decision.” No live
+human decision occurred this session; the retroactive post of the real #10-spawn
+decision to issue #4 was **blocked by the auto-mode classifier** (cross-issue write),
+and the user was AFK when asked how to proceed. → Verify on the next naturally
+occurring live decision: post the comment to that session’s linked issue, then tick
+the box on #15.
 
 ## Context to Load
 
-- `conventions/springboot4-security-testing.md` — the two Boot-4 test gotchas hit this
-  session (MockMvc setup + deterministic JWT tamper). Read before writing more security
-  tests.
+- `conventions/decision-comments-cross-issue-blocked.md` — classifier scope gotcha +
+  heredoc pattern for decision comments (new this session).
 - `decisions/0005-issue-workflow-board-and-memory-gate.md` — board script + memory gate.
-- `decisions/0004-jacoco-coverage-ratchet-and-ci.md` — the coverage ratchet these tests
-  feed; consider bumping `jacoco.line.coverage` above 0.00 in a follow-up now that real
-  coverage exists.
 
 ## Next steps
 
-- After PR opens: `.claude/scripts/issue-board.sh ready 4`.
-- Follow-up worth doing: raise `jacoco.line.coverage` off 0.00 now that the security
-  package has real tests (was intentionally 0.00 until coverage landed — see #3).
-- Unrelated pre-existing WIP still uncommitted in the tree: `.gitignore` (adds `.omc/`) and
-  `docs/ARCHITECTURE.md` (regenerated) — deliberately kept out of the #4 commit; land or
-  discard separately.
-- Still open from prior sessions: PRs #8, #7, #2, #1 — all → `develop`, unmerged.
+- This session (if not already done): commit skill + memory, push, open PR
+  (`Closes #15`, note the unchecked verification criterion in Test plan), then
+  `.claude/scripts/issue-board.sh ready 15`.
+- Next live human-in-the-loop decision in any session: exercise the new convention
+  for real, then check the last acceptance box on #15.
+- Still parked: uncommitted `.gitignore` (adds `.omc/`) + regenerated
+  `docs/ARCHITECTURE.md` — land or discard separately.
+- Follow-up from #3/#4: raise `jacoco.line.coverage` above 0.00 now that the security
+  package has real coverage.
+- Open PRs from prior sessions: #8, #7, #2, #1 (all → `develop`, unmerged).
