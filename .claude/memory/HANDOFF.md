@@ -4,35 +4,38 @@
 
 ## Current WIP
 
-**Issue #17** (`/estimate-issue` skill) on branch `feature/issue-17-estimate-issue-skill`
-(→ `develop`). Implemented and verified:
+**Issue #10** (JWT 500 → 403 for deleted user) on branch `feature/issue-10-jwt-deleted-user-500`
+(→ `develop`). Implementation complete and verified:
 
-- `.claude/scripts/issue-board.sh` — new `estimate <issue#> <SIZE> <hours>` subcommand
-  (Size + Estimate board fields; allow-list + numeric validation; guarded two-step
-  write with an explicit inconsistency message if the second write fails).
-- `.claude/skills/estimate-issue/` — SKILL.md (hours rubric, evidence→propose→confirm→write
-  procedure) + `calibration.md` seeded with #17's own row (M / 4h).
-- `issue-workflow/SKILL.md` — optional step 0 pointing at the new skill.
+- `security/JwtAuthenticationFilter.java` — wrapped `getEmailFromToken` + `loadUserByUsername`
+  in try/catch: `UsernameNotFoundException` (log.warn, fall through unauthenticated → 403)
+  + `JwtException` (log.debug, TOCTOU guard on expiry window). Added `@Slf4j`.
+- `SecurityChainIntegrationTest.java` — flipped pinned-defect test to
+  `adminValidTokenForDeletedUser_returnsForbidden` asserting `status().isForbidden()`;
+  removed `UsernameNotFoundException` + `assertThatThrownBy` imports.
+- `JwtAuthenticationFilterTest.java` — added `doesNotAuthenticateWhenUserNoLongerExists`
+  unit test covering the catch path.
 
-code-reviewer pass done: HIGH (unguarded partial write) + MEDIUM (SIZE reaching jq
-unvalidated) fixed; error paths + happy path re-tested live against card #17.
-Remaining this session: commit, push, PR (`Closes #17`), `issue-board.sh ready 17`.
+All 41 tests pass. Code review done (two IMPORTANT issues fixed: log level + JwtException TOCTOU).
+
+**Remaining:** commit, push, open PR (`Closes #10`), `issue-board.sh ready 10` after PR opens.
+Also: `issue-board.sh start 10` board-move is pending (needs `project` gh scope — user needs
+to run `gh auth refresh -h github.com -s project` interactively first).
 
 ## Context to Load
 
-- `decisions/0007-estimate-issue-skill.md` — why skill-not-agent, rubric, constraints.
-- `conventions/issue-board-args-need-allowlist.md` — jq-interpolation gotcha when
-  extending `issue-board.sh`.
+- `conventions/jwt-filter-catch-scope.md` — catch scope + log level rules for JWT filters.
 
 ## Next steps
 
-- If not already done: commit + push this branch, open PR, move card to Ready For Testing.
-- First real use of `/estimate-issue` on a fresh issue → fill #17's `Actual (h)` in
-  `calibration.md` when it reaches Done (first calibration data point).
-- Deferred LOW from review: `set_estimate()` makes ~5 `gh` round-trips (field-list
-  re-fetches) — collapse if it ever feels slow.
-- Still parked: uncommitted `.gitignore` (adds `.omc/`) + regenerated
-  `docs/ARCHITECTURE.md` — land or discard separately; issue #14 branch (SonarQube)
-  waits on self-hosted infra and holds `decisions/0006-*`.
-- Still open from #15: verify a live decision comment, then tick its last acceptance box.
-- Follow-up from #3/#4: raise `jacoco.line.coverage` above 0.00.
+1. `gh auth refresh -h github.com -s project` (run interactively) → then `.claude/scripts/issue-board.sh start 10`
+2. Commit + push `feature/issue-10-jwt-deleted-user-500`
+3. Open PR with `create-pr` skill (`Closes #10`)
+4. `.claude/scripts/issue-board.sh ready 10`
+
+**Parked from previous sessions:**
+- Issue #17 branch (`feature/issue-17-estimate-issue-skill`) — still needs commit + push + PR + `ready 17`
+- Uncommitted `.gitignore` (`.omc/`) + regenerated `docs/ARCHITECTURE.md` — land or discard separately
+- Issue #14 (SonarQube) waiting on self-hosted infra, holds `decisions/0006-*`
+- Verify a live decision comment for issue #15 (last acceptance box)
+- Raise `jacoco.line.coverage` above 0.00 (follow-up from #3/#4)

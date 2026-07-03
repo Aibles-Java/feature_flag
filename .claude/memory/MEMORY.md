@@ -5,6 +5,7 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [JWT filter: catch UsernameNotFoundException + JwtException; warn not debug](conventions/jwt-filter-catch-scope.md) — issue #10: two separate parseSignedClaims() calls create a TOCTOU gap; catch both; valid-token/missing-subject is log.warn not log.debug
 - [Estimation = /estimate-issue skill, hours-calibrated](decisions/0007-estimate-issue-skill.md) — issue #17: rubric XS≤1h…XL>16h→split, propose→confirm→write via `issue-board.sh estimate`, calibration log in the skill dir; 0006 is taken by the parked issue-14 branch
 - [issue-board.sh args need allow-lists](conventions/issue-board-args-need-allowlist.md) — issue #17: raw CLI args interpolated into jq filters break on `"` — validate against an explicit allow-list (like `estimate` does for SIZE) before calling field_id/option_id
 - [Decision comments: cross-issue gh writes blocked](conventions/decision-comments-cross-issue-blocked.md) — issue #15: auto-mode classifier denies `gh issue comment` on any issue other than the one being worked; decision comments target the current branch's issue only; use quoted-heredoc for `--body`
