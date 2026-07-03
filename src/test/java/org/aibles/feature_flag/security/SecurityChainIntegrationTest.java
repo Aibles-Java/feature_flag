@@ -5,14 +5,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -72,24 +70,11 @@ class SecurityChainIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
-    /**
-     * KNOWN DEFECT — see issue #10.
-     *
-     * A valid, non-expired token whose subject no longer exists (e.g. user deleted after
-     * issuance) makes {@code CustomUserDetailsService} throw {@code UsernameNotFoundException}.
-     * {@code JwtAuthenticationFilter} runs before {@code ExceptionTranslationFilter} and does
-     * not catch it, so the exception escapes the chain (HTTP 500 in a real container) instead
-     * of failing closed with a 401/403.
-     *
-     * This test pins the current (buggy) behaviour so the regression is visible. When #10 is
-     * fixed, replace the {@code assertThatThrownBy} with {@code .andExpect(status().isForbidden())}.
-     */
     @Test
-    void adminValidTokenForDeletedUser_currentlyLeaksException() {
+    void adminValidTokenForDeletedUser_returnsForbidden() throws Exception {
         String token = validJwtForUnknownUser();
-        assertThatThrownBy(() ->
-                mockMvc.perform(get(ADMIN_ENDPOINT).header("Authorization", "Bearer " + token)))
-                .isInstanceOf(UsernameNotFoundException.class);
+        mockMvc.perform(get(ADMIN_ENDPOINT).header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden());
     }
 
     // --- SDK chain (API key) -------------------------------------------------

@@ -11,6 +11,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 
 import java.util.UUID;
 
@@ -119,5 +120,22 @@ class JwtAuthenticationFilterTest {
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
         verify(filterChain).doFilter(request, response);
         verifyNoInteractions(userDetailsService);
+    }
+
+    @Test
+    void doesNotAuthenticateWhenUserNoLongerExists() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("Authorization", "Bearer valid-token-deleted-user");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        when(tokenProvider.validateToken("valid-token-deleted-user")).thenReturn(true);
+        when(tokenProvider.getEmailFromToken("valid-token-deleted-user")).thenReturn("deleted@example.com");
+        when(userDetailsService.loadUserByUsername("deleted@example.com"))
+                .thenThrow(new UsernameNotFoundException("User not found with email: deleted@example.com"));
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        verify(filterChain).doFilter(request, response);
     }
 }
