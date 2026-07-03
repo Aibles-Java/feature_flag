@@ -36,3 +36,5 @@ build/
 .claude/logs/
 .claude/memory/.nudge-guard
 .claude/memory/.last-seen-commit
+
+.omc
