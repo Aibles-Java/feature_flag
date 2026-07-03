@@ -9,5 +9,9 @@ RUN ./mvnw package -DskipTests -q
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
-EXPOSE 8080
+# The image is the production artifact: default to the prod profile so a container
+# started without APP_JWT_SECRET / SPRING_DATASOURCE_* fails fast instead of silently
+# running on the committed local-dev defaults. Override explicitly for local use.
+ENV SPRING_PROFILES_ACTIVE=prod
+EXPOSE 8081
 ENTRYPOINT ["java", "-jar", "app.jar"]

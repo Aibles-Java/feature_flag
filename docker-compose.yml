@@ -2,16 +2,18 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: ff_postgres
+    # Local-dev defaults; override via environment or a git-ignored .env file
+    # (see README.md "Environment variables").
     environment:
-      POSTGRES_DB: feature_flag_db
-      POSTGRES_USER: ff_user
-      POSTGRES_PASSWORD: ff_password
+      POSTGRES_DB: ${POSTGRES_DB:-feature_flag_db}
+      POSTGRES_USER: ${POSTGRES_USER:-ff_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ff_password}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ff_user -d feature_flag_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ff_user} -d ${POSTGRES_DB:-feature_flag_db}"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -5,6 +5,8 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [Secrets externalization: bind-time validation + no-default prod profile](decisions/0008-secrets-externalization-fail-fast.md) — issue #23: JwtProperties bean validation fails startup on missing/short/placeholder/low-entropy secret; prod profile file has NO defaults so dev values can't leak; Dockerfile bakes SPRING_PROFILES_ACTIVE=prod
+- [@ConfigurationProperties validation gotchas (Boot 4.1)](conventions/springboot-configprops-binding-gotchas.md) — binder passes unresolved `${VAR}` through as literals (unlike @Value); @AssertTrue only fires on getter-shaped isXxx() methods on records; @AssertTrue getters keep secrets out of the bind-failure report (field constraints echo the value)
 - [JWT filter: catch UsernameNotFoundException + JwtException; warn not debug](conventions/jwt-filter-catch-scope.md) — issue #10: two separate parseSignedClaims() calls create a TOCTOU gap; catch both; valid-token/missing-subject is log.warn not log.debug
 - [Estimation = /estimate-issue skill, hours-calibrated](decisions/0007-estimate-issue-skill.md) — issue #17: rubric XS≤1h…XL>16h→split, propose→confirm→write via `issue-board.sh estimate`, calibration log in the skill dir; 0006 is taken by the parked issue-14 branch
 - [issue-board.sh args need allow-lists](conventions/issue-board-args-need-allowlist.md) — issue #17: raw CLI args interpolated into jq filters break on `"` — validate against an explicit allow-list (like `estimate` does for SIZE) before calling field_id/option_id
