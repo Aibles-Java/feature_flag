@@ -7,12 +7,14 @@ import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
 import org.aibles.feature_flag.dto.response.EnvironmentResponse;
+import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EnvironmentService;
 import org.aibles.feature_flag.util.ApiKeyGenerator;
+import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,7 +31,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
 
     @Override
     @Transactional
-    public EnvironmentResponse create(CreateEnvironmentRequest request) {
+    public EnvironmentSecretResponse create(CreateEnvironmentRequest request) {
         permissionService.requireRoleForProject(request.getProjectId(), MemberRole.OWNER, MemberRole.ADMIN);
         if (environmentRepository.existsByProjectIdAndName(request.getProjectId(), request.getName())) {
             throw new DuplicateResourceException("Environment name already exists in this project");
@@ -37,13 +39,14 @@ public class EnvironmentServiceImpl implements EnvironmentService {
         Project project = projectRepository.findById(request.getProjectId())
                 .orElseThrow(() -> new ResourceNotFoundException("Project", request.getProjectId()));
 
+        String plaintextKey = ApiKeyGenerator.generate();
         Environment env = Environment.builder()
                 .project(project)
                 .name(request.getName())
                 .description(request.getDescription())
-                .apiKey(ApiKeyGenerator.generate())
+                .apiKeyHash(ApiKeyHasher.hash(plaintextKey))
                 .build();
-        return toResponse(environmentRepository.save(env));
+        return toSecretResponse(environmentRepository.save(env), plaintextKey);
     }
 
     @Override
@@ -80,11 +83,12 @@ public class EnvironmentServiceImpl implements EnvironmentService {
 
     @Override
     @Transactional
-    public EnvironmentResponse rotateApiKey(UUID id) {
+    public EnvironmentSecretResponse rotateApiKey(UUID id) {
         permissionService.requireRoleForEnvironment(id, MemberRole.OWNER, MemberRole.ADMIN);
         Environment env = findById(id);
-        env.setApiKey(ApiKeyGenerator.generate());
-        return toResponse(environmentRepository.save(env));
+        String plaintextKey = ApiKeyGenerator.generate();
+        env.setApiKeyHash(ApiKeyHasher.hash(plaintextKey));
+        return toSecretResponse(environmentRepository.save(env), plaintextKey);
     }
 
     private Environment findById(UUID id) {
@@ -98,7 +102,18 @@ public class EnvironmentServiceImpl implements EnvironmentService {
                 .name(env.getName())
                 .description(env.getDescription())
                 .projectId(env.getProject().getId())
-                .apiKey(env.getApiKey())
+                .createdAt(env.getCreatedAt())
+                .build();
+    }
+
+    /** Response for create/rotate: the same fields as {@link #toResponse} plus the one-time plaintext key. */
+    private EnvironmentSecretResponse toSecretResponse(Environment env, String plaintextKey) {
+        return EnvironmentSecretResponse.builder()
+                .id(env.getId())
+                .name(env.getName())
+                .description(env.getDescription())
+                .projectId(env.getProject().getId())
+                .apiKey(plaintextKey)
                 .createdAt(env.getCreatedAt())
                 .build();
     }

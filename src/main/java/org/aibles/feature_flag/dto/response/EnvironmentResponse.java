@@ -13,6 +13,5 @@ public class EnvironmentResponse {
     private String name;
     private String description;
     private UUID projectId;
-    private String apiKey;
     private LocalDateTime createdAt;
 }

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Issue #24: hash SDK API keys at rest.
+      Replaces the plaintext `api_key` column with a SHA-256 hash (`api_key_hash`)
+      and adds `last_used_at` audit tracking. Existing plaintext keys are hashed
+      in-place so live SDK credentials keep working after the migration.
+    -->
+
+    <!-- A) Add the new columns (nullable for now so existing rows can be backfilled). -->
+    <changeSet id="009-1-add-api-key-hash-and-last-used" author="dev">
+        <addColumn tableName="environments">
+            <column name="api_key_hash" type="VARCHAR(64)"/>
+            <column name="last_used_at" type="TIMESTAMPTZ"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="environments" columnName="api_key_hash"/>
+            <dropColumn tableName="environments" columnName="last_used_at"/>
+        </rollback>
+    </changeSet>
+
+    <!--
+      B) Backfill: hash existing plaintext keys in-place. Postgres-only via pgcrypto's
+      digest(); encode(digest(x,'sha256'),'hex') matches the lowercase hex SHA-256 the
+      application computes in ApiKeyHasher, so migrated keys authenticate unchanged.
+      Skipped on H2 (test DB has no pgcrypto and no seeded rows to migrate).
+    -->
+    <changeSet id="009-2-backfill-api-key-hash" author="dev" dbms="postgresql">
+        <sql>CREATE EXTENSION IF NOT EXISTS pgcrypto;</sql>
+        <sql>UPDATE environments SET api_key_hash = encode(digest(api_key, 'sha256'), 'hex');</sql>
+        <rollback/>
+    </changeSet>
+
+    <!-- C) Enforce the hash column and drop the plaintext column entirely. -->
+    <changeSet id="009-3-enforce-hash-drop-plaintext" author="dev">
+        <addNotNullConstraint tableName="environments"
+                              columnName="api_key_hash"
+                              columnDataType="VARCHAR(64)"/>
+        <addUniqueConstraint tableName="environments"
+                             columnNames="api_key_hash"
+                             constraintName="uq_environments_api_key_hash"/>
+        <dropUniqueConstraint tableName="environments"
+                              constraintName="uq_environments_api_key"/>
+        <dropColumn tableName="environments" columnName="api_key"/>
+        <rollback>
+            <addColumn tableName="environments">
+                <column name="api_key" type="VARCHAR(64)"/>
+            </addColumn>
+            <addUniqueConstraint tableName="environments"
+                                 columnNames="api_key"
+                                 constraintName="uq_environments_api_key"/>
+            <dropUniqueConstraint tableName="environments"
+                                  constraintName="uq_environments_api_key_hash"/>
+            <dropNotNullConstraint tableName="environments"
+                                   columnName="api_key_hash"
+                                   columnDataType="VARCHAR(64)"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

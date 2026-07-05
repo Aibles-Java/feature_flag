@@ -32,8 +32,13 @@ public class Environment {
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    @Column(name = "api_key", nullable = false, unique = true, length = 64)
-    private String apiKey;
+    /** SHA-256 hash (lowercase hex) of the SDK API key. The plaintext is never stored. */
+    @Column(name = "api_key_hash", nullable = false, unique = true, length = 64)
+    private String apiKeyHash;
+
+    /** Last time this key successfully authenticated an SDK request (audit). Coarse — see filter. */
+    @Column(name = "last_used_at")
+    private LocalDateTime lastUsedAt;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
