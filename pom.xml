@@ -19,6 +19,7 @@
         <mapstruct.version>1.6.3</mapstruct.version>
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.8.9</springdoc.version>
+        <bucket4j.version>8.19.0</bucket4j.version>
         <jacoco.version>0.8.13</jacoco.version>
         <!-- Coverage gate: raise toward the 80% target in CLAUDE.md as real tests land (see #3). -->
         <jacoco.line.coverage>0.00</jacoco.line.coverage>
@@ -92,6 +93,18 @@
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
             <version>${springdoc.version}</version>
+        </dependency>
+
+        <!-- Rate limiting (token-bucket, in-memory) -->
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j_jdk17-core</artifactId>
+            <version>${bucket4j.version}</version>
+        </dependency>
+        <!-- Bounded/expiring store for rate-limit buckets (version managed by the Spring Boot BOM). -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
         </dependency>
 
         <!-- Test -->

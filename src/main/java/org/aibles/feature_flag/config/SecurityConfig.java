@@ -6,6 +6,11 @@ import org.aibles.feature_flag.security.ApiKeyAuthenticationFilter;
 import org.aibles.feature_flag.security.CustomUserDetailsService;
 import org.aibles.feature_flag.security.JwtAuthenticationFilter;
 import org.aibles.feature_flag.security.JwtTokenProvider;
+import org.aibles.feature_flag.security.ratelimit.AuthRateLimitFilter;
+import org.aibles.feature_flag.security.ratelimit.RateLimitProperties;
+import org.aibles.feature_flag.security.ratelimit.RateLimitService;
+import org.aibles.feature_flag.security.ratelimit.SdkRateLimitFilter;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -30,12 +35,14 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
+@EnableConfigurationProperties(RateLimitProperties.class)
 @RequiredArgsConstructor
 public class SecurityConfig {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final CustomUserDetailsService userDetailsService;
     private final EnvironmentRepository environmentRepository;
+    private final RateLimitService rateLimitService;
 
     // Chain 1: SDK endpoints — authenticated via API key header
     @Bean
@@ -43,6 +50,7 @@ public class SecurityConfig {
     public SecurityFilterChain sdkFilterChain(HttpSecurity http) throws Exception {
         ApiKeyAuthenticationFilter apiKeyFilter =
                 new ApiKeyAuthenticationFilter(environmentRepository);
+        SdkRateLimitFilter sdkRateLimitFilter = new SdkRateLimitFilter(rateLimitService);
 
         http
                 .securityMatcher("/api/v1/sdk/**")
@@ -50,7 +58,10 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
-                .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
+                // Anchor after the standard UsernamePasswordAuthenticationFilter, which sits after
+                // apiKeyFilter — so the Environment principal is already resolved when we key the limiter.
+                .addFilterAfter(sdkRateLimitFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
@@ -61,6 +72,7 @@ public class SecurityConfig {
     public SecurityFilterChain adminFilterChain(HttpSecurity http) throws Exception {
         JwtAuthenticationFilter jwtFilter =
                 new JwtAuthenticationFilter(jwtTokenProvider, userDetailsService);
+        AuthRateLimitFilter authRateLimitFilter = new AuthRateLimitFilter(rateLimitService);
 
         http
                 .csrf(AbstractHttpConfigurer::disable)
@@ -70,6 +82,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/auth/**", "/swagger-ui/**", "/swagger-ui.html", "/api-docs/**").permitAll()
                         .anyRequest().authenticated()
                 )
+                // Per-IP throttle on the (permitAll) /api/v1/auth/** endpoints. Anchored on the
+                // standard UsernamePasswordAuthenticationFilter (added before jwtFilter so it runs first).
+                .addFilterBefore(authRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
