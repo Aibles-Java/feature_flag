@@ -117,15 +117,40 @@ class SecurityChainIntegrationTest {
         String plaintextKey = "sdk-plaintext-" + UUID.randomUUID();
         persistEnvironmentWithApiKeyHash(ApiKeyHasher.hash(plaintextKey));
 
-        int status = mockMvc.perform(get(SDK_ENDPOINT).header("X-Environment-Key", plaintextKey))
-                .andReturn().getResponse().getStatus();
-
         // Authentication succeeded: the request got past the API-key filter (no 401).
-        assertThat(status).isNotEqualTo(HttpStatus.UNAUTHORIZED.value());
+        assertThat(statusFor(plaintextKey)).isNotEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    @Test
+    void rotatingApiKeyInvalidatesOldKeyAndAcceptsNewOne() throws Exception {
+        // The core rotation guarantee, exercised end-to-end through the real SDK auth path
+        // (findByApiKeyHash): once the stored hash is replaced, the old plaintext can no longer
+        // authenticate and only the new plaintext does. (The service's rotate logic itself is
+        // unit-tested in EnvironmentServiceImplTest; here we drive the actual filter.)
+        String oldKey = "old-" + UUID.randomUUID();
+        String newKey = "new-" + UUID.randomUUID();
+        Environment env = persistEnvironmentWithApiKeyHash(ApiKeyHasher.hash(oldKey));
+
+        // Before rotation the old key authenticates.
+        assertThat(statusFor(oldKey)).isNotEqualTo(HttpStatus.UNAUTHORIZED.value());
+
+        // Rotate: the stored hash is replaced with the new key's hash (as rotateApiKey does).
+        env.setApiKeyHash(ApiKeyHasher.hash(newKey));
+        environmentRepository.save(env);
+
+        // The old key is now rejected; the new key authenticates.
+        assertThat(statusFor(oldKey)).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+        assertThat(statusFor(newKey)).isNotEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    /** Presents {@code apiKey} on the SDK chain and returns the raw HTTP status. */
+    private int statusFor(String apiKey) throws Exception {
+        return mockMvc.perform(get(SDK_ENDPOINT).header("X-Environment-Key", apiKey))
+                .andReturn().getResponse().getStatus();
     }
 
     /** Builds a minimal Org → Project → Environment chain so the SDK filter can resolve the key. */
-    private void persistEnvironmentWithApiKeyHash(String apiKeyHash) {
+    private Environment persistEnvironmentWithApiKeyHash(String apiKeyHash) {
         String unique = UUID.randomUUID().toString();
         Organization org = organizationRepository.save(Organization.builder()
                 .name("org-" + unique)
@@ -135,7 +160,7 @@ class SecurityChainIntegrationTest {
                 .organization(org)
                 .name("project-" + unique)
                 .build());
-        environmentRepository.save(Environment.builder()
+        return environmentRepository.save(Environment.builder()
                 .project(project)
                 .name("env-" + unique)
                 .apiKeyHash(apiKeyHash)
