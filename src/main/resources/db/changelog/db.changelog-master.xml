@@ -12,5 +12,6 @@
     <include file="db/changelog/migrations/006-create-feature-flags.xml"/>
     <include file="db/changelog/migrations/007-create-flag-environment-states.xml"/>
     <include file="db/changelog/migrations/008-add-rollout-percent.xml"/>
+    <include file="db/changelog/migrations/009-hash-api-keys.xml"/>
 
 </databaseChangeLog>

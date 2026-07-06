@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
 import org.aibles.feature_flag.dto.response.EnvironmentResponse;
+import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
 import org.aibles.feature_flag.service.EnvironmentService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -21,7 +22,7 @@ public class EnvironmentController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public EnvironmentResponse create(@Valid @RequestBody CreateEnvironmentRequest request) {
+    public EnvironmentSecretResponse create(@Valid @RequestBody CreateEnvironmentRequest request) {
         return environmentService.create(request);
     }
 
@@ -48,7 +49,7 @@ public class EnvironmentController {
     }
 
     @PostMapping("/{envId}/api-key/rotate")
-    public EnvironmentResponse rotateApiKey(@PathVariable UUID envId) {
+    public EnvironmentSecretResponse rotateApiKey(@PathVariable UUID envId) {
         return environmentService.rotateApiKey(envId);
     }
 }
