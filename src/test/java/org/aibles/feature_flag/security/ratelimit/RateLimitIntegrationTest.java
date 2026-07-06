@@ -6,6 +6,7 @@ import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
+import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -123,11 +124,12 @@ class RateLimitIntegrationTest {
                 .organization(org)
                 .name("project-" + unique)
                 .build());
+        // Store only the SHA-256 hash (issue #24); the plaintext key is what the SDK sends in the header.
         String apiKey = "ratelimit-key-" + unique;
         environmentRepository.save(Environment.builder()
                 .project(project)
                 .name("env-" + unique)
-                .apiKey(apiKey)
+                .apiKeyHash(ApiKeyHasher.hash(apiKey))
                 .build());
         return apiKey;
     }
