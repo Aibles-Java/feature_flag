@@ -143,6 +143,26 @@ class SecurityChainIntegrationTest {
         assertThat(statusFor(newKey)).isNotEqualTo(HttpStatus.UNAUTHORIZED.value());
     }
 
+    // --- Actuator health (issue #25) ----------------------------------------
+
+    @Test
+    void actuatorHealthIsReachableAnonymously() throws Exception {
+        // No JWT, no API key — load balancers / probes must reach it. DB is up (H2) so 200 UP.
+        mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+    }
+
+    @Test
+    void actuatorLivenessAndReadinessAreReachableAnonymously() throws Exception {
+        mockMvc.perform(get("/actuator/health/liveness")).andExpect(status().isOk());
+        mockMvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());
+    }
+
+    @Test
+    void otherActuatorEndpointsAreNotAnonymouslyExposed() throws Exception {
+        // Everything under /actuator except health/** falls through to authenticated() → 403 without a JWT.
+        mockMvc.perform(get("/actuator/info")).andExpect(status().isForbidden());
+    }
+
     /** Presents {@code apiKey} on the SDK chain and returns the raw HTTP status. */
     private int statusFor(String apiKey) throws Exception {
         return mockMvc.perform(get(SDK_ENDPOINT).header("X-Environment-Key", apiKey))

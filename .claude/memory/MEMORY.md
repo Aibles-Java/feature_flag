@@ -5,6 +5,7 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [Actuator health/liveness/readiness endpoints](decisions/0010-actuator-health-endpoints.md) — issue #25: expose only health+info, only /actuator/health/** anonymous (info+rest authenticated), readiness includes db, liveness process-only, show-details=never; Dockerfile HEALTHCHECK on readiness (port 8081)
 - [Hash SDK API keys at rest (SHA-256)](decisions/0008-hash-sdk-api-keys-at-rest.md) — issue #24: store unsalted SHA-256 hex (keys are 256-bit random), plaintext one-time reveal via dedicated EnvironmentSecretResponse (breaking), last_used_at throttled ~5min; migration 009 backfills via pgcrypto
 - [Postgres-only migrations must be guarded on H2](conventions/liquibase-postgres-only-migrations-on-h2.md) — tests run the full changelog on H2 (PostgreSQL mode); wrap pgcrypto/extension SQL in `dbms="postgresql"` (empty table → backfill skip is safe); verify Postgres/Java hash parity with a pinned vector
 - [SDK eval endpoint 500s on H2 (reserved `key` column)](conventions/sdk-eval-key-column-h2-500.md) — issue #24: GET /api/v1/sdk/flags 500s on H2 (`Column "ff1_0.key" not found`); pre-existing/H2-only; for auth tests assert "not 401" not 200
