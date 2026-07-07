@@ -2,75 +2,108 @@ package org.aibles.feature_flag.service.impl;
 
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
+import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
+import org.aibles.feature_flag.dto.response.EnvironmentResponse;
 import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
+import org.aibles.feature_flag.exception.DuplicateResourceException;
+import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.util.ApiKeyHasher;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
-/**
- * Unit tests for {@link EnvironmentServiceImpl} focused on the issue #24 invariant: create and
- * rotate return the plaintext key exactly once, but only its SHA-256 hash is ever persisted.
- */
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class EnvironmentServiceImplTest {
 
-    @Mock
-    private EnvironmentRepository environmentRepository;
-    @Mock
-    private ProjectRepository projectRepository;
-    @Mock
-    private PermissionService permissionService;
+    @Mock EnvironmentRepository environmentRepository;
+    @Mock ProjectRepository projectRepository;
+    @Mock PermissionService permissionService;
 
-    @InjectMocks
-    private EnvironmentServiceImpl service;
+    EnvironmentServiceImpl service;
+
+    UUID projectId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    Project project;
+    Environment env;
+
+    @BeforeEach
+    void setUp() {
+        service = new EnvironmentServiceImpl(environmentRepository, projectRepository, permissionService);
+        project = Project.builder().id(projectId).name("proj").build();
+        env = Environment.builder().id(envId).project(project).name("prod")
+                .apiKeyHash(ApiKeyHasher.hash("old-key")).build();
+        doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
+        doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
+    }
 
     @Test
-    void createStoresHashAndReturnsPlaintextOnce() {
-        UUID projectId = UUID.randomUUID();
-        CreateEnvironmentRequest request = new CreateEnvironmentRequest();
-        request.setProjectId(projectId);
-        request.setName("prod");
+    void create_throwsDuplicate_whenNameExistsInProject() {
+        when(environmentRepository.existsByProjectIdAndName(projectId, "prod")).thenReturn(true);
 
-        Project project = Project.builder().id(projectId).build();
-        when(environmentRepository.existsByProjectIdAndName(projectId, "prod")).thenReturn(false);
+        CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+        req.setProjectId(projectId);
+        req.setName("prod");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(DuplicateResourceException.class);
+        verify(environmentRepository, never()).save(any());
+    }
+
+    @Test
+    void create_storesHashAndReturnsPlaintextOnce() {
+        when(environmentRepository.existsByProjectIdAndName(projectId, "staging")).thenReturn(false);
         when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
         when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        EnvironmentSecretResponse response = service.create(request);
+        CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+        req.setProjectId(projectId);
+        req.setName("staging");
 
-        // The returned plaintext is a real 64-char hex key...
+        EnvironmentSecretResponse response = service.create(req);
+
         assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
 
-        // ...and the persisted entity holds the hash of that plaintext, never the plaintext itself.
         ArgumentCaptor<Environment> saved = ArgumentCaptor.forClass(Environment.class);
-        org.mockito.Mockito.verify(environmentRepository).save(saved.capture());
+        verify(environmentRepository).save(saved.capture());
         assertThat(saved.getValue().getApiKeyHash())
                 .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
                 .isNotEqualTo(response.getApiKey());
     }
 
     @Test
-    void rotateReplacesHashAndReturnsNewPlaintextOnce() {
-        UUID envId = UUID.randomUUID();
-        Environment env = Environment.builder()
-                .id(envId)
-                .project(Project.builder().id(UUID.randomUUID()).build())
-                .apiKeyHash(ApiKeyHasher.hash("old-key"))
-                .build();
+    void create_throwsResourceNotFound_whenProjectDoesNotExist() {
+        when(environmentRepository.existsByProjectIdAndName(projectId, "x")).thenReturn(false);
+        when(projectRepository.findById(projectId)).thenReturn(Optional.empty());
+
+        CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+        req.setProjectId(projectId);
+        req.setName("x");
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void rotate_replacesHashAndReturnsNewPlaintextOnce() {
         when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
         when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -79,6 +112,38 @@ class EnvironmentServiceImplTest {
         assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
         assertThat(env.getApiKeyHash())
                 .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
-                .isNotEqualTo(ApiKeyHasher.hash("old-key")); // rotated away from the previous hash
+                .isNotEqualTo(ApiKeyHasher.hash("old-key"));
+    }
+
+    @Test
+    void update_changesNameAndDescription() {
+        when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+        when(environmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+        req.setName("production");
+        req.setDescription("Main env");
+
+        EnvironmentResponse response = service.update(envId, req);
+
+        assertThat(response.getName()).isEqualTo("production");
+        assertThat(response.getDescription()).isEqualTo("Main env");
+    }
+
+    @Test
+    void listByProject_delegatesToRepository() {
+        when(environmentRepository.findAllByProjectId(projectId)).thenReturn(List.of(env));
+
+        List<EnvironmentResponse> result = service.listByProject(projectId);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getName()).isEqualTo("prod");
+    }
+
+    @Test
+    void delete_deletesById() {
+        service.delete(envId);
+
+        verify(environmentRepository).deleteById(envId);
     }
 }
