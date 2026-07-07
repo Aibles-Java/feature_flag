@@ -4,51 +4,49 @@
 
 ## Current WIP
 
-**Issue #24** (hash SDK API keys at rest) on branch `feature/issue-24-hash-sdk-api-keys`
-(→ `develop`). Implementation complete and fully verified — **not yet committed/pushed**.
+**Issue #26** (rate limiting) on branch `feature/issue-26-rate-limiting` (→ `develop`).
+Implementation complete + fully verified — **not yet committed/pushed**.
 
-Done:
-- `util/ApiKeyHasher.java` (NEW) — SHA-256 → lowercase 64-char hex.
-- `domain/entity/Environment.java` — `apiKey` → `apiKeyHash` (`api_key_hash`), added
-  `lastUsedAt` (`last_used_at`).
-- `repository/EnvironmentRepository.java` — `findByApiKey` → `findByApiKeyHash`; added
-  `@Transactional @Modifying touchLastUsedAt(id, now, threshold)` (WHERE-guarded).
-- `security/ApiKeyAuthenticationFilter.java` — hash header → `findByApiKeyHash`; throttled
-  (~5min, in-memory check) `last_used_at` stamp.
-- `service/*` + `controller/*` — create/rotate return new `EnvironmentSecretResponse`
-  (plaintext once); `apiKey` removed from `EnvironmentResponse` (breaking).
-- Migration `009-hash-api-keys.xml` (3 changesets, B is `dbms="postgresql"` pgcrypto
-  backfill) + master changelog include.
-- Tests: `ApiKeyHasherTest` (NEW), `EnvironmentServiceImplTest` (NEW), updated
-  `ApiKeyAuthenticationFilterTest` (+throttle tests) and `SecurityChainIntegrationTest`
-  (+valid hashed-key auth). **50/50 pass.**
+Done (new package `security/ratelimit/`):
+- `RateLimitProperties` (`@ConfigurationProperties app.rate-limit.*`), `RateLimitService`
+  (Bucket4j + **Caffeine** `expireAfterAccess=2× refill` to bound the bucket maps),
+  `AbstractRateLimitFilter` (429 + `Retry-After` ProblemDetail), `AuthRateLimitFilter`
+  (per-IP `/api/v1/auth/**`), `SdkRateLimitFilter` (per-env-id `/api/v1/sdk/**`).
+- `SecurityConfig` wires both, anchored on `UsernamePasswordAuthenticationFilter`.
+- `pom.xml`: `bucket4j_jdk17-core:8.19.0` + Caffeine (BOM-managed).
+- Properties: enabled in main, `enabled=false` in test profile.
+- Tests: `RateLimitServiceTest` (unit), `RateLimitIntegrationTest` (own H2 DB, low caps,
+  asserts 429 + Retry-After for BOTH chains). **47/47 pass.**
 
-Verified: migration ran end-to-end on **real Postgres** (backfill hash == app hash, plaintext
-column dropped) in a rolled-back tx; security review **clean** (no findings ≥ conf 7).
+Reviews: security **clean**; code review's one Important finding (unbounded bucket map)
+**fixed** via Caffeine. Two documented follow-ups (NOT in this PR): invalid-key SDK traffic
+is unthrottled (needs a per-IP SDK limit); distributed backend (Redis) for multi-instance.
+
+Numbering: used decision **0009** (not 0008 — #24 holds 0008 on its own unmerged branch).
 
 ## Context to Load
 
-- `decisions/0008-hash-sdk-api-keys-at-rest.md` — the design (unsalted SHA-256, one-time
-  reveal DTO, throttled last_used_at, migration shape).
-- `conventions/liquibase-postgres-only-migrations-on-h2.md` — `dbms="postgresql"` guard rule.
-- `conventions/sdk-eval-key-column-h2-500.md` — SDK eval 500s on H2; assert "not 401".
+- `decisions/0009-rate-limiting-bucket4j.md` — the design + known limitations.
+- `conventions/spring-security-filter-order-anchor.md` — anchor filters on a standard filter.
+- `conventions/second-springboottest-context-shared-h2.md` — give a divergent @SpringBootTest its own H2 DB.
 
 ## Next steps
 
-1. Commit all `#24` changes + the memory files (memory gate needs `.claude/memory/` in the
-   push).
-2. Push `feature/issue-24-hash-sdk-api-keys` (gh is at
-   `C:\Users\ACER\AppData\Local\gh-cli\bin\gh.exe` — **not on PATH**; prepend it for
-   `gh`/`issue-board.sh`).
-3. Open PR with `create-pr` skill (`Closes #24`). Note breaking API change + `last_used_at`
-   throttle in the body.
-4. `.claude/scripts/issue-board.sh ready 24` after PR opens.
+1. Commit `#26` changes + memory (memory gate needs `.claude/memory/`). gh is at
+   `C:\Users\ACER\AppData\Local\gh-cli\bin\gh.exe` — NOT on PATH; prepend it.
+2. Push `feature/issue-26-rate-limiting`.
+3. Open PR with `create-pr` (`Closes #26`); note deployment caveat
+   (`server.forward-headers-strategy=framework` behind a proxy) + the two follow-ups.
+4. `.claude/scripts/issue-board.sh ready 26` after PR opens.
 
-**Parked from previous sessions:**
-- Issue #10 branch (`feature/issue-10-jwt-deleted-user-500`) — commit/push/PR/`ready 10`
-  still pending (board `start 10` also pending).
-- Issue #17 branch (`feature/issue-17-estimate-issue-skill`) — commit + push + PR + `ready 17`.
-- Uncommitted `docs/architecture.md` — land or discard separately (unrelated to #24).
-- Issue #14 (SonarQube) waiting on self-hosted infra, holds `decisions/0006-*`.
-- Follow-up: make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
-- Raise `jacoco.line.coverage` above 0.00 (from #3/#4).
+**Parked / cross-branch:**
+- **Issue #24** (hash SDK API keys) — done, PR **#40** open, on `feature/issue-24-hash-sdk-api-keys`;
+  board move to *Ready For Testing* (`issue-board.sh ready 24`) still PENDING (user paused it), and
+  the `last_used_at` throttled-vs-every-request question is unanswered. #24 holds decision 0008 +
+  conventions `liquibase-postgres-only-migrations-on-h2`, `sdk-eval-key-column-h2-500`.
+- Issue #10 (`feature/issue-10-jwt-deleted-user-500`) — commit/push/PR/`ready 10` pending.
+- Issue #17 (`feature/issue-17-estimate-issue-skill`) — commit + push + PR + `ready 17`.
+- Uncommitted `docs/architecture.md` — unrelated; land or discard separately.
+- Issue #14 (SonarQube) waiting on infra, holds `decisions/0006-*`.
+- Follow-up (#26): per-IP SDK limit for invalid keys; make `feature_flags.key` H2-safe (#24).
+- Raise `jacoco.line.coverage` above 0.00.
