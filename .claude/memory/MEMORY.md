@@ -5,6 +5,8 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [Docker: port alignment + non-root + compose app service](decisions/0011-docker-port-nonroot.md) — issue #27: EXPOSE 8080→8081 (=server.port), non-root `spring` user (USER), add `app` service to docker-compose (DB via service name), no healthcheck until actuator (#25); verified whoami=spring + :8081/api-docs 200
+- [Windows docs case-collision (ARCHITECTURE.md vs architecture.md)](conventions/windows-docs-case-collision.md) — two git files differ only by case → permanently-dirty tree on Windows; never `git add -A`, stage explicit paths; real fix = delete the lowercase stub
 - [Rate limiting with Bucket4j](decisions/0009-rate-limiting-bucket4j.md) — issue #26: in-memory token buckets, per-IP on /auth/** (getRemoteAddr, no XFF), per-env-id on /sdk/**, 429+Retry-After ProblemDetail, Caffeine-evicted buckets; invalid-key SDK traffic unthrottled (follow-up)
 - [SecurityFilter order must anchor on a standard filter](conventions/spring-security-filter-order-anchor.md) — issue #26: addFilterBefore/After on a custom filter → "does not have a registered order" fails every context; anchor on UsernamePasswordAuthenticationFilter
 - [2nd @SpringBootTest context collides on shared H2](conventions/second-springboottest-context-shared-h2.md) — issue #26: distinct @SpringBootTest(properties) = 2nd context re-runs Liquibase on mem:testdb → "DATABASECHANGELOG already exists"; give it its own DB URL
