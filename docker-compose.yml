@@ -16,5 +16,22 @@ services:
       timeout: 5s
       retries: 5
 
+  app:
+    build: .
+    container_name: ff_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Inside the compose network the DB is reached by service name, not localhost.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/feature_flag_db
+      SPRING_DATASOURCE_USERNAME: ff_user
+      SPRING_DATASOURCE_PASSWORD: ff_password
+    ports:
+      # Matches server.port=8081 / Dockerfile EXPOSE.
+      - "8081:8081"
+    # No container healthcheck yet: there is no health endpoint on this branch. Once an
+    # Actuator health endpoint exists, add a HEALTHCHECK on /actuator/health/readiness here.
+
 volumes:
   postgres_data:
