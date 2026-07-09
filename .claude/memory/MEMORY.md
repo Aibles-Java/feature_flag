@@ -5,6 +5,7 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [Project-aware review-pr skill](decisions/0011-review-pr-skill.md) — forks official /code-review (plain MD prompt file): keeps 5-agent + 0–100 confidence <80 filter, adds a 6th reviewer for repo sensitive areas (security chains, immutable key, Liquibase, PermissionService, ApiKeyGenerator); two modes (local diff / PR#+gh comment); fork≠inherit, re-sync on upstream change
 - [Actuator health/liveness/readiness endpoints](decisions/0010-actuator-health-endpoints.md) — issue #25: expose only health+info, only /actuator/health/** anonymous (info+rest authenticated), readiness includes db, liveness process-only, show-details=never; Dockerfile HEALTHCHECK on readiness (port 8081)
 - [permitAll() does not skip servlet filters](conventions/permitall-does-not-skip-servlet-filters.md) — issue #25: permitAll only relaxes authorization; custom filters on the same chain still run for that path — a new anonymous path (e.g. /actuator/health/**) is safe only because AuthRateLimitFilter self-skips non-/auth and JwtFilter no-ops without a Bearer
 - [Rate limiting with Bucket4j](decisions/0009-rate-limiting-bucket4j.md) — issue #26: in-memory token buckets, per-IP on /auth/** (getRemoteAddr, no XFF), per-env-id on /sdk/**, 429+Retry-After ProblemDetail, Caffeine-evicted buckets; invalid-key SDK traffic unthrottled (follow-up)
