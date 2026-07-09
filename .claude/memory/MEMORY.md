@@ -5,6 +5,7 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [Project-aware review-pr skill](decisions/0010-review-pr-skill.md) — forks official /code-review (plain MD prompt file): keeps 5-agent + 0–100 confidence <80 filter, adds a 6th reviewer for repo sensitive areas (security chains, immutable key, Liquibase, PermissionService, ApiKeyGenerator); two modes (local diff / PR#+gh comment); fork≠inherit, re-sync on upstream change
 - [Rate limiting with Bucket4j](decisions/0009-rate-limiting-bucket4j.md) — issue #26: in-memory token buckets, per-IP on /auth/** (getRemoteAddr, no XFF), per-env-id on /sdk/**, 429+Retry-After ProblemDetail, Caffeine-evicted buckets; invalid-key SDK traffic unthrottled (follow-up)
 - [SecurityFilter order must anchor on a standard filter](conventions/spring-security-filter-order-anchor.md) — issue #26: addFilterBefore/After on a custom filter → "does not have a registered order" fails every context; anchor on UsernamePasswordAuthenticationFilter
 - [2nd @SpringBootTest context collides on shared H2](conventions/second-springboottest-context-shared-h2.md) — issue #26: distinct @SpringBootTest(properties) = 2nd context re-runs Liquibase on mem:testdb → "DATABASECHANGELOG already exists"; give it its own DB URL
