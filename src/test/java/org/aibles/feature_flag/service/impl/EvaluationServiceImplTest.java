@@ -5,8 +5,10 @@ import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.aibles.feature_flag.dto.response.FlagEvaluationResponse;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +40,8 @@ class EvaluationServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new EvaluationServiceImpl(flagStateRepository, featureFlagRepository);
+        service = new EvaluationServiceImpl(flagStateRepository, featureFlagRepository,
+                new FeatureFlagMetrics(new SimpleMeterRegistry()));
         project = Project.builder().id(projectId).name("proj").build();
         environment = Environment.builder().id(envId).project(project).name("prod").apiKeyHash("key").build();
     }

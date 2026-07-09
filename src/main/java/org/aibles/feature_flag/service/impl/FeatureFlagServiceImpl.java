@@ -13,6 +13,7 @@ import org.aibles.feature_flag.dto.response.FeatureFlagResponse;
 import org.aibles.feature_flag.dto.response.FlagStateResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
@@ -33,6 +34,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     private final EnvironmentRepository environmentRepository;
     private final FlagEnvironmentStateRepository flagStateRepository;
     private final PermissionService permissionService;
+    private final FeatureFlagMetrics metrics;
 
     @Override
     @Transactional
@@ -66,6 +68,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             flagStateRepository.save(state);
         }
 
+        metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.CREATED);
         return toResponse(flag);
     }
 
@@ -92,7 +95,9 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         // key is intentionally not updated — it is immutable
         if (request.getName() != null) flag.setName(request.getName());
         if (request.getDescription() != null) flag.setDescription(request.getDescription());
-        return toResponse(featureFlagRepository.save(flag));
+        FeatureFlagResponse response = toResponse(featureFlagRepository.save(flag));
+        metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.UPDATED);
+        return response;
     }
 
     @Override
@@ -102,6 +107,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         permissionService.requireRoleForProject(flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
         flag.setArchived(true);
         featureFlagRepository.save(flag);
+        metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.ARCHIVED);
     }
 
     @Override
@@ -111,6 +117,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         permissionService.requireRoleForProject(flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
         flag.setArchived(false);
         featureFlagRepository.save(flag);
+        metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.UNARCHIVED);
     }
 
     @Override
@@ -144,7 +151,9 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         state.setEnabled(request.getEnabled());
         state.setValue(request.getValue());
         if (request.getRolloutPercent() != null) state.setRolloutPercent(request.getRolloutPercent());
-        return toStateResponse(flagStateRepository.save(state));
+        FlagStateResponse response = toStateResponse(flagStateRepository.save(state));
+        metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.STATE_UPDATED);
+        return response;
     }
 
     private FeatureFlag findById(UUID id) {

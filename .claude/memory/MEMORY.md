@@ -5,6 +5,8 @@ Updated by `/save-memory`. See `README.md` for how this system works.*
 
 <!-- Format: - [Title](path) — one-line hook. Newest relevant entries near the top. -->
 
+- [Micrometer + Prometheus metrics](decisions/0012-micrometer-prometheus-metrics.md) — issue #29: self-contained actuator+prometheus (didn't wait for #25), `/actuator/prometheus` behind @Order(0) mgmt chain (health public, else HTTP-Basic METRICS role, local in-memory user), bounded meters `ff_evaluations_total{environment}`+timer / `ff_flag_changes_total` / `ff_auth_failures_total`, eager-registered at 0
+- [Actuator mgmt chain on Boot 4.1 (2 gotchas)](conventions/actuator-management-chain-boot41.md) — `EndpointRequest`/`HealthEndpoint` moved to the `spring-boot-security` module in 4.1 → match `/actuator/**` paths instead; blank `{noop}` shared secret = auth BYPASS (empty-vs-empty matches) → build the account `.disabled(true)` when the secret is blank
 - [Rate limiting with Bucket4j](decisions/0009-rate-limiting-bucket4j.md) — issue #26: in-memory token buckets, per-IP on /auth/** (getRemoteAddr, no XFF), per-env-id on /sdk/**, 429+Retry-After ProblemDetail, Caffeine-evicted buckets; invalid-key SDK traffic unthrottled (follow-up)
 - [SecurityFilter order must anchor on a standard filter](conventions/spring-security-filter-order-anchor.md) — issue #26: addFilterBefore/After on a custom filter → "does not have a registered order" fails every context; anchor on UsernamePasswordAuthenticationFilter
 - [2nd @SpringBootTest context collides on shared H2](conventions/second-springboottest-context-shared-h2.md) — issue #26: distinct @SpringBootTest(properties) = 2nd context re-runs Liquibase on mem:testdb → "DATABASECHANGELOG already exists"; give it its own DB URL

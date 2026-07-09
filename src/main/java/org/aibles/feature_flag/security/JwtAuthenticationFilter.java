@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -23,6 +24,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider tokenProvider;
     private final CustomUserDetailsService userDetailsService;
+    private final FeatureFlagMetrics metrics;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -30,23 +32,30 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
         String token = extractToken(request);
 
-        if (StringUtils.hasText(token) && tokenProvider.validateToken(token)) {
-            try {
-                String email = tokenProvider.getEmailFromToken(token);
-                UserDetails userDetails = userDetailsService.loadUserByUsername(email);
+        if (StringUtils.hasText(token)) {
+            if (tokenProvider.validateToken(token)) {
+                try {
+                    String email = tokenProvider.getEmailFromToken(token);
+                    UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
-                UsernamePasswordAuthenticationToken authentication =
-                        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authentication);
-            } catch (UsernameNotFoundException ex) {
-                log.warn("JWT valid but subject no longer exists — request proceeds unauthenticated: {}", ex.getMessage());
-                // fall through unauthenticated → 403 at the authorization filter
-            } catch (JwtException ex) {
-                // Guards the TOCTOU window: validateToken() and getEmailFromToken() each parse
-                // the token independently, so an expiry crossing between the two calls would
-                // otherwise escape as 500.
-                log.debug("JWT exception after initial validation (possible TOCTOU on expiry): {}", ex.getMessage());
+                    UsernamePasswordAuthenticationToken authentication =
+                            new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                } catch (UsernameNotFoundException ex) {
+                    metrics.recordAuthFailure(FeatureFlagMetrics.AuthFailure.ADMIN_UNKNOWN_SUBJECT);
+                    log.warn("JWT valid but subject no longer exists — request proceeds unauthenticated: {}", ex.getMessage());
+                    // fall through unauthenticated → 403 at the authorization filter
+                } catch (JwtException ex) {
+                    // Guards the TOCTOU window: validateToken() and getEmailFromToken() each parse
+                    // the token independently, so an expiry crossing between the two calls would
+                    // otherwise escape as 500.
+                    metrics.recordAuthFailure(FeatureFlagMetrics.AuthFailure.ADMIN_INVALID_TOKEN);
+                    log.debug("JWT exception after initial validation (possible TOCTOU on expiry): {}", ex.getMessage());
+                }
+            } else {
+                // A Bearer token was presented but failed validation (bad signature, expired, malformed).
+                metrics.recordAuthFailure(FeatureFlagMetrics.AuthFailure.ADMIN_INVALID_TOKEN);
             }
         }
 

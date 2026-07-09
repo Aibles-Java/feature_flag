@@ -11,8 +11,10 @@ import org.aibles.feature_flag.dto.request.UpdateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
 import org.aibles.feature_flag.dto.response.FeatureFlagResponse;
 import org.aibles.feature_flag.dto.response.FlagStateResponse;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
@@ -54,7 +56,8 @@ class FeatureFlagServiceImplTest {
     void setUp() {
         service = new FeatureFlagServiceImpl(
                 featureFlagRepository, projectRepository, environmentRepository,
-                flagStateRepository, permissionService);
+                flagStateRepository, permissionService,
+                new FeatureFlagMetrics(new SimpleMeterRegistry()));
         project = Project.builder().id(projectId).name("proj").build();
         doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
     }

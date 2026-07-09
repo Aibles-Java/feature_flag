@@ -1,7 +1,9 @@
 package org.aibles.feature_flag.security;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.FilterChain;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.junit.jupiter.api.AfterEach;
@@ -47,7 +49,8 @@ class ApiKeyAuthenticationFilterTest {
 
     @BeforeEach
     void setUp() {
-        filter = new ApiKeyAuthenticationFilter(environmentRepository);
+        filter = new ApiKeyAuthenticationFilter(environmentRepository,
+                new FeatureFlagMetrics(new SimpleMeterRegistry()));
     }
 
     @AfterEach

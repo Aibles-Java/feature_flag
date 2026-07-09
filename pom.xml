@@ -95,6 +95,18 @@
             <version>${springdoc.version}</version>
         </dependency>
 
+        <!-- Observability: Actuator endpoints + Prometheus scrape registry (issue #29).
+             Actuator is added here (not inherited from #25) so this branch is self-contained. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Rate limiting (token-bucket, in-memory) -->
         <dependency>
             <groupId>com.bucket4j</groupId>

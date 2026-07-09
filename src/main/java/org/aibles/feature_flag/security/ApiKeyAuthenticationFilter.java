@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.springframework.http.HttpStatus;
@@ -32,6 +33,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
     private static final Duration LAST_USED_THROTTLE = Duration.ofMinutes(5);
 
     private final EnvironmentRepository environmentRepository;
+    private final FeatureFlagMetrics metrics;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -40,12 +42,14 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         String apiKey = request.getHeader(API_KEY_HEADER);
 
         if (!StringUtils.hasText(apiKey)) {
+            metrics.recordAuthFailure(FeatureFlagMetrics.AuthFailure.SDK_MISSING_KEY);
             writeUnauthorized(response, "Missing X-Environment-Key header");
             return;
         }
 
         Optional<Environment> environment = environmentRepository.findByApiKeyHash(ApiKeyHasher.hash(apiKey));
         if (environment.isEmpty()) {
+            metrics.recordAuthFailure(FeatureFlagMetrics.AuthFailure.SDK_INVALID_KEY);
             writeUnauthorized(response, "Invalid API key");
             return;
         }
