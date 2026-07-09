@@ -1,4 +1,4 @@
-# 0010 — Project-aware review-pr skill (fork of official /code-review)
+# 0011 — Project-aware review-pr skill (fork of official /code-review)
 
 **Date:** 2026-07-09
 
