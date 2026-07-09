@@ -79,6 +79,10 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // Ops health probes (liveness/readiness) must be reachable anonymously by
+                        // load balancers / k8s / docker HEALTHCHECK. All other actuator endpoints
+                        // fall through to authenticated() below, so they are not anonymously exposed.
+                        .requestMatchers("/actuator/health/**").permitAll()
                         .requestMatchers("/api/v1/auth/**", "/swagger-ui/**", "/swagger-ui.html", "/api-docs/**").permitAll()
                         .anyRequest().authenticated()
                 )
