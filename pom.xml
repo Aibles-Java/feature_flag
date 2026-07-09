@@ -43,6 +43,10 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
 
         <!-- Database -->
         <dependency>
@@ -95,12 +99,9 @@
             <version>${springdoc.version}</version>
         </dependency>
 
-        <!-- Observability: Actuator endpoints + Prometheus scrape registry (issue #29).
-             Actuator is added here (not inherited from #25) so this branch is self-contained. -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
+        <!-- Observability: Prometheus scrape registry (issue #29). Actuator itself is declared
+             once above (added by #25 for health probes); this adds the Prometheus meter registry
+             so /actuator/prometheus is served. -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>

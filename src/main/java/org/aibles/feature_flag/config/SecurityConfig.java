@@ -141,6 +141,9 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // Note: /actuator/** (incl. the public health probes from #25) is owned by the
+                        // higher-precedence managementFilterChain (@Order(0)) above, so it never reaches
+                        // this chain — no actuator rule is needed or effective here.
                         .requestMatchers("/api/v1/auth/**", "/swagger-ui/**", "/swagger-ui.html", "/api-docs/**").permitAll()
                         .anyRequest().authenticated()
                 )

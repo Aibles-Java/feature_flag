@@ -143,6 +143,28 @@ class SecurityChainIntegrationTest {
         assertThat(statusFor(newKey)).isNotEqualTo(HttpStatus.UNAUTHORIZED.value());
     }
 
+    // --- Actuator health (issue #25) ----------------------------------------
+
+    @Test
+    void actuatorHealthIsReachableAnonymously() throws Exception {
+        // No JWT, no API key — load balancers / probes must reach it. DB is up (H2) so 200 UP.
+        mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+    }
+
+    @Test
+    void actuatorLivenessAndReadinessAreReachableAnonymously() throws Exception {
+        mockMvc.perform(get("/actuator/health/liveness")).andExpect(status().isOk());
+        mockMvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());
+    }
+
+    @Test
+    void otherActuatorEndpointsAreNotAnonymouslyExposed() throws Exception {
+        // /actuator/** is owned by the managementFilterChain (@Order(0), issue #29): everything
+        // except health/** requires HTTP Basic (METRICS role), so an anonymous request is rejected
+        // with 401 + a Basic auth challenge (not the JWT chain's 403). Still not anonymously exposed.
+        mockMvc.perform(get("/actuator/info")).andExpect(status().isUnauthorized());
+    }
+
     /** Presents {@code apiKey} on the SDK chain and returns the raw HTTP status. */
     private int statusFor(String apiKey) throws Exception {
         return mockMvc.perform(get(SDK_ENDPOINT).header("X-Environment-Key", apiKey))
