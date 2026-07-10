@@ -4,58 +4,49 @@
 
 ## Current WIP
 
-**Issue #25** (Actuator health/liveness/readiness) on branch `feature/issue-25-actuator-health`
-(→ `develop`). Implemented, reviewed, **merged with `develop`, and PUSHED**. PR **#42 OPEN**,
-**MERGEABLE** (no conflict); CI (`Build & test (Java 21)`) was **pending** at push — check it's
-green before merging.
+**Harness-improvement session** (no GitHub issue) on branch `develop`. Added four
+enforcement gaps — see `decisions/0012-harness-guards-spotless-coverage.md`. All logic
+tested (guard block/allow, regex, JSON/XML validity); nothing committed yet.
 
-This session:
-- Reviewed PR #42 — exposure/permit design is sound. One design note (not blocking): the
-  Dockerfile `HEALTHCHECK` targets DB-dependent `readiness`, so a DB blip marks the *container*
-  unhealthy (Swarm / `depends_on: service_healthy` would react). Container health conventionally
-  maps to `liveness`; readiness was a conscious choice. Also: DB-down readiness→503 path is
-  untested (H2 always up). Both logged as follow-ups below.
-- Merged `develop` (which now has #26 rate-limiting) into the #25 branch to clear the predicted
-  `SecurityConfig.java` conflict — **kept both** (`permitAll /actuator/health/**` + the rate-limit
-  filter wiring). Merge commit `8568793`, pushed.
-- **Verified** the merged result: `AuthRateLimitFilter.shouldNotFilter` (skips non-`/auth`) and
-  `JwtAuthenticationFilter` (no-ops without a Bearer) both leave `/actuator/health/**` untouched
-  even though they run on the admin chain → new convention
-  `permitall-does-not-skip-servlet-filters`.
-
-**Merge gotcha (fixed this session):** resolving the merge took `develop`'s `MEMORY.md` +
-`HANDOFF.md`, which **dropped the `0010-actuator` index line** from `MEMORY.md` (the decision file
-itself survived). Restored it during `/save-memory`. Watch for this whenever merging `develop`
-into a feature branch — index/handoff additions can get clobbered even when the content files are
-fine.
+Files touched this session:
+- **New hooks:** `.claude/hooks/liquibase-immutable-guard.sh` (PreToolUse:Edit|Write|MultiEdit),
+  `.claude/hooks/security-review-gate.sh` (Stop), `.claude/hooks/format-changed.sh` (Stop).
+- **New script:** `.claude/scripts/coverage-floor.sh`.
+- **`.claude/settings.json`** — wired the three new hooks in.
+- **`pom.xml`** — added Spotless plugin (`spotless:check` bound to `verify`) + properties.
+- **`CLAUDE.md`** — updated Code-style line; added Security-review + Migrations-immutable bullets.
+- Plus this memory commit (decision 0012, MEMORY.md, HANDOFF, session log).
 
 ## Context to Load
 
-- `decisions/0010-actuator-health-endpoints.md` — exposure + permit rules + probe/readiness design.
-- `conventions/permitall-does-not-skip-servlet-filters.md` — permitAll ≠ skip filters; verify each
-  custom filter self-skips a new anonymous path.
+- `decisions/0012-harness-guards-spotless-coverage.md` — what each hook/script does + the
+  two required rollout commands.
+
+## Status — DONE this session
+- Installed JDK 21 (`brew install --cask temurin@21`, 21.0.11).
+- `./mvnw spotless:apply` reformatted 103 files; `./mvnw verify` green (165 tests,
+  spotless:check + jacoco:check pass).
+- Coverage measured 84.8% → floor locked at 0.83 in `pom.xml`.
+- Two commits built on `feature/harness-guards`: `style:` (103 java files) + `chore(harness):`.
 
 ## Next steps
+1. **Push** `feature/harness-guards` and open a PR into `develop` (gitflow). Memory gate is
+   satisfied (commit updates `.claude/memory/`).
+2. Sanity-check the new hooks fire live: edit an existing migration → should block;
+   touch `security/` then Stop → should nudge.
+3. Unrelated `docs/ARCHITECTURE.md` change is still uncommitted — land or discard separately.
 
-1. Watch PR #42 CI → green, then merge to `develop` (squash/merge per repo convention).
-2. `.claude/scripts/issue-board.sh ready 25` — move the board card to *Ready For Testing*
-   (may already be done; verify). gh at `C:\Users\ACER\AppData\Local\gh-cli\bin\gh.exe` (NOT on
-   PATH; prepend it).
-3. Commit + push this session's memory (memory gate) — likely a separate `chore(memory)` commit
-   since the code was already pushed.
-
-**Parked / cross-branch:**
-- **#26** (rate limiting) — PR **#41** open on `feature/issue-26-rate-limiting`; holds decision
-  0009 + conventions `spring-security-filter-order-anchor`, `second-springboottest-context-shared-h2`.
-- **#24** (hash SDK API keys) — MERGED to develop (PR #40).
+**Parked / cross-branch (from prior sessions):**
+- **#25** actuator — PR #42 open, watch CI → merge; `issue-board.sh ready 25`.
+- **#26** rate limiting — PR #41 open on `feature/issue-26-rate-limiting`.
+- **#24** hash SDK keys — MERGED (PR #40).
 - Issue #10 (`feature/issue-10-jwt-deleted-user-500`) — commit/push/PR/`ready 10` pending.
 - Issue #17 (`feature/issue-17-estimate-issue-skill`) — commit + push + PR + `ready 17`.
-- Uncommitted `docs/architecture.md` — unrelated; land or discard separately.
+- Uncommitted `docs/ARCHITECTURE.md` — unrelated; land or discard separately.
 - Issue #14 (SonarQube) waiting on infra, holds `decisions/0006-*`.
 
 **Follow-ups:**
-- **#25:** reconsider Dockerfile HEALTHCHECK `readiness` → `liveness` (or confirm intent); add a
-  DB-down readiness→503 test.
+- Superseded "Raise jacoco.line.coverage above 0.00" → now actionable via `coverage-floor.sh`.
+- **#25:** reconsider Dockerfile HEALTHCHECK `readiness` → `liveness`; add DB-down readiness→503 test.
 - **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
 - **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
-- Raise `jacoco.line.coverage` above 0.00.

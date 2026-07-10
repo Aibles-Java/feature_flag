@@ -5,10 +5,10 @@ import lombok.Data;
 
 @Data
 public class UpdateFlagStateRequest {
-    @NotNull
-    private Boolean enabled;
-    private String value;
-    @jakarta.validation.constraints.Min(0)
-    @jakarta.validation.constraints.Max(100)
-    private Integer rolloutPercent;
+  @NotNull private Boolean enabled;
+  private String value;
+
+  @jakarta.validation.constraints.Min(0)
+  @jakarta.validation.constraints.Max(100)
+  private Integer rolloutPercent;
 }
