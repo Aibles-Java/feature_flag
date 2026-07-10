@@ -17,6 +17,7 @@ import org.aibles.feature_flag.dto.response.EnvironmentResponse;
 import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.util.ApiKeyHasher;
@@ -28,6 +29,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.context.ApplicationEventPublisher;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -36,6 +38,7 @@ class EnvironmentServiceImplTest {
   @Mock EnvironmentRepository environmentRepository;
   @Mock ProjectRepository projectRepository;
   @Mock PermissionService permissionService;
+  @Mock ApplicationEventPublisher eventPublisher;
 
   EnvironmentServiceImpl service;
 
@@ -47,7 +50,8 @@ class EnvironmentServiceImplTest {
   @BeforeEach
   void setUp() {
     service =
-        new EnvironmentServiceImpl(environmentRepository, projectRepository, permissionService);
+        new EnvironmentServiceImpl(
+            environmentRepository, projectRepository, permissionService, eventPublisher);
     project = Project.builder().id(projectId).name("proj").build();
     env =
         Environment.builder()
@@ -110,12 +114,21 @@ class EnvironmentServiceImplTest {
     when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
     when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
 
+    when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
+
     EnvironmentSecretResponse response = service.rotateApiKey(envId);
 
     assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
     assertThat(env.getApiKeyHash())
         .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
         .isNotEqualTo(ApiKeyHasher.hash("old-key"));
+
+    ArgumentCaptor<ApiKeyRotatedEvent> captor = ArgumentCaptor.forClass(ApiKeyRotatedEvent.class);
+    verify(eventPublisher).publishEvent(captor.capture());
+    ApiKeyRotatedEvent event = captor.getValue();
+    assertThat(event.environmentName()).isEqualTo("prod");
+    assertThat(event.projectName()).isEqualTo("proj");
+    assertThat(event.actorEmail()).isEqualTo("actor@example.com");
   }
 
   @Test

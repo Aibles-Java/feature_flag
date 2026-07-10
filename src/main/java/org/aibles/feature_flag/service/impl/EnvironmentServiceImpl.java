@@ -12,11 +12,13 @@ import org.aibles.feature_flag.dto.response.EnvironmentResponse;
 import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EnvironmentService;
 import org.aibles.feature_flag.util.ApiKeyGenerator;
 import org.aibles.feature_flag.util.ApiKeyHasher;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +29,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   private final EnvironmentRepository environmentRepository;
   private final ProjectRepository projectRepository;
   private final PermissionService permissionService;
+  private final ApplicationEventPublisher eventPublisher;
 
   @Override
   @Transactional
@@ -93,7 +96,11 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     Environment env = findById(id);
     String plaintextKey = ApiKeyGenerator.generate();
     env.setApiKeyHash(ApiKeyHasher.hash(plaintextKey));
-    return toSecretResponse(environmentRepository.save(env), plaintextKey);
+    Environment saved = environmentRepository.save(env);
+    eventPublisher.publishEvent(
+        new ApiKeyRotatedEvent(
+            saved.getName(), saved.getProject().getName(), permissionService.currentUserEmail()));
+    return toSecretResponse(saved, plaintextKey);
   }
 
   private Environment findById(UUID id) {
