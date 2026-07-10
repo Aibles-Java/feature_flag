@@ -9,8 +9,11 @@ import java.util.function.Supplier;
 /**
  * Central façade for the platform's custom business metrics (issue #29).
  *
- * <p>All meters are registered lazily through {@link MeterRegistry}, which caches by
- * name + tag set, so calling these methods on the hot path is cheap after the first hit.
+ * <p>The bounded meters ({@link #FLAG_CHANGES}, {@link #AUTH_FAILURES}) are eagerly
+ * pre-registered at zero in the constructor; the per-environment evaluation meters are
+ * registered lazily on first use (the env id is unknown until traffic arrives). Either way
+ * {@link MeterRegistry} caches by name + tag set, so calling these methods on the hot path
+ * is cheap after the first hit.
  *
  * <p><strong>Tag cardinality is deliberately bounded.</strong> The only unbounded-looking
  * tag is {@code environment}, which carries the environment <em>id</em> (UUID) — bounded by
