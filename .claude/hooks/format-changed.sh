@@ -17,7 +17,9 @@ files="$( { git diff --name-only; git diff --name-only --cached; } 2>/dev/null \
 [ -z "$files" ] && exit 0
 
 # Spotless matches on a path regex; build an alternation of the changed files.
-regex="$(printf '%s\n' $files | sed 's/[.[\*^$()+?{|]/\\&/g' | paste -sd'|' -)"
+# NOTE: spotlessFiles matches (full-match) against the ABSOLUTE path — a relative
+# regex matches nothing. Prefix $PROJECT_DIR.
+regex="$(printf '%s\n' $files | sed "s#^#$PROJECT_DIR/#" | sed 's/[.[\*^$()+?{|]/\\&/g' | paste -sd'|' -)"
 
 "$PROJECT_DIR/mvnw" -q spotless:apply "-DspotlessFiles=$regex" >/dev/null 2>&1 || true
 exit 0
