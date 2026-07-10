@@ -1,5 +1,7 @@
 package org.aibles.feature_flag.service.impl;
 
+import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
@@ -21,157 +23,171 @@ import org.aibles.feature_flag.service.FeatureFlagService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-import java.util.UUID;
-
 @Service
 @RequiredArgsConstructor
 public class FeatureFlagServiceImpl implements FeatureFlagService {
 
-    private final FeatureFlagRepository featureFlagRepository;
-    private final ProjectRepository projectRepository;
-    private final EnvironmentRepository environmentRepository;
-    private final FlagEnvironmentStateRepository flagStateRepository;
-    private final PermissionService permissionService;
+  private final FeatureFlagRepository featureFlagRepository;
+  private final ProjectRepository projectRepository;
+  private final EnvironmentRepository environmentRepository;
+  private final FlagEnvironmentStateRepository flagStateRepository;
+  private final PermissionService permissionService;
 
-    @Override
-    @Transactional
-    public FeatureFlagResponse create(CreateFeatureFlagRequest request) {
-        permissionService.requireRoleForProject(request.getProjectId(), MemberRole.OWNER, MemberRole.ADMIN);
+  @Override
+  @Transactional
+  public FeatureFlagResponse create(CreateFeatureFlagRequest request) {
+    permissionService.requireRoleForProject(
+        request.getProjectId(), MemberRole.OWNER, MemberRole.ADMIN);
 
-        if (featureFlagRepository.existsByProjectIdAndKey(request.getProjectId(), request.getKey())) {
-            throw new DuplicateResourceException("Flag key already exists in this project: " + request.getKey());
-        }
-
-        Project project = projectRepository.findById(request.getProjectId())
-                .orElseThrow(() -> new ResourceNotFoundException("Project", request.getProjectId()));
-
-        FeatureFlag flag = FeatureFlag.builder()
-                .project(project)
-                .name(request.getName())
-                .key(request.getKey())
-                .description(request.getDescription())
-                .valueType(request.getValueType())
-                .build();
-        flag = featureFlagRepository.save(flag);
-
-        // Auto-create FlagEnvironmentState for all existing environments in the project
-        List<Environment> environments = environmentRepository.findAllByProjectId(request.getProjectId());
-        for (Environment env : environments) {
-            FlagEnvironmentState state = FlagEnvironmentState.builder()
-                    .featureFlag(flag)
-                    .environment(env)
-                    .enabled(false)
-                    .build();
-            flagStateRepository.save(state);
-        }
-
-        return toResponse(flag);
+    if (featureFlagRepository.existsByProjectIdAndKey(request.getProjectId(), request.getKey())) {
+      throw new DuplicateResourceException(
+          "Flag key already exists in this project: " + request.getKey());
     }
 
-    @Override
-    public List<FeatureFlagResponse> listByProject(UUID projectId) {
-        permissionService.requireRoleForProject(projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
-        return featureFlagRepository.findAllByProjectIdAndArchivedFalse(projectId).stream()
-                .map(this::toResponse)
-                .toList();
+    Project project =
+        projectRepository
+            .findById(request.getProjectId())
+            .orElseThrow(() -> new ResourceNotFoundException("Project", request.getProjectId()));
+
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .project(project)
+            .name(request.getName())
+            .key(request.getKey())
+            .description(request.getDescription())
+            .valueType(request.getValueType())
+            .build();
+    flag = featureFlagRepository.save(flag);
+
+    // Auto-create FlagEnvironmentState for all existing environments in the project
+    List<Environment> environments =
+        environmentRepository.findAllByProjectId(request.getProjectId());
+    for (Environment env : environments) {
+      FlagEnvironmentState state =
+          FlagEnvironmentState.builder().featureFlag(flag).environment(env).enabled(false).build();
+      flagStateRepository.save(state);
     }
 
-    @Override
-    public FeatureFlagResponse get(UUID id) {
-        FeatureFlag flag = findById(id);
-        permissionService.requireRoleForProject(flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
-        return toResponse(flag);
-    }
+    return toResponse(flag);
+  }
 
-    @Override
-    @Transactional
-    public FeatureFlagResponse update(UUID id, UpdateFeatureFlagRequest request) {
-        FeatureFlag flag = findById(id);
-        permissionService.requireRoleForProject(flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
-        // key is intentionally not updated — it is immutable
-        if (request.getName() != null) flag.setName(request.getName());
-        if (request.getDescription() != null) flag.setDescription(request.getDescription());
-        return toResponse(featureFlagRepository.save(flag));
-    }
+  @Override
+  public List<FeatureFlagResponse> listByProject(UUID projectId) {
+    permissionService.requireRoleForProject(
+        projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    return featureFlagRepository.findAllByProjectIdAndArchivedFalse(projectId).stream()
+        .map(this::toResponse)
+        .toList();
+  }
 
-    @Override
-    @Transactional
-    public void archive(UUID id) {
-        FeatureFlag flag = findById(id);
-        permissionService.requireRoleForProject(flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
-        flag.setArchived(true);
-        featureFlagRepository.save(flag);
-    }
+  @Override
+  public FeatureFlagResponse get(UUID id) {
+    FeatureFlag flag = findById(id);
+    permissionService.requireRoleForProject(
+        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    return toResponse(flag);
+  }
 
-    @Override
-    @Transactional
-    public void unarchive(UUID id) {
-        FeatureFlag flag = findById(id);
-        permissionService.requireRoleForProject(flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
-        flag.setArchived(false);
-        featureFlagRepository.save(flag);
-    }
+  @Override
+  @Transactional
+  public FeatureFlagResponse update(UUID id, UpdateFeatureFlagRequest request) {
+    FeatureFlag flag = findById(id);
+    permissionService.requireRoleForProject(
+        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    // key is intentionally not updated — it is immutable
+    if (request.getName() != null) flag.setName(request.getName());
+    if (request.getDescription() != null) flag.setDescription(request.getDescription());
+    return toResponse(featureFlagRepository.save(flag));
+  }
 
-    @Override
-    public List<FeatureFlagResponse> listArchivedByProject(UUID projectId) {
-        permissionService.requireRoleForProject(projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
-        return featureFlagRepository.findAllByProjectIdAndArchivedTrue(projectId).stream()
-                .map(this::toResponse)
-                .toList();
-    }
+  @Override
+  @Transactional
+  public void archive(UUID id) {
+    FeatureFlag flag = findById(id);
+    permissionService.requireRoleForProject(
+        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    flag.setArchived(true);
+    featureFlagRepository.save(flag);
+  }
 
-    @Override
-    public FlagStateResponse getState(UUID flagId, UUID environmentId) {
-        FeatureFlag flag = findById(flagId);
-        permissionService.requireRoleForProject(flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
-        FlagEnvironmentState state = flagStateRepository
-                .findByFeatureFlagIdAndEnvironmentId(flagId, environmentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Flag state not found for this environment"));
-        return toStateResponse(state);
-    }
+  @Override
+  @Transactional
+  public void unarchive(UUID id) {
+    FeatureFlag flag = findById(id);
+    permissionService.requireRoleForProject(
+        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    flag.setArchived(false);
+    featureFlagRepository.save(flag);
+  }
 
-    @Override
-    @Transactional
-    public FlagStateResponse updateState(UUID flagId, UUID environmentId, UpdateFlagStateRequest request) {
-        FeatureFlag flag = findById(flagId);
-        permissionService.requireRoleForProject(flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+  @Override
+  public List<FeatureFlagResponse> listArchivedByProject(UUID projectId) {
+    permissionService.requireRoleForProject(
+        projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    return featureFlagRepository.findAllByProjectIdAndArchivedTrue(projectId).stream()
+        .map(this::toResponse)
+        .toList();
+  }
 
-        FlagEnvironmentState state = flagStateRepository
-                .findByFeatureFlagIdAndEnvironmentId(flagId, environmentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Flag state not found for this environment"));
+  @Override
+  public FlagStateResponse getState(UUID flagId, UUID environmentId) {
+    FeatureFlag flag = findById(flagId);
+    permissionService.requireRoleForProject(
+        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    FlagEnvironmentState state =
+        flagStateRepository
+            .findByFeatureFlagIdAndEnvironmentId(flagId, environmentId)
+            .orElseThrow(
+                () -> new ResourceNotFoundException("Flag state not found for this environment"));
+    return toStateResponse(state);
+  }
 
-        state.setEnabled(request.getEnabled());
-        state.setValue(request.getValue());
-        if (request.getRolloutPercent() != null) state.setRolloutPercent(request.getRolloutPercent());
-        return toStateResponse(flagStateRepository.save(state));
-    }
+  @Override
+  @Transactional
+  public FlagStateResponse updateState(
+      UUID flagId, UUID environmentId, UpdateFlagStateRequest request) {
+    FeatureFlag flag = findById(flagId);
+    permissionService.requireRoleForProject(
+        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
 
-    private FeatureFlag findById(UUID id) {
-        return featureFlagRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("FeatureFlag", id));
-    }
+    FlagEnvironmentState state =
+        flagStateRepository
+            .findByFeatureFlagIdAndEnvironmentId(flagId, environmentId)
+            .orElseThrow(
+                () -> new ResourceNotFoundException("Flag state not found for this environment"));
 
-    private FeatureFlagResponse toResponse(FeatureFlag flag) {
-        return FeatureFlagResponse.builder()
-                .id(flag.getId())
-                .name(flag.getName())
-                .key(flag.getKey())
-                .description(flag.getDescription())
-                .valueType(flag.getValueType())
-                .archived(flag.isArchived())
-                .projectId(flag.getProject().getId())
-                .createdAt(flag.getCreatedAt())
-                .build();
-    }
+    state.setEnabled(request.getEnabled());
+    state.setValue(request.getValue());
+    if (request.getRolloutPercent() != null) state.setRolloutPercent(request.getRolloutPercent());
+    return toStateResponse(flagStateRepository.save(state));
+  }
 
-    private FlagStateResponse toStateResponse(FlagEnvironmentState state) {
-        return FlagStateResponse.builder()
-                .flagId(state.getFeatureFlag().getId())
-                .environmentId(state.getEnvironment().getId())
-                .enabled(state.isEnabled())
-                .value(state.getValue())
-                .rolloutPercent(state.getRolloutPercent())
-                .build();
-    }
+  private FeatureFlag findById(UUID id) {
+    return featureFlagRepository
+        .findById(id)
+        .orElseThrow(() -> new ResourceNotFoundException("FeatureFlag", id));
+  }
+
+  private FeatureFlagResponse toResponse(FeatureFlag flag) {
+    return FeatureFlagResponse.builder()
+        .id(flag.getId())
+        .name(flag.getName())
+        .key(flag.getKey())
+        .description(flag.getDescription())
+        .valueType(flag.getValueType())
+        .archived(flag.isArchived())
+        .projectId(flag.getProject().getId())
+        .createdAt(flag.getCreatedAt())
+        .build();
+  }
+
+  private FlagStateResponse toStateResponse(FlagEnvironmentState state) {
+    return FlagStateResponse.builder()
+        .flagId(state.getFeatureFlag().getId())
+        .environmentId(state.getEnvironment().getId())
+        .enabled(state.isEnabled())
+        .value(state.getValue())
+        .rolloutPercent(state.getRolloutPercent())
+        .build();
+  }
 }
