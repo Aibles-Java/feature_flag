@@ -56,6 +56,22 @@ option_id() { # $1 = field name, $2 = option name
 
 issue_url() { echo "https://github.com/$REPO/issues/$issue"; }
 
+# Post a message to Slack when a webhook is configured. Opt-in and best-effort:
+# if SLACK_WEBHOOK_URL is unset the call is a no-op, and a failed POST never
+# fails the board command (the board move is the source of truth, not Slack).
+slack_notify() { # $1 = message text
+  [ -n "${SLACK_WEBHOOK_URL:-}" ] || return 0
+  command -v curl >/dev/null 2>&1 || { echo "issue-board: curl not found, skipping Slack" >&2; return 0; }
+  local text="$1" payload
+  # Minimal, safe JSON: escape backslashes and double-quotes in the text.
+  text=${text//\\/\\\\}
+  text=${text//\"/\\\"}
+  payload="{\"text\":\"$text\"}"
+  curl -sf -X POST -H 'Content-Type: application/json' \
+    --data "$payload" "$SLACK_WEBHOOK_URL" >/dev/null \
+    || echo "issue-board: Slack notification failed (ignored)" >&2
+}
+
 # Return the board item id for this issue, adding it to the board if missing.
 ensure_item() {
   local item
@@ -113,7 +129,10 @@ case "$cmd" in
     echo "issue #$issue → assigned to @$assignee"
     set_status "In progress"
     ;;
-  ready) set_status "Ready For Testing" ;;
+  ready)
+    set_status "Ready For Testing"
+    slack_notify ":test_tube: Issue #$issue is *Ready For Testing* — $(issue_url)"
+    ;;
   done)  set_status "Done" ;;
   status) print_status ;;
   estimate)

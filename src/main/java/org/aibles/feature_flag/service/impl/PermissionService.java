@@ -30,6 +30,12 @@ public class PermissionService {
     return principal.getId();
   }
 
+  public String currentUserEmail() {
+    UserPrincipal principal =
+        (UserPrincipal) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return principal.getEmail();
+  }
+
   public void requireRole(UUID orgId, MemberRole... roles) {
     UUID userId = currentUserId();
     OrganizationMember member =

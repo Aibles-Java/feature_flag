@@ -15,11 +15,14 @@ import org.aibles.feature_flag.dto.response.FeatureFlagResponse;
 import org.aibles.feature_flag.dto.response.FlagStateResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
+import org.aibles.feature_flag.notification.event.FlagStateChangedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.FeatureFlagService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +35,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   private final EnvironmentRepository environmentRepository;
   private final FlagEnvironmentStateRepository flagStateRepository;
   private final PermissionService permissionService;
+  private final ApplicationEventPublisher eventPublisher;
 
   @Override
   @Transactional
@@ -108,6 +112,12 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
     flag.setArchived(true);
     featureFlagRepository.save(flag);
+    eventPublisher.publishEvent(
+        new FlagArchivedEvent(
+            flag.getKey(),
+            flag.getProject().getName(),
+            true,
+            permissionService.currentUserEmail()));
   }
 
   @Override
@@ -118,6 +128,12 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
     flag.setArchived(false);
     featureFlagRepository.save(flag);
+    eventPublisher.publishEvent(
+        new FlagArchivedEvent(
+            flag.getKey(),
+            flag.getProject().getName(),
+            false,
+            permissionService.currentUserEmail()));
   }
 
   @Override
@@ -156,10 +172,25 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             .orElseThrow(
                 () -> new ResourceNotFoundException("Flag state not found for this environment"));
 
+    boolean previousEnabled = state.isEnabled();
+    String previousValue = state.getValue();
+
     state.setEnabled(request.getEnabled());
     state.setValue(request.getValue());
     if (request.getRolloutPercent() != null) state.setRolloutPercent(request.getRolloutPercent());
-    return toStateResponse(flagStateRepository.save(state));
+    FlagStateResponse response = toStateResponse(flagStateRepository.save(state));
+
+    eventPublisher.publishEvent(
+        new FlagStateChangedEvent(
+            state.getFeatureFlag().getKey(),
+            state.getEnvironment().getName(),
+            state.getFeatureFlag().getProject().getName(),
+            previousEnabled,
+            state.isEnabled(),
+            previousValue,
+            state.getValue(),
+            permissionService.currentUserEmail()));
+    return response;
   }
 
   private FeatureFlag findById(UUID id) {

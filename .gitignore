@@ -37,3 +37,7 @@ build/
 .claude/memory/.nudge-guard
 .claude/memory/.last-seen-commit
 .claude/memory/.security-gate-guard
+
+### oh-my-claudecode operational state (skills are the committable exception) ###
+.omc/
+!.omc/skills/

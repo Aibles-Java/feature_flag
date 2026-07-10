@@ -21,6 +21,8 @@ import org.aibles.feature_flag.dto.response.FeatureFlagResponse;
 import org.aibles.feature_flag.dto.response.FlagStateResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
+import org.aibles.feature_flag.notification.event.FlagStateChangedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
@@ -33,6 +35,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.context.ApplicationEventPublisher;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -43,6 +46,7 @@ class FeatureFlagServiceImplTest {
   @Mock EnvironmentRepository environmentRepository;
   @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock PermissionService permissionService;
+  @Mock ApplicationEventPublisher eventPublisher;
 
   FeatureFlagServiceImpl service;
 
@@ -57,7 +61,8 @@ class FeatureFlagServiceImplTest {
             projectRepository,
             environmentRepository,
             flagStateRepository,
-            permissionService);
+            permissionService,
+            eventPublisher);
     project = Project.builder().id(projectId).name("proj").build();
     doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
   }
@@ -183,10 +188,20 @@ class FeatureFlagServiceImplTest {
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(featureFlagRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
+    when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
+
     service.archive(flagId);
 
     assertThat(flag.isArchived()).isTrue();
     verify(featureFlagRepository).save(flag);
+
+    ArgumentCaptor<FlagArchivedEvent> captor = ArgumentCaptor.forClass(FlagArchivedEvent.class);
+    verify(eventPublisher).publishEvent(captor.capture());
+    FlagArchivedEvent event = captor.getValue();
+    assertThat(event.archived()).isTrue();
+    assertThat(event.flagKey()).isEqualTo("f");
+    assertThat(event.projectName()).isEqualTo("proj");
+    assertThat(event.actorEmail()).isEqualTo("actor@example.com");
   }
 
   @Test
@@ -208,6 +223,11 @@ class FeatureFlagServiceImplTest {
     service.unarchive(flagId);
 
     assertThat(flag.isArchived()).isFalse();
+
+    ArgumentCaptor<FlagArchivedEvent> captor = ArgumentCaptor.forClass(FlagArchivedEvent.class);
+    verify(eventPublisher).publishEvent(captor.capture());
+    assertThat(captor.getValue().archived()).isFalse();
+    assertThat(captor.getValue().flagKey()).isEqualTo("f");
   }
 
   @Test
@@ -337,6 +357,54 @@ class FeatureFlagServiceImplTest {
     assertThat(result.getValue()).isEqualTo("true");
     assertThat(result.getRolloutPercent())
         .isEqualTo(50); // unchanged since request.rolloutPercent is null
+  }
+
+  @Test
+  void updateState_publishesFlagStateChangedEvent_withOldAndNewValues() {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("my-flag")
+            .valueType(FlagValueType.BOOLEAN)
+            .archived(false)
+            .build();
+    Environment env = Environment.builder().id(envId).name("prod").apiKeyHash("k").build();
+    FlagEnvironmentState state =
+        FlagEnvironmentState.builder()
+            .id(UUID.randomUUID())
+            .featureFlag(flag)
+            .environment(env)
+            .enabled(false)
+            .value("false")
+            .rolloutPercent(0)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
+        .thenReturn(Optional.of(state));
+    when(flagStateRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
+
+    UpdateFlagStateRequest req = new UpdateFlagStateRequest();
+    req.setEnabled(true);
+    req.setValue("true");
+    service.updateState(flagId, envId, req);
+
+    ArgumentCaptor<FlagStateChangedEvent> captor =
+        ArgumentCaptor.forClass(FlagStateChangedEvent.class);
+    verify(eventPublisher).publishEvent(captor.capture());
+    FlagStateChangedEvent event = captor.getValue();
+    assertThat(event.flagKey()).isEqualTo("my-flag");
+    assertThat(event.environmentName()).isEqualTo("prod");
+    assertThat(event.projectName()).isEqualTo("proj");
+    assertThat(event.previousEnabled()).isFalse();
+    assertThat(event.newEnabled()).isTrue();
+    assertThat(event.previousValue()).isEqualTo("false");
+    assertThat(event.newValue()).isEqualTo("true");
+    assertThat(event.actorEmail()).isEqualTo("actor@example.com");
   }
 
   @Test
