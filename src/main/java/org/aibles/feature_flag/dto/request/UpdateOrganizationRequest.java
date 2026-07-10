@@ -5,6 +5,6 @@ import lombok.Data;
 
 @Data
 public class UpdateOrganizationRequest {
-    @Size(max = 255)
-    private String name;
+  @Size(max = 255)
+  private String name;
 }

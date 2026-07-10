@@ -21,38 +21,39 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
-    private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final AuthenticationManager authenticationManager;
-    private final JwtTokenProvider jwtTokenProvider;
+  private final UserRepository userRepository;
+  private final PasswordEncoder passwordEncoder;
+  private final AuthenticationManager authenticationManager;
+  private final JwtTokenProvider jwtTokenProvider;
 
-    @Override
-    @Transactional
-    public void register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new DuplicateResourceException("Email already in use: " + request.getEmail());
-        }
-        User user = User.builder()
-                .email(request.getEmail())
-                .passwordHash(passwordEncoder.encode(request.getPassword()))
-                .firstName(request.getFirstName())
-                .lastName(request.getLastName())
-                .build();
-        userRepository.save(user);
+  @Override
+  @Transactional
+  public void register(RegisterRequest request) {
+    if (userRepository.existsByEmail(request.getEmail())) {
+      throw new DuplicateResourceException("Email already in use: " + request.getEmail());
     }
+    User user =
+        User.builder()
+            .email(request.getEmail())
+            .passwordHash(passwordEncoder.encode(request.getPassword()))
+            .firstName(request.getFirstName())
+            .lastName(request.getLastName())
+            .build();
+    userRepository.save(user);
+  }
 
-    @Override
-    public AuthResponse login(LoginRequest request) {
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
-        );
-        UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
-        String token = jwtTokenProvider.generateToken(principal);
+  @Override
+  public AuthResponse login(LoginRequest request) {
+    Authentication authentication =
+        authenticationManager.authenticate(
+            new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword()));
+    UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
+    String token = jwtTokenProvider.generateToken(principal);
 
-        return AuthResponse.builder()
-                .token(token)
-                .userId(principal.getId())
-                .email(principal.getEmail())
-                .build();
-    }
+    return AuthResponse.builder()
+        .token(token)
+        .userId(principal.getId())
+        .email(principal.getEmail())
+        .build();
+  }
 }

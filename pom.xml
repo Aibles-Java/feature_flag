@@ -21,8 +21,11 @@
         <springdoc.version>2.8.9</springdoc.version>
         <bucket4j.version>8.19.0</bucket4j.version>
         <jacoco.version>0.8.13</jacoco.version>
-        <!-- Coverage gate: raise toward the 80% target in CLAUDE.md as real tests land (see #3). -->
-        <jacoco.line.coverage>0.00</jacoco.line.coverage>
+        <spotless.version>2.43.0</spotless.version>
+        <google-java-format.version>1.24.0</google-java-format.version>
+        <!-- Coverage ratchet floor: locked at current (84.8%) minus a 2% churn margin.
+             Only ever raise this; use .claude/scripts/coverage-floor.sh to re-measure. -->
+        <jacoco.line.coverage>0.83</jacoco.line.coverage>
     </properties>
 
     <dependencies>
@@ -168,6 +171,35 @@
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
+            </plugin>
+            <!-- Code style: google-java-format via Spotless. `spotless:check` is bound
+                 to verify (fails CI on unformatted code); `spotless:apply` reformats.
+                 ONE-TIME rollout: run `./mvnw spotless:apply` and commit before this
+                 gate goes green. The .claude PostToolUse hook keeps edited files formatted. -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${spotless.version}</version>
+                <configuration>
+                    <java>
+                        <googleJavaFormat>
+                            <version>${google-java-format.version}</version>
+                            <style>GOOGLE</style>
+                        </googleJavaFormat>
+                        <removeUnusedImports/>
+                        <trimTrailingWhitespace/>
+                        <endWithNewline/>
+                    </java>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>spotless-check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.jacoco</groupId>

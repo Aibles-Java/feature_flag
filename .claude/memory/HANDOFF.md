@@ -5,60 +5,49 @@
 ## Current WIP
 
 **Issue #29** (Micrometer + Prometheus metrics) on branch
-`feature/issue-29-micrometer-prometheus` (→ `develop`, branched from fresh `develop`;
-deliberately does NOT depend on #25's actuator branch — added actuator itself). Code
-implemented, security-reviewed (1 finding found + fixed), **full suite 172/172 green**.
-About to: `/save-memory` commit → push → open PR → `issue-board.sh ready 29`.
+`feature/issue-29-micrometer-prometheus` (→ `develop`). Code implemented,
+security-reviewed (1 finding found + fixed). PR **#44** open; addressed review
+(trinhvandat): fixed the `FeatureFlagMetrics` Javadoc lazy/eager contradiction and
+documented the third `@Order(0)` security chain in CLAUDE.md + docs/architecture.md.
 
-Done:
-- `pom.xml`: + `spring-boot-starter-actuator`, `micrometer-registry-prometheus`.
-- `metrics/FeatureFlagMetrics.java` (new): façade over `MeterRegistry`; bounded meters
-  eager-registered at 0.
-- `EvaluationServiceImpl` (count+time evals), `FeatureFlagServiceImpl` (flag-change counter),
-  `ApiKeyAuthenticationFilter` + `JwtAuthenticationFilter` (auth-failure counters).
-- `SecurityConfig`: new `@Order(0)` management chain — `/actuator/**`, health public, else
-  HTTP-Basic `METRICS` role via a **local** in-memory user; blank-secret ⇒ account
-  `.disabled(true)` (fixes the auth-bypass finding).
-- `application.properties`: expose `health,info,prometheus`; `app.metrics.username/password`
-  (password `${APP_METRICS_PASSWORD:}`, blank default).
-- Tests: `FeatureFlagMetricsTest`, `PrometheusEndpointIntegrationTest`,
-  `PrometheusBlankPasswordIntegrationTest` (own H2 db name); 4 existing unit tests updated to
-  pass a real `FeatureFlagMetrics(new SimpleMeterRegistry())`.
-- `application-test.properties`: shared `app.metrics.password=test-metrics-secret`.
+**Just merged `origin/develop` into this branch** to clear PR conflicts. develop had
+moved on with: repo-wide google-java-format (Spotless), Slack notifications
+(`notification/**`, event publishes in `FeatureFlagServiceImpl`), and harness guards.
+
+Conflict resolution taken:
+- `FeatureFlagServiceImpl` — kept BOTH develop's Slack `eventPublisher` publishes AND
+  #29's `metrics.recordFlagChange(...)`; constructor now has 7 deps (…, eventPublisher, metrics).
+- `FeatureFlagServiceImplTest` — kept develop's event-assertion tests; setUp passes both
+  `eventPublisher` and a real `FeatureFlagMetrics(new SimpleMeterRegistry())`.
+- `SecurityConfig`, both auth filters, `EvaluationServiceImpl`, `EvaluationServiceImplTest`,
+  filter tests, `SecurityChainIntegrationTest` — took #29 (`--ours`); develop only reformatted
+  them, and #29's `@Order(0)` management chain deliberately supersedes #25's admin-chain
+  `/actuator/health/**` rule (integration test asserts `/actuator/info` → 401, not 403).
+- `MEMORY.md` — unioned both sets of entries.
+
+## Next steps
+1. Build + test: `./mvnw spotless:apply` then `./mvnw test` — confirm green before committing
+   the merge (the working tree still has un-spotless'd #29 files after taking `--ours`).
+2. Commit the merge (stage explicit paths — NOT `docs/ARCHITECTURE.md`, the pre-existing
+   unrelated rewrite still sitting uncommitted). Then push (memory gate satisfied by this file).
+3. Confirm PR #44 shows mergeable; ping reviewer.
 
 ## Context to Load
 
-- `decisions/0012-micrometer-prometheus-metrics.md` — the design + the security finding.
+- `decisions/0012-micrometer-prometheus-metrics.md` — the #29 design + the security finding.
 - `conventions/actuator-management-chain-boot41.md` — Boot 4.1 `EndpointRequest` module move +
   blank-`{noop}`-secret auth bypass.
-- `conventions/windows-docs-case-collision.md` — why `docs/architecture.md` shows perpetually
-  `M`; stage explicit paths, never `git add -A` (it carried into this branch too).
-
-## Next steps
-
-1. Commit (stage explicit paths — NOT `docs/architecture.md`). Then push
-   `feature/issue-29-micrometer-prometheus` (memory gate satisfied by this commit).
-   gh at `C:\Users\ACER\AppData\Local\gh-cli\bin\gh.exe` (NOT on PATH; prepend it).
-2. Open PR with `create-pr` (`Closes #29`).
-3. `.claude/scripts/issue-board.sh ready 29`.
+- `decisions/0013-slack-notifications.md` — develop's Slack feature now on this branch.
+- `conventions/spotless-scoping-and-bash32.md` — the google-java-format tooling develop added.
 
 ## Numbering note
 
-On `develop` the latest decision is 0009; **0010** (#25 actuator) and **0011** (#27 docker)
-live on their own unmerged branches, **0006** on parked #14. This session took **0012** to
-avoid a collision when those branches merge.
-
-**Cross-branch / open work (from prior handoffs — verify before acting):**
-- **#25** (actuator health) — PR **#42** OPEN. Overlaps #29 on actuator dep + `management.*` +
-  `/actuator/**` security. When both merge: reconcile pom (one actuator dep), keep #25's health
-  probes; #29's management-chain auth for prometheus should survive.
-- **#27** (docker port/non-root) — branch `feature/issue-27-docker-port-nonroot`, committed
-  (`2671a6f`), board says *Ready For Testing* (may already be pushed/PR'd — verify).
-- #26 (rate limiting) MERGED (PR #41); #24 (hash keys) MERGED (PR #40).
-- #10, #17, #14 — still pending per older handoffs.
+Filename collision to clean up later: both `decisions/0012-micrometer-prometheus-metrics.md`
+(#29) and `decisions/0012-harness-guards-spotless-coverage.md` (develop) claim **0012**.
+Distinct filenames so no git conflict, but renumber one on the next `/save-memory`.
 
 **Follow-ups:**
-- #29: add `/actuator/health/readiness` HEALTHCHECK to the compose `app` service once #25 merges;
-  consider Redis-backed metrics if multi-instance aggregation is needed.
-- Docs case-collision: delete the lowercase `docs/architecture.md` stub from a case-sensitive box.
+- #29 cardinality (from PR #44 review): `ff_evaluations_total{environment}` is unbounded as
+  tenants grow — consider dropping the env tag or a `MeterFilter maximumAllowableTags`.
+- Docs case-collision: delete the lowercase `docs/architecture.md` stub on a case-sensitive box.
 - Raise `jacoco.line.coverage` above 0.00.

@@ -132,7 +132,7 @@ DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`)
 
 ## Key conventions
 
-**Code style:** No formatter/linter configured — follow existing code style by convention
+**Code style:** google-java-format enforced via Spotless. `./mvnw verify` runs `spotless:check` (CI-gating); `./mvnw spotless:apply` reformats. A Stop hook auto-formats changed files each session.
 **Branch strategy:** Gitflow — `feature/<slug>` → `develop`, `release/<version>` → `main` + back to `develop`, `hotfix/<slug>` → `main` + `develop`. Never commit directly to `main`.
 **Commit format:** Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, `ci:`)
 **Test coverage target:** 80%
@@ -157,7 +157,8 @@ DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`)
 
 - **Plan first:** For any task > 30 min, create a plan and get approval before writing code.
 - **Code review:** Run the code-reviewer agent after every significant change. Address all CRITICAL and HIGH findings.
-- **Security review:** Before committing to `security/`, JWT config, `db/changelog/migrations/`, or `ApiKeyGenerator`, run a security review.
+- **Security review:** Before committing to `security/`, JWT config, `db/changelog/migrations/`, or `ApiKeyGenerator`, run a security review. A Stop hook (`security-review-gate.sh`) nudges when these paths change.
+- **Migrations are immutable:** A PreToolUse hook (`liquibase-immutable-guard.sh`) blocks edits to existing files under `db/changelog/migrations/` — add a new changeset instead.
 
 **Working a GitHub issue:** follow the `issue-workflow` skill — `.claude/scripts/issue-board.sh start <issue#>` assigns it and moves the Digital banking board card to *In progress*; after opening the PR, `issue-board.sh ready <issue#>` moves it to *Ready For Testing*. A push is **blocked** by the memory gate (`.claude/hooks/pre-push-memory-gate.sh`) if its commits touch code but not `.claude/memory/` — run `/save-memory` first so memory ships with the work (override: `SKIP_MEMORY_CHECK=1 git push`). Enable the git-level backstop once per clone with `git config core.hooksPath .githooks`.
 
