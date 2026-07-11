@@ -6,9 +6,15 @@
 
 **Issue #29** (Micrometer + Prometheus metrics) on branch
 `feature/issue-29-micrometer-prometheus` (→ `develop`). Code implemented,
-security-reviewed (1 finding found + fixed). PR **#44** open; addressed review
-(trinhvandat): fixed the `FeatureFlagMetrics` Javadoc lazy/eager contradiction and
-documented the third `@Order(0)` security chain in CLAUDE.md + docs/architecture.md.
+security-reviewed (1 finding found + fixed). PR **#44** open; **all three review
+points from trinhvandat now addressed:**
+- (#2) Javadoc lazy/eager contradiction — fixed earlier (`aeb5b53`).
+- (#3) third `@Order(0)` security chain documented in CLAUDE.md + docs/architecture.md — `aeb5b53`.
+- (#1, cardinality — the substantive one) `FeatureFlagMetrics` class Javadoc rewrote the
+  "deliberately bounded" claim: the `environment` tag is bounded by TOTAL Environment rows
+  across ALL orgs (not per-tenant), meters are never evicted (~4 permanent series/env), and
+  `max-uri-tags` does NOT cap custom meters. Kept the tag (issue #29 AC requires
+  `ff_evaluations_total{environment}`). Comment-only, compile+spotless green. Commit **`6eb7d28`**.
 
 **Just merged `origin/develop` into this branch** to clear PR conflicts. develop had
 moved on with: repo-wide google-java-format (Spotless), Slack notifications
@@ -26,10 +32,10 @@ Conflict resolution taken:
 - `MEMORY.md` — unioned both sets of entries.
 
 ## Next steps
-1. Build + test: `./mvnw spotless:apply` then `./mvnw test` — confirm green before committing
-   the merge (the working tree still has un-spotless'd #29 files after taking `--ours`).
-2. Commit the merge (stage explicit paths — NOT `docs/ARCHITECTURE.md`, the pre-existing
-   unrelated rewrite still sitting uncommitted). Then push (memory gate satisfied by this file).
+1. Push branch (memory gate satisfied by this file), then reply on PR #44 that all three
+   review points are addressed (`6eb7d28` covers cardinality).
+2. `docs/ARCHITECTURE.md` (uppercase) is still modified/uncommitted — a pre-existing unrelated
+   rewrite. Left out of `6eb7d28` on purpose. Decide separately whether to commit or discard it.
 3. Confirm PR #44 shows mergeable; ping reviewer.
 
 ## Context to Load
@@ -47,7 +53,8 @@ Filename collision to clean up later: both `decisions/0012-micrometer-prometheus
 Distinct filenames so no git conflict, but renumber one on the next `/save-memory`.
 
 **Follow-ups:**
-- #29 cardinality (from PR #44 review): `ff_evaluations_total{environment}` is unbounded as
-  tenants grow — consider dropping the env tag or a `MeterFilter maximumAllowableTags`.
+- #29 cardinality (PR #44 review): documented honestly in the Javadoc as of `6eb7d28`. Kept the
+  env tag (AC requires it). If tenants ever reach thousands, revisit — drop the env tag or add a
+  `MeterFilter maximumAllowableTags`. Not urgent at current scale.
 - Docs case-collision: delete the lowercase `docs/architecture.md` stub on a case-sensitive box.
 - Raise `jacoco.line.coverage` above 0.00.
