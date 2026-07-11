@@ -13,10 +13,16 @@ import org.springframework.stereotype.Component;
  * use (the env id is unknown until traffic arrives). Either way {@link MeterRegistry} caches by
  * name + tag set, so calling these methods on the hot path is cheap after the first hit.
  *
- * <p><strong>Tag cardinality is deliberately bounded.</strong> The only unbounded-looking tag is
- * {@code environment}, which carries the environment <em>id</em> (UUID) — bounded by the number of
- * environments a tenant creates, never a free-form string. Auth-failure and flag-change reasons are
- * drawn from small fixed enums below.
+ * <p><strong>Tag cardinality.</strong> Auth-failure and flag-change reasons are drawn from the
+ * small fixed enums below, so those meters are strictly bounded. The {@code environment} tag on the
+ * evaluation counter/timer, however, carries the environment <em>id</em> (UUID): its cardinality is
+ * the total number of {@link org.aibles.feature_flag.domain.entity.Environment} rows that ever
+ * evaluate <em>across all orgs</em> — not a per-tenant bound — and the meters are never evicted, so
+ * each such environment leaves ~4 permanent Prometheus series. {@code
+ * management.metrics.web.server.max-uri-tags} does not cap custom meters. This is fine at the
+ * current scale (tens of environments); if the platform grows to thousands of tenants, revisit
+ * whether per-environment breakdown is still worth the cardinality, or move it to a
+ * sampled/exemplar path.
  */
 @Component
 public class FeatureFlagMetrics {
