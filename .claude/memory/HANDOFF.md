@@ -4,43 +4,50 @@
 
 ## Current WIP
 
-**Slack notifications** on branch `feature/slack-notifications`, committed (0961d7c) but
-**not yet pushed**. See `decisions/0013-slack-notifications.md`. Verified locally:
-`./mvnw spotless:check test` → 170 tests, 0 failures; security review 0 critical/high/medium.
+**Code graph adoption** on branch `feature/codegraph-adoption`. Research + planning done;
+**no implementation yet**. About to commit + push + open a PR into `develop` for the
+spec/planning artifacts.
 
-Files in the commit: `notification/**` (SlackNotifier, SlackEventListener, SlackProperties,
-3 event records), `config/NotificationConfig.java`, event publishes in
-`FeatureFlagServiceImpl`/`EnvironmentServiceImpl`, `PermissionService.currentUserEmail()`,
-`application.properties` (app.slack.*), `.claude/scripts/issue-board.sh` (row-5 webhook),
-`docs/slack-notifications.md`, `.gitignore` (ignore `.omc/`). Plus this memory commit.
+Files to commit this session (docs/planning only — NO source code):
+- `docs/specs/codegraph-adoption.md` — the spec: Track A (ArchUnit governance) + Track B
+  (CodeGraphContext MCP) + §9 Mermaid solution-design diagram (4-colour scheme; render
+  verified via mermaid-cli → valid SVG).
+- `.claude/skills/estimate-issue/calibration.md` — 3 estimate rows (#48/#49/#50).
+- `.claude/memory/**` — this commit (decision 0014 + eventual-consistency convention + index).
 
-**In progress right now:** about to push + open a PR into `develop` to (a) ship the feature
-and (b) live-test the GitHub→Slack app (row 4 PR-opened → #ff-dev, row 2 CI → #ff-ci).
+**Deliberately NOT committed:** `docs/ARCHITECTURE.md` — a large uncommitted −688/+63 change
+by another author (oanhhkim), unrelated to this work. Still parked (see below).
+
+**GitHub issues filed** on Digital banking board (project #3), estimates written & verified:
+- **#48** (M/5h) Track A Tier-1 ArchUnit gate + ADR-0003 + memory — core, touches CI. Blocks #49.
+- **#49** (S/3h) Track A Tier-2 custom conditions. Depends on #48.
+- **#50** (S/2h) Track B CodeGraphContext spike. Independent.
 
 ## Context to Load
 
-- `decisions/0013-slack-notifications.md` — architecture, security constraints, how to run.
-- `docs/slack-notifications.md` — the notification matrix + setup commands.
+- `decisions/0014-codegraph-adoption.md` — the decision, tool comparison, tier split, key gotchas.
+- `docs/specs/codegraph-adoption.md` — full spec + solution-design diagram.
+- `conventions/issue-board-estimate-eventual-consistency.md` — why `estimate` fails on run 1.
 
 ## Next steps
-1. **Push** `feature/slack-notifications` (memory gate now satisfied) and open the PR into
-   `develop` via the `create-pr` skill.
-2. **User's Slack setup to activate:** create Incoming Webhook → in the deployed/local env set
-   `SLACK_WEBHOOK_URL` + `APP_SLACK_ENABLED=true`; run `/github subscribe Aibles-Java/feature_flag …`
-   in #ff-ci / #ff-dev / #ff-releases. To run the app locally: `docker compose up -d` FIRST
-   (app dies at startup without Postgres — this was the "error, no noti" the user hit), then export
-   the two vars, then `./mvnw spring-boot:run`.
-3. Follow-up issues: row 12 (Liquibase migration-applied ping) and optional prod-vs-nonprod
-   channel routing (second webhook).
+1. **Push** `feature/codegraph-adoption` (memory gate now satisfied by this commit) and open
+   a PR into `develop` via the `create-pr` skill. PR is planning-only (spec + estimates + memory).
+2. **Implement #48 first** (Track A Tier-1): `issue-board.sh start 48`, add `archunit-junit5:1.4.2`,
+   write `src/test/java/org/aibles/feature_flag/architecture/ArchitectureTest.java` (R1–R7),
+   prove the gate with a deliberate violation → `./mvnw verify` fails → revert, add ADR-0003.
+   Remember: ArchUnit is static-only → Boot-4.1 test landmines do NOT apply; use `FreezingArchRule`
+   if current code has pre-existing layering violations.
+3. Then **#50** spike (~1 week later), then **#49** Tier-2. Re-evaluate jQAssistant only if
+   Tier-3 governance or agent-query precision becomes a felt need.
 
 **Parked / cross-branch (from prior sessions):**
 - Unrelated `docs/ARCHITECTURE.md` change still uncommitted — land or discard separately.
-- **#25** actuator — PR #42; **#26** rate limiting — PR #41; **#24** hash SDK keys — MERGED (#40).
 - Issue #10 (`feature/issue-10-jwt-deleted-user-500`), #17 (`feature/issue-17-estimate-issue-skill`)
   — commit/push/PR/`ready` pending.
 - Issue #14 (SonarQube) waiting on infra, holds `decisions/0006-*`.
 
-**Follow-ups:**
+**Follow-ups (from earlier work):**
 - **#25:** reconsider Dockerfile HEALTHCHECK `readiness` → `liveness`; add DB-down readiness→503 test.
 - **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
 - **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
+- **Code graph:** jQAssistant+Neo4j upgrade (closes Tier-3); Joern for a future auth taint pass.
