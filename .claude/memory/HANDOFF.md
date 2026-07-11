@@ -16,35 +16,24 @@ points from trinhvandat now addressed:**
   `max-uri-tags` does NOT cap custom meters. Kept the tag (issue #29 AC requires
   `ff_evaluations_total{environment}`). Comment-only, compile+spotless green. Commit **`6eb7d28`**.
 
-**Just merged `origin/develop` into this branch** to clear PR conflicts. develop had
-moved on with: repo-wide google-java-format (Spotless), Slack notifications
-(`notification/**`, event publishes in `FeatureFlagServiceImpl`), and harness guards.
-
-Conflict resolution taken:
-- `FeatureFlagServiceImpl` — kept BOTH develop's Slack `eventPublisher` publishes AND
-  #29's `metrics.recordFlagChange(...)`; constructor now has 7 deps (…, eventPublisher, metrics).
-- `FeatureFlagServiceImplTest` — kept develop's event-assertion tests; setUp passes both
-  `eventPublisher` and a real `FeatureFlagMetrics(new SimpleMeterRegistry())`.
-- `SecurityConfig`, both auth filters, `EvaluationServiceImpl`, `EvaluationServiceImplTest`,
-  filter tests, `SecurityChainIntegrationTest` — took #29 (`--ours`); develop only reformatted
-  them, and #29's `@Order(0)` management chain deliberately supersedes #25's admin-chain
-  `/actuator/health/**` rule (integration test asserts `/actuator/info` → 401, not 403).
-- `MEMORY.md` — unioned both sets of entries.
+**Just merged `origin/develop` into this branch again** to clear PR conflicts. develop had
+advanced with PR **#51** (codegraph adoption — spec/planning only, no source). The only
+conflicts were in `.claude/memory/` (HANDOFF, MEMORY.md, today's session file — both branches
+ran `/save-memory` on 2026-07-11); resolved by **union**. No product-code conflicts.
 
 ## Next steps
-1. Push branch (memory gate satisfied by this file), then reply on PR #44 that all three
-   review points are addressed (`6eb7d28` covers cardinality).
-2. `docs/ARCHITECTURE.md` (uppercase) is still modified/uncommitted — a pre-existing unrelated
-   rewrite. Left out of `6eb7d28` on purpose. Decide separately whether to commit or discard it.
-3. Confirm PR #44 shows mergeable; ping reviewer.
+1. **Push** this branch (memory gate satisfied by this file), then reply on PR #44 that all
+   three review points are addressed (`6eb7d28` covers cardinality). Confirm PR shows mergeable.
+2. `docs/ARCHITECTURE.md` (uppercase) is still modified/uncommitted — a large pre-existing
+   −688/+63 rewrite by another author (oanhhkim), unrelated to #29. Left out of every commit on
+   purpose. Decide separately whether to land or discard it.
 
 ## Context to Load
 
 - `decisions/0012-micrometer-prometheus-metrics.md` — the #29 design + the security finding.
 - `conventions/actuator-management-chain-boot41.md` — Boot 4.1 `EndpointRequest` module move +
   blank-`{noop}`-secret auth bypass.
-- `decisions/0013-slack-notifications.md` — develop's Slack feature now on this branch.
-- `conventions/spotless-scoping-and-bash32.md` — the google-java-format tooling develop added.
+- `decisions/0014-codegraph-adoption.md` — codegraph work now merged to develop (PR #51).
 
 ## Numbering note
 
@@ -52,9 +41,23 @@ Filename collision to clean up later: both `decisions/0012-micrometer-prometheus
 (#29) and `decisions/0012-harness-guards-spotless-coverage.md` (develop) claim **0012**.
 Distinct filenames so no git conflict, but renumber one on the next `/save-memory`.
 
-**Follow-ups:**
-- #29 cardinality (PR #44 review): documented honestly in the Javadoc as of `6eb7d28`. Kept the
-  env tag (AC requires it). If tenants ever reach thousands, revisit — drop the env tag or add a
-  `MeterFilter maximumAllowableTags`. Not urgent at current scale.
-- Docs case-collision: delete the lowercase `docs/architecture.md` stub on a case-sensitive box.
-- Raise `jacoco.line.coverage` above 0.00.
+## Follow-ups
+- **#29 cardinality** (PR #44 review): documented honestly in the Javadoc as of `6eb7d28`. Kept
+  the env tag (AC requires it). If tenants ever reach thousands, revisit — drop the env tag or
+  add a `MeterFilter maximumAllowableTags`. Not urgent at current scale.
+- **Docs case-collision:** delete the lowercase `docs/architecture.md` stub on a case-sensitive box.
+- **Raise `jacoco.line.coverage`** above 0.00.
+
+**Parked / cross-branch (from prior sessions):**
+- Unrelated `docs/ARCHITECTURE.md` change still uncommitted — land or discard separately.
+- Issue #10 (`feature/issue-10-jwt-deleted-user-500`), #17 (`feature/issue-17-estimate-issue-skill`)
+  — commit/push/PR/`ready` pending.
+- Issue #14 (SonarQube) waiting on infra, holds `decisions/0006-*`.
+- **Codegraph (#48/#49/#50)** filed on the Digital banking board; #48 (Track A Tier-1 ArchUnit
+  gate) is the next implementation to pick up. See `decisions/0014` + `docs/specs/codegraph-adoption.md`.
+
+**Follow-ups (from earlier work):**
+- **#25:** reconsider Dockerfile HEALTHCHECK `readiness` → `liveness`; add DB-down readiness→503 test.
+- **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
+- **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
+</content>
