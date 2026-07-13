@@ -27,6 +27,7 @@ import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,6 +48,7 @@ class FeatureFlagServiceImplTest {
   @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
+  @Mock EvaluationCacheService evaluationCacheService;
 
   FeatureFlagServiceImpl service;
 
@@ -62,7 +64,8 @@ class FeatureFlagServiceImplTest {
             environmentRepository,
             flagStateRepository,
             permissionService,
-            eventPublisher);
+            eventPublisher,
+            evaluationCacheService);
     project = Project.builder().id(projectId).name("proj").build();
     doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
   }

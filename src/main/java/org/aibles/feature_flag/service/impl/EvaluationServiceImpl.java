@@ -3,13 +3,13 @@ package org.aibles.feature_flag.service.impl;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
-import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.dto.response.FlagEvaluationResponse;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
-import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.service.EvaluationService;
+import org.aibles.feature_flag.service.FlagStateSnapshot;
 import org.aibles.feature_flag.util.RolloutEvaluator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,51 +19,62 @@ import org.springframework.transaction.annotation.Transactional;
 public class EvaluationServiceImpl implements EvaluationService {
 
   private final FlagEnvironmentStateRepository flagStateRepository;
-  private final FeatureFlagRepository featureFlagRepository;
+  private final EvaluationCacheService evaluationCacheService;
 
   @Override
   @Transactional(readOnly = true)
   public List<FlagEvaluationResponse> getAllFlags(Environment environment, String identifier) {
-    return flagStateRepository.findAllActiveByEnvironmentId(environment.getId()).stream()
-        .map(state -> toResponse(state, identifier))
-        .toList();
+    List<FlagStateSnapshot> snapshots = getOrLoadSnapshots(environment);
+    return snapshots.stream().map(s -> toResponse(s, identifier)).toList();
   }
 
   @Override
   @Transactional(readOnly = true)
   public FlagEvaluationResponse getFlag(
       Environment environment, String flagKey, String identifier) {
-    FeatureFlag flag =
-        featureFlagRepository
-            .findByProjectIdAndKey(environment.getProject().getId(), flagKey)
+    List<FlagStateSnapshot> snapshots = getOrLoadSnapshots(environment);
+    FlagStateSnapshot snapshot =
+        snapshots.stream()
+            .filter(s -> flagKey.equals(s.flagKey()))
+            .findFirst()
             .orElseThrow(
                 () -> new ResourceNotFoundException("Flag not found with key: " + flagKey));
-
-    if (flag.isArchived()) {
-      throw new ResourceNotFoundException("Flag not found with key: " + flagKey);
-    }
-
-    FlagEnvironmentState state =
-        flagStateRepository
-            .findByFeatureFlagIdAndEnvironmentId(flag.getId(), environment.getId())
-            .orElseThrow(() -> new ResourceNotFoundException("Flag state not found"));
-
-    return toResponse(state, identifier);
+    return toResponse(snapshot, identifier);
   }
 
-  private FlagEvaluationResponse toResponse(FlagEnvironmentState state, String identifier) {
+  private List<FlagStateSnapshot> getOrLoadSnapshots(Environment environment) {
+    return evaluationCacheService
+        .get(environment.getId())
+        .orElseGet(
+            () -> {
+              List<FlagStateSnapshot> fresh =
+                  flagStateRepository.findAllActiveByEnvironmentId(environment.getId()).stream()
+                      .map(this::toSnapshot)
+                      .toList();
+              evaluationCacheService.put(environment.getId(), fresh);
+              return fresh;
+            });
+  }
+
+  private FlagStateSnapshot toSnapshot(FlagEnvironmentState state) {
+    return new FlagStateSnapshot(
+        state.getFeatureFlag().getKey(),
+        state.isEnabled(),
+        state.getValue(),
+        state.getFeatureFlag().getValueType(),
+        state.getRolloutPercent());
+  }
+
+  private FlagEvaluationResponse toResponse(FlagStateSnapshot snapshot, String identifier) {
     boolean effective =
         RolloutEvaluator.evaluate(
-            identifier,
-            state.getFeatureFlag().getKey(),
-            state.getRolloutPercent(),
-            state.isEnabled());
+            identifier, snapshot.flagKey(), snapshot.rolloutPercent(), snapshot.enabled());
     return FlagEvaluationResponse.builder()
-        .flagKey(state.getFeatureFlag().getKey())
+        .flagKey(snapshot.flagKey())
         .enabled(effective)
-        .value(effective ? state.getValue() : null)
-        .valueType(state.getFeatureFlag().getValueType())
-        .rolloutPercent(state.getRolloutPercent())
+        .value(effective ? snapshot.value() : null)
+        .valueType(snapshot.valueType())
+        .rolloutPercent(snapshot.rolloutPercent())
         .build();
   }
 }
