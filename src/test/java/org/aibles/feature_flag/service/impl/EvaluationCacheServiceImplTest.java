@@ -55,6 +55,31 @@ class EvaluationCacheServiceImplTest {
   }
 
   @Test
+  void getOrLoad_returnsExistingEntry_withoutInvokingLoader() {
+    UUID envId = UUID.randomUUID();
+    List<FlagStateSnapshot> cached =
+        List.of(new FlagStateSnapshot("flag-d", true, null, FlagValueType.BOOLEAN, 100));
+    cacheService.put(envId, cached);
+
+    List<FlagStateSnapshot> result =
+        cacheService.getOrLoad(envId, id -> List.of()); // loader would return empty
+
+    assertThat(result).isEqualTo(cached);
+  }
+
+  @Test
+  void getOrLoad_invokesLoader_onCacheMiss() {
+    UUID envId = UUID.randomUUID();
+    List<FlagStateSnapshot> loaded =
+        List.of(new FlagStateSnapshot("flag-e", false, null, FlagValueType.BOOLEAN, 0));
+
+    List<FlagStateSnapshot> result = cacheService.getOrLoad(envId, id -> loaded);
+
+    assertThat(result).isEqualTo(loaded);
+    assertThat(cacheService.get(envId)).isPresent().contains(loaded);
+  }
+
+  @Test
   void put_overwritesPreviousValue() {
     UUID envId = UUID.randomUUID();
     List<FlagStateSnapshot> first =

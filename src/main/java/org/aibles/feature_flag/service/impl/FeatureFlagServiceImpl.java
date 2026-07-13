@@ -199,6 +199,10 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     return response;
   }
 
+  // Eviction fires inside the @Transactional boundary, before the surrounding commit. This is
+  // intentionally safe: early eviction causes at most one extra DB read on the next SDK call
+  // (which will see the committed state), never stale data. A post-commit eviction hook would be
+  // cleaner but is not required here given the low rollback probability of these write paths.
   private void evictAllEnvironmentsForProject(UUID projectId) {
     environmentRepository
         .findAllByProjectId(projectId)

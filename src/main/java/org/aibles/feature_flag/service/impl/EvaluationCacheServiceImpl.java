@@ -4,6 +4,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.service.FlagStateSnapshot;
@@ -28,5 +29,11 @@ public class EvaluationCacheServiceImpl implements EvaluationCacheService {
   @Override
   public void evict(UUID environmentId) {
     evaluationCache.invalidate(environmentId);
+  }
+
+  @Override
+  public List<FlagStateSnapshot> getOrLoad(
+      UUID environmentId, Function<UUID, List<FlagStateSnapshot>> loader) {
+    return evaluationCache.get(environmentId, loader);
   }
 }

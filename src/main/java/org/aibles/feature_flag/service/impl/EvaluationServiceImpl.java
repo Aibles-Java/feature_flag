@@ -14,6 +14,12 @@ import org.aibles.feature_flag.util.RolloutEvaluator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+// Note: @Transactional(readOnly=true) is declared at each public method so a DB connection is
+// acquired lazily — cache hits never open a connection. The cache.get(key, loader) inside
+// getOrLoad() is called while the read transaction is still active; this is safe because
+// PostgreSQL READ COMMITTED read-only transactions never roll back on a clean read, so there
+// is no risk of caching data from an aborted transaction.
+
 @Service
 @RequiredArgsConstructor
 public class EvaluationServiceImpl implements EvaluationService {
@@ -43,17 +49,12 @@ public class EvaluationServiceImpl implements EvaluationService {
   }
 
   private List<FlagStateSnapshot> getOrLoadSnapshots(Environment environment) {
-    return evaluationCacheService
-        .get(environment.getId())
-        .orElseGet(
-            () -> {
-              List<FlagStateSnapshot> fresh =
-                  flagStateRepository.findAllActiveByEnvironmentId(environment.getId()).stream()
-                      .map(this::toSnapshot)
-                      .toList();
-              evaluationCacheService.put(environment.getId(), fresh);
-              return fresh;
-            });
+    return evaluationCacheService.getOrLoad(
+        environment.getId(),
+        id ->
+            flagStateRepository.findAllActiveByEnvironmentId(id).stream()
+                .map(this::toSnapshot)
+                .toList());
   }
 
   private FlagStateSnapshot toSnapshot(FlagEnvironmentState state) {

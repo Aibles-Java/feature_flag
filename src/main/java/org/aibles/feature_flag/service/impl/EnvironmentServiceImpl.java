@@ -16,6 +16,7 @@ import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EnvironmentService;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.ApiKeyGenerator;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.springframework.context.ApplicationEventPublisher;
@@ -30,6 +31,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   private final ProjectRepository projectRepository;
   private final PermissionService permissionService;
   private final ApplicationEventPublisher eventPublisher;
+  private final EvaluationCacheService evaluationCacheService;
 
   @Override
   @Transactional
@@ -87,6 +89,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   public void delete(UUID id) {
     permissionService.requireRoleForEnvironment(id, MemberRole.OWNER);
     environmentRepository.deleteById(id);
+    evaluationCacheService.evict(id);
   }
 
   @Override
