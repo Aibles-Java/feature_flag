@@ -4,50 +4,60 @@
 
 ## Current WIP
 
-**Code graph adoption** on branch `feature/codegraph-adoption`. Research + planning done;
-**no implementation yet**. About to commit + push + open a PR into `develop` for the
-spec/planning artifacts.
+**Issue #29** (Micrometer + Prometheus metrics) on branch
+`feature/issue-29-micrometer-prometheus` (→ `develop`). Code implemented,
+security-reviewed (1 finding found + fixed). PR **#44** open; **all three review
+points from trinhvandat now addressed:**
+- (#2) Javadoc lazy/eager contradiction — fixed earlier (`aeb5b53`).
+- (#3) third `@Order(0)` security chain documented in CLAUDE.md + docs/architecture.md — `aeb5b53`.
+- (#1, cardinality — the substantive one) `FeatureFlagMetrics` class Javadoc rewrote the
+  "deliberately bounded" claim: the `environment` tag is bounded by TOTAL Environment rows
+  across ALL orgs (not per-tenant), meters are never evicted (~4 permanent series/env), and
+  `max-uri-tags` does NOT cap custom meters. Kept the tag (issue #29 AC requires
+  `ff_evaluations_total{environment}`). Comment-only, compile+spotless green. Commit **`6eb7d28`**.
 
-Files to commit this session (docs/planning only — NO source code):
-- `docs/specs/codegraph-adoption.md` — the spec: Track A (ArchUnit governance) + Track B
-  (CodeGraphContext MCP) + §9 Mermaid solution-design diagram (4-colour scheme; render
-  verified via mermaid-cli → valid SVG).
-- `.claude/skills/estimate-issue/calibration.md` — 3 estimate rows (#48/#49/#50).
-- `.claude/memory/**` — this commit (decision 0014 + eventual-consistency convention + index).
+**Just merged `origin/develop` into this branch again** to clear PR conflicts. develop had
+advanced with PR **#51** (codegraph adoption — spec/planning only, no source). The only
+conflicts were in `.claude/memory/` (HANDOFF, MEMORY.md, today's session file — both branches
+ran `/save-memory` on 2026-07-11); resolved by **union**. No product-code conflicts.
 
-**Deliberately NOT committed:** `docs/ARCHITECTURE.md` — a large uncommitted −688/+63 change
-by another author (oanhhkim), unrelated to this work. Still parked (see below).
-
-**GitHub issues filed** on Digital banking board (project #3), estimates written & verified:
-- **#48** (M/5h) Track A Tier-1 ArchUnit gate + ADR-0003 + memory — core, touches CI. Blocks #49.
-- **#49** (S/3h) Track A Tier-2 custom conditions. Depends on #48.
-- **#50** (S/2h) Track B CodeGraphContext spike. Independent.
+## Next steps
+1. **Push** this branch (memory gate satisfied by this file), then reply on PR #44 that all
+   three review points are addressed (`6eb7d28` covers cardinality). Confirm PR shows mergeable.
+2. `docs/ARCHITECTURE.md` (uppercase) is still modified/uncommitted — a large pre-existing
+   −688/+63 rewrite by another author (oanhhkim), unrelated to #29. Left out of every commit on
+   purpose. Decide separately whether to land or discard it.
 
 ## Context to Load
 
-- `decisions/0014-codegraph-adoption.md` — the decision, tool comparison, tier split, key gotchas.
-- `docs/specs/codegraph-adoption.md` — full spec + solution-design diagram.
-- `conventions/issue-board-estimate-eventual-consistency.md` — why `estimate` fails on run 1.
+- `decisions/0012-micrometer-prometheus-metrics.md` — the #29 design + the security finding.
+- `conventions/actuator-management-chain-boot41.md` — Boot 4.1 `EndpointRequest` module move +
+  blank-`{noop}`-secret auth bypass.
+- `decisions/0014-codegraph-adoption.md` — codegraph work now merged to develop (PR #51).
 
-## Next steps
-1. **Push** `feature/codegraph-adoption` (memory gate now satisfied by this commit) and open
-   a PR into `develop` via the `create-pr` skill. PR is planning-only (spec + estimates + memory).
-2. **Implement #48 first** (Track A Tier-1): `issue-board.sh start 48`, add `archunit-junit5:1.4.2`,
-   write `src/test/java/org/aibles/feature_flag/architecture/ArchitectureTest.java` (R1–R7),
-   prove the gate with a deliberate violation → `./mvnw verify` fails → revert, add ADR-0003.
-   Remember: ArchUnit is static-only → Boot-4.1 test landmines do NOT apply; use `FreezingArchRule`
-   if current code has pre-existing layering violations.
-3. Then **#50** spike (~1 week later), then **#49** Tier-2. Re-evaluate jQAssistant only if
-   Tier-3 governance or agent-query precision becomes a felt need.
+## Numbering note
+
+Filename collision to clean up later: both `decisions/0012-micrometer-prometheus-metrics.md`
+(#29) and `decisions/0012-harness-guards-spotless-coverage.md` (develop) claim **0012**.
+Distinct filenames so no git conflict, but renumber one on the next `/save-memory`.
+
+## Follow-ups
+- **#29 cardinality** (PR #44 review): documented honestly in the Javadoc as of `6eb7d28`. Kept
+  the env tag (AC requires it). If tenants ever reach thousands, revisit — drop the env tag or
+  add a `MeterFilter maximumAllowableTags`. Not urgent at current scale.
+- **Docs case-collision:** delete the lowercase `docs/architecture.md` stub on a case-sensitive box.
+- **Raise `jacoco.line.coverage`** above 0.00.
 
 **Parked / cross-branch (from prior sessions):**
 - Unrelated `docs/ARCHITECTURE.md` change still uncommitted — land or discard separately.
 - Issue #10 (`feature/issue-10-jwt-deleted-user-500`), #17 (`feature/issue-17-estimate-issue-skill`)
   — commit/push/PR/`ready` pending.
 - Issue #14 (SonarQube) waiting on infra, holds `decisions/0006-*`.
+- **Codegraph (#48/#49/#50)** filed on the Digital banking board; #48 (Track A Tier-1 ArchUnit
+  gate) is the next implementation to pick up. See `decisions/0014` + `docs/specs/codegraph-adoption.md`.
 
 **Follow-ups (from earlier work):**
 - **#25:** reconsider Dockerfile HEALTHCHECK `readiness` → `liveness`; add DB-down readiness→503 test.
 - **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
 - **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
-- **Code graph:** jQAssistant+Neo4j upgrade (closes Tier-3); Joern for a future auth taint pass.
+</content>

@@ -44,9 +44,11 @@ Organization → Project → Environment (has API key)
 
 `FlagEnvironmentState` is auto-created for every existing environment when a new `FeatureFlag` is created. This means a flag always has exactly one state row per environment — never query flags without joining on this table.
 
-### Two security chains (order matters)
+### Three security chains (order matters)
 
-`SecurityConfig` defines two separate `SecurityFilterChain` beans:
+`SecurityConfig` defines three separate `SecurityFilterChain` beans:
+
+0. **Management chain** (`/actuator/**`, `@Order(0)`) — added in issue #29. `/actuator/health` + `/actuator/health/**` are public; everything else (notably `prometheus`, `info`) requires HTTP Basic with role `METRICS` via a local in-memory scraper user. When `app.metrics.password` is blank the account is built `.disabled(true)` to avoid an empty-secret auth bypass.
 
 1. **SDK chain** (`/api/v1/sdk/**`, order=1) — `ApiKeyAuthenticationFilter` reads `X-Environment-Key` header, resolves the `Environment` entity, and sets `ApiKeyAuthenticationToken` as the principal. The resolved `Environment` object is available via `SecurityContextHolder` in `EvaluationController`.
 

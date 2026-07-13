@@ -154,9 +154,10 @@ class SecurityChainIntegrationTest {
 
   @Test
   void otherActuatorEndpointsAreNotAnonymouslyExposed() throws Exception {
-    // Everything under /actuator except health/** falls through to authenticated() → 403 without a
-    // JWT.
-    mockMvc.perform(get("/actuator/info")).andExpect(status().isForbidden());
+    // /actuator/** is owned by the managementFilterChain (@Order(0), issue #29): everything
+    // except health/** requires HTTP Basic (METRICS role), so an anonymous request is rejected
+    // with 401 + a Basic auth challenge (not the JWT chain's 403). Still not anonymously exposed.
+    mockMvc.perform(get("/actuator/info")).andExpect(status().isUnauthorized());
   }
 
   /** Presents {@code apiKey} on the SDK chain and returns the raw HTTP status. */
