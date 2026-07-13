@@ -102,6 +102,15 @@
             <version>${springdoc.version}</version>
         </dependency>
 
+        <!-- Observability: Prometheus scrape registry (issue #29). Actuator itself is declared
+             once above (added by #25 for health probes); this adds the Prometheus meter registry
+             so /actuator/prometheus is served. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Rate limiting (token-bucket, in-memory) -->
         <dependency>
             <groupId>com.bucket4j</groupId>

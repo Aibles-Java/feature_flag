@@ -5,9 +5,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.FilterChain;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.User;
+import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,7 +36,9 @@ class JwtAuthenticationFilterTest {
 
   @org.junit.jupiter.api.BeforeEach
   void setUp() {
-    filter = new JwtAuthenticationFilter(tokenProvider, userDetailsService);
+    filter =
+        new JwtAuthenticationFilter(
+            tokenProvider, userDetailsService, new FeatureFlagMetrics(new SimpleMeterRegistry()));
   }
 
   @AfterEach

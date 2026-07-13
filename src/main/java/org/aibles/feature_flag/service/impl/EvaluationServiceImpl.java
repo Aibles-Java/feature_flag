@@ -6,6 +6,7 @@ import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.dto.response.FlagEvaluationResponse;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.service.EvaluationService;
@@ -26,26 +27,35 @@ public class EvaluationServiceImpl implements EvaluationService {
 
   private final FlagEnvironmentStateRepository flagStateRepository;
   private final EvaluationCacheService evaluationCacheService;
+  private final FeatureFlagMetrics metrics;
 
   @Override
   @Transactional(readOnly = true)
   public List<FlagEvaluationResponse> getAllFlags(Environment environment, String identifier) {
-    List<FlagStateSnapshot> snapshots = getOrLoadSnapshots(environment);
-    return snapshots.stream().map(s -> toResponse(s, identifier)).toList();
+    return metrics.recordEvaluation(
+        environment.getId().toString(),
+        () -> {
+          List<FlagStateSnapshot> snapshots = getOrLoadSnapshots(environment);
+          return snapshots.stream().map(s -> toResponse(s, identifier)).toList();
+        });
   }
 
   @Override
   @Transactional(readOnly = true)
   public FlagEvaluationResponse getFlag(
       Environment environment, String flagKey, String identifier) {
-    List<FlagStateSnapshot> snapshots = getOrLoadSnapshots(environment);
-    FlagStateSnapshot snapshot =
-        snapshots.stream()
-            .filter(s -> flagKey.equals(s.flagKey()))
-            .findFirst()
-            .orElseThrow(
-                () -> new ResourceNotFoundException("Flag not found with key: " + flagKey));
-    return toResponse(snapshot, identifier);
+    return metrics.recordEvaluation(
+        environment.getId().toString(),
+        () -> {
+          List<FlagStateSnapshot> snapshots = getOrLoadSnapshots(environment);
+          FlagStateSnapshot snapshot =
+              snapshots.stream()
+                  .filter(s -> flagKey.equals(s.flagKey()))
+                  .findFirst()
+                  .orElseThrow(
+                      () -> new ResourceNotFoundException("Flag not found with key: " + flagKey));
+          return toResponse(snapshot, identifier);
+        });
   }
 
   private List<FlagStateSnapshot> getOrLoadSnapshots(Environment environment) {

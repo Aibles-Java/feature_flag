@@ -15,6 +15,7 @@ import org.aibles.feature_flag.dto.response.FeatureFlagResponse;
 import org.aibles.feature_flag.dto.response.FlagStateResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
 import org.aibles.feature_flag.notification.event.FlagStateChangedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
@@ -38,6 +39,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   private final PermissionService permissionService;
   private final ApplicationEventPublisher eventPublisher;
   private final EvaluationCacheService evaluationCacheService;
+  private final FeatureFlagMetrics metrics;
 
   @Override
   @Transactional
@@ -74,6 +76,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
       evaluationCacheService.evict(env.getId());
     }
 
+    metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.CREATED);
     return toResponse(flag);
   }
 
@@ -103,7 +106,9 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     // key is intentionally not updated — it is immutable
     if (request.getName() != null) flag.setName(request.getName());
     if (request.getDescription() != null) flag.setDescription(request.getDescription());
-    return toResponse(featureFlagRepository.save(flag));
+    FeatureFlagResponse response = toResponse(featureFlagRepository.save(flag));
+    metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.UPDATED);
+    return response;
   }
 
   @Override
@@ -121,6 +126,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             flag.getProject().getName(),
             true,
             permissionService.currentUserEmail()));
+    metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.ARCHIVED);
   }
 
   @Override
@@ -138,6 +144,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             flag.getProject().getName(),
             false,
             permissionService.currentUserEmail()));
+    metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.UNARCHIVED);
   }
 
   @Override
@@ -196,6 +203,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             previousValue,
             state.getValue(),
             permissionService.currentUserEmail()));
+    metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.STATE_UPDATED);
     return response;
   }
 
