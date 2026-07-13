@@ -8,7 +8,9 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.aibles.feature_flag.logging.MdcKeys;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
+import org.slf4j.MDC;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -42,6 +44,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                   userDetails, null, userDetails.getAuthorities());
           authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
           SecurityContextHolder.getContext().setAuthentication(authentication);
+
+          // Tag logs for this request with the authenticated user id. Cleared centrally by
+          // RequestCorrelationFilter's finally block, so no per-request cleanup is needed here.
+          if (userDetails instanceof UserPrincipal principal) {
+            MDC.put(MdcKeys.USER_ID, principal.getId().toString());
+          }
         } catch (UsernameNotFoundException ex) {
           metrics.recordAuthFailure(FeatureFlagMetrics.AuthFailure.ADMIN_UNKNOWN_SUBJECT);
           log.warn(
