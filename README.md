@@ -24,8 +24,12 @@ Local dev runs on committed, clearly-non-secret defaults (`ff_user`/`ff_password
 
 Configuration binds env vars via Spring relaxed binding. In the **prod profile**
 (`SPRING_PROFILES_ACTIVE=prod`) the variables below are **required** — each one is
-referenced without a default in `application-prod.properties`, so a missing variable
-aborts startup with an error naming it.
+referenced without a default in `application-prod.properties`, and a missing one aborts
+startup with a message naming it. That naming comes from explicit prod-only startup
+checks (`RequiredDataSourceEnvPostProcessor` for the datasource vars, `JwtProperties`
+validation for the JWT secret), not from placeholder resolution: the
+`@ConfigurationProperties` binder resolves non-strictly, so an unset `${VAR}` would
+otherwise slip through as a literal and fail later with an obscure driver error.
 
 | Variable | Required (prod) | Description |
 |---|---|---|
@@ -43,8 +47,9 @@ fail fast by default; set it explicitly for any non-container deployment.
 
 Startup validation (`JwtProperties`) fails fast — in any profile — when the JWT secret
 is missing/blank, shorter than 512 bits, or contains a known placeholder marker
-(`change-me`). Never commit real secrets; docker-compose reads overrides from a
-git-ignored `.env` file.
+(`change-me`). In the prod profile, `RequiredDataSourceEnvPostProcessor` additionally
+aborts startup naming any missing/blank `SPRING_DATASOURCE_*` variable. Never commit real
+secrets; docker-compose reads overrides from a git-ignored `.env` file.
 
 ## Build & test
 

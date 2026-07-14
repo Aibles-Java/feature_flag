@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# git pre-commit — auto-format staged Java files with Spotless (google-java-format)
+# so every commit matches the CI `spotless:check` gate, whatever editor was used.
+# Enable in this repo with:
+#     git config core.hooksPath .githooks
+# Bypass a single commit with:  SKIP_SPOTLESS=1 git commit …
+exec bash "$(git rev-parse --show-toplevel)/.claude/hooks/spotless-staged.sh"

@@ -25,4 +25,4 @@ case (null → `@NotBlank`; `${...}` literal → the resolved-check) to avoid do
 reporting. Records auto-generate `toString()` with all components — override it to mask
 secret-bearing components.
 
-Related: [[0008-secrets-externalization-fail-fast]], [[springboot4-security-testing]]
+Related: [[0016-secrets-externalization-fail-fast]], [[springboot4-security-testing]]

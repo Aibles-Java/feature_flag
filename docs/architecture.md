@@ -17,7 +17,7 @@ Supports multi-tenant flag management via an Org → Project → Environment hie
 | Service | `src/main/java/org/aibles/feature_flag/service/` | Business logic (interfaces + `impl/`) |
 | Repository | `src/main/java/org/aibles/feature_flag/repository/` | Spring Data JPA repositories |
 | Domain | `src/main/java/org/aibles/feature_flag/domain/` | JPA entities (`entity/`) and enums (`enums/`) |
-| Security | `src/main/java/org/aibles/feature_flag/security/` | Two `SecurityFilterChain` beans: JWT admin auth + API-key SDK auth |
+| Security | `src/main/java/org/aibles/feature_flag/security/` | Three `SecurityFilterChain` beans: `@Order(0)` actuator management (metrics), API-key SDK auth (order=1), JWT admin auth (order=2) |
 | DTO | `src/main/java/org/aibles/feature_flag/dto/` | `request/` and `response/` payloads |
 | Config | `src/main/java/org/aibles/feature_flag/config/` | Spring configuration (security chains, OpenAPI, etc.) |
 | Exception | `src/main/java/org/aibles/feature_flag/exception/` | Exception handling |

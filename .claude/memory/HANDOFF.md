@@ -5,50 +5,43 @@
 ## Current WIP
 
 **Issue #23** (externalize secrets, fail fast on placeholder config) on branch
-`feature/issue-23-externalize-secrets` (→ `develop`). Implementation complete and verified:
+`feature/issue-23-externalize-secrets` (→ `develop`), PR **#39**. Addressing the
+`/review-pr` findings and clearing the `CONFLICTING` state (2026-07-14):
 
-- `config/JwtProperties.java` (new) — validated `@ConfigurationProperties` record:
-  @NotBlank/@Positive + @AssertTrue checks (≥64 UTF-8 bytes, placeholder markers,
-  unresolved `${...}` literal, ≥10 distinct chars), masked `toString()`.
-- `security/JwtTokenProvider.java` — injects `JwtProperties` (drops `@Value`);
-  `FeatureFlagApplication` gains `@ConfigurationPropertiesScan`.
-- `application.properties` — dev-only secret replaces `change-me-...`;
-  `application-prod.properties` (new) — no-default `${VAR}` placeholders.
-- `Dockerfile` — `ENV SPRING_PROFILES_ACTIVE=prod` (security-review HIGH fix) + EXPOSE 8081.
-- `docker-compose.yml` parameterized, `.env` gitignored, `.env.example` (new), `README.md`
-  (new), CLAUDE.md Key configuration updated.
-- Tests: `config/JwtPropertiesValidationTest` (12 cases via ApplicationContextRunner),
-  `JwtTokenProviderTest` updated. **52/52 green** (`./mvnw verify`).
-- Manual prod-profile fail-fast verified: missing var / placeholder / short secret all
-  abort with clear messages; prod + valid secret and default dev profile both start.
-
-Reviews done: java-reviewer (approve; .env.example added), security-reviewer
-(HIGH profile-fallback → Dockerfile fix; MEDIUM entropy → distinct-chars check; LOW
-toString → masked). Board card is *In progress*; two decision comments posted on #23
-(compose scope, README location).
-
-**Remaining:** commit, push, PR (`Closes #23`, base `develop`), then
-`.claude/scripts/issue-board.sh ready 23`.
+- **Merged current `origin/develop` into the branch** (no rebase/force-push). Conflicts
+  resolved: `Dockerfile` (kept develop's `EXPOSE 8081` + `/actuator/health/readiness`
+  HEALTHCHECK from #25/PR #42, added only `ENV SPRING_PROFILES_ACTIVE=prod`; dropped the
+  now-redundant `EXPOSE`), `.gitignore` (union), `JwtTokenProvider(.java|Test)` (develop's
+  google-format + the `JwtProperties` constructor), `.claude/memory/*`.
+- **Datasource fail-fast gap fixed:** new `config/RequiredDataSourceEnvPostProcessor`
+  (`EnvironmentPostProcessor`, prod-only) aborts startup naming any missing/blank
+  `SPRING_DATASOURCE_URL/USERNAME/PASSWORD`. Previously only `APP_JWT_SECRET` got a clear
+  error; the datasource vars bound the literal `${VAR}` and failed later in Hikari.
+- **Docs corrected:** `application-prod.properties` comment + `README.md` now describe the
+  real behavior (datasource fail-fast is via the post-processor, not "Could not resolve
+  placeholder").
+- **Memory renumber:** on-branch `decisions/0008-secrets-externalization-fail-fast.md`
+  → `0016` (develop took 0008–0015 meanwhile); MEMORY.md + `[[links]]` updated.
 
 ## Context to Load
 
-- `decisions/0008-secrets-externalization-fail-fast.md` — the design + rationale.
-- `conventions/springboot-configprops-binding-gotchas.md` — binder/validation gotchas.
+- `decisions/0016-secrets-externalization-fail-fast.md` — the design + the two review fixes.
+- `conventions/springboot-configprops-binding-gotchas.md` — the `${VAR}`-literal binder gotcha
+  that motivates the datasource post-processor.
 
 ## Next steps
 
-1. Commit this work (do NOT include pre-existing dirty files:
-   `.claude/skills/estimate-issue/calibration.md`, `docs/ARCHITECTURE.md`, `.omc/`,
-   `.claude/memory/.omc/` — they belong to parked work).
-2. Push + `create-pr` skill (`Closes #23`) → `issue-board.sh ready 23`.
+1. `./mvnw verify` green in the worktree (Spotless + tests + JaCoCo) — confirm before push.
+2. Commit the merge + fixes; push `feature/issue-23-externalize-secrets` (normal push, no force).
+   Memory gate satisfied (this file + MEMORY.md + decision are in the commit).
+3. Confirm PR #39 flips to MERGEABLE; reply on the review thread that findings are addressed.
 
-**Parked from previous sessions:**
-- Issue #17 branch (`feature/issue-17-estimate-issue-skill`) — needs commit + push + PR + `ready 17`
-- Uncommitted `.gitignore`(`.omc/`)/`docs/ARCHITECTURE.md` regeneration — land or discard separately
-- Issue #14 (SonarQube) waiting on infra, holds `decisions/0006-*`
-- Verify a live decision comment for issue #15 (last acceptance box) — two decision
-  comments were posted on #23 this session, which may satisfy the check
-- Raise `jacoco.line.coverage` above 0.00 (follow-up from #3/#4)
-- GitHub GraphQL rate limit was hit once this session (board lookups); if
-  `issue-board.sh` dies with "could not locate or create board item", check
-  `gh api rate_limit` before debugging the script
+## Follow-ups (carried over)
+- **Codegraph (#48/#49/#50)** on the board; #48 (Tier-1 ArchUnit gate) next to pick up.
+- **`docs/` case collision:** `docs/ARCHITECTURE.md` vs `docs/architecture.md` — delete one on a
+  case-sensitive box.
+- Two `decisions/0012-*` files (micrometer + harness-guards) still collide — renumber one later.
+- **#25:** Dockerfile HEALTHCHECK readiness→liveness? add DB-down readiness→503 test.
+- **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
+- **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
+- **Raise `jacoco.line.coverage`** as coverage climbs.

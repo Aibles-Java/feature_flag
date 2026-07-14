@@ -1,6 +1,8 @@
 package org.aibles.feature_flag.controller.admin;
 
 import jakarta.validation.Valid;
+import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFeatureFlagRequest;
@@ -11,64 +13,62 @@ import org.aibles.feature_flag.service.FeatureFlagService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-import java.util.UUID;
-
 @RestController
 @RequestMapping("/api/v1/flags")
 @RequiredArgsConstructor
 public class FeatureFlagController {
 
-    private final FeatureFlagService featureFlagService;
+  private final FeatureFlagService featureFlagService;
 
-    @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public FeatureFlagResponse create(@Valid @RequestBody CreateFeatureFlagRequest request) {
-        return featureFlagService.create(request);
-    }
+  @PostMapping
+  @ResponseStatus(HttpStatus.CREATED)
+  public FeatureFlagResponse create(@Valid @RequestBody CreateFeatureFlagRequest request) {
+    return featureFlagService.create(request);
+  }
 
-    @GetMapping
-    public List<FeatureFlagResponse> listByProject(@RequestParam UUID projectId) {
-        return featureFlagService.listByProject(projectId);
-    }
+  @GetMapping
+  public List<FeatureFlagResponse> listByProject(@RequestParam UUID projectId) {
+    return featureFlagService.listByProject(projectId);
+  }
 
-    @GetMapping("/{flagId}")
-    public FeatureFlagResponse get(@PathVariable UUID flagId) {
-        return featureFlagService.get(flagId);
-    }
+  @GetMapping("/{flagId}")
+  public FeatureFlagResponse get(@PathVariable UUID flagId) {
+    return featureFlagService.get(flagId);
+  }
 
-    @PutMapping("/{flagId}")
-    public FeatureFlagResponse update(@PathVariable UUID flagId,
-                                      @Valid @RequestBody UpdateFeatureFlagRequest request) {
-        return featureFlagService.update(flagId, request);
-    }
+  @PutMapping("/{flagId}")
+  public FeatureFlagResponse update(
+      @PathVariable UUID flagId, @Valid @RequestBody UpdateFeatureFlagRequest request) {
+    return featureFlagService.update(flagId, request);
+  }
 
-    @DeleteMapping("/{flagId}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void archive(@PathVariable UUID flagId) {
-        featureFlagService.archive(flagId);
-    }
+  @DeleteMapping("/{flagId}")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void archive(@PathVariable UUID flagId) {
+    featureFlagService.archive(flagId);
+  }
 
-    @PostMapping("/{flagId}/unarchive")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void unarchive(@PathVariable UUID flagId) {
-        featureFlagService.unarchive(flagId);
-    }
+  @PostMapping("/{flagId}/unarchive")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void unarchive(@PathVariable UUID flagId) {
+    featureFlagService.unarchive(flagId);
+  }
 
-    @GetMapping("/archived")
-    public List<FeatureFlagResponse> listArchived(@RequestParam UUID projectId) {
-        return featureFlagService.listArchivedByProject(projectId);
-    }
+  @GetMapping("/archived")
+  public List<FeatureFlagResponse> listArchived(@RequestParam UUID projectId) {
+    return featureFlagService.listArchivedByProject(projectId);
+  }
 
-    @GetMapping("/{flagId}/environments/{envId}")
-    public FlagStateResponse getState(@PathVariable UUID flagId, @PathVariable UUID envId) {
-        return featureFlagService.getState(flagId, envId);
-    }
+  @GetMapping("/{flagId}/environments/{envId}")
+  public FlagStateResponse getState(@PathVariable UUID flagId, @PathVariable UUID envId) {
+    return featureFlagService.getState(flagId, envId);
+  }
 
-    @PutMapping("/{flagId}/environments/{envId}")
-    public FlagStateResponse updateState(@PathVariable UUID flagId,
-                                         @PathVariable UUID envId,
-                                         @Valid @RequestBody UpdateFlagStateRequest request) {
-        return featureFlagService.updateState(flagId, envId, request);
-    }
+  @PutMapping("/{flagId}/environments/{envId}")
+  public FlagStateResponse updateState(
+      @PathVariable UUID flagId,
+      @PathVariable UUID envId,
+      @Valid @RequestBody UpdateFlagStateRequest request) {
+    return featureFlagService.updateState(flagId, envId, request);
+  }
 }
