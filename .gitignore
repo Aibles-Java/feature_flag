@@ -41,3 +41,6 @@ build/
 ### oh-my-claudecode operational state (skills are the committable exception) ###
 .omc/
 !.omc/skills/
+
+### Secrets ###
+.env
