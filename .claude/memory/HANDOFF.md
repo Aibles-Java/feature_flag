@@ -4,60 +4,51 @@
 
 ## Current WIP
 
-**Issue #29** (Micrometer + Prometheus metrics) on branch
-`feature/issue-29-micrometer-prometheus` (→ `develop`). Code implemented,
-security-reviewed (1 finding found + fixed). PR **#44** open; **all three review
-points from trinhvandat now addressed:**
-- (#2) Javadoc lazy/eager contradiction — fixed earlier (`aeb5b53`).
-- (#3) third `@Order(0)` security chain documented in CLAUDE.md + docs/architecture.md — `aeb5b53`.
-- (#1, cardinality — the substantive one) `FeatureFlagMetrics` class Javadoc rewrote the
-  "deliberately bounded" claim: the `environment` tag is bounded by TOTAL Environment rows
-  across ALL orgs (not per-tenant), meters are never evicted (~4 permanent series/env), and
-  `max-uri-tags` does NOT cap custom meters. Kept the tag (issue #29 AC requires
-  `ff_evaluations_total{environment}`). Comment-only, compile+spotless green. Commit **`6eb7d28`**.
+**Issue #28** (structured JSON logging with request correlation) on branch
+`feature/issue-28-structured-json-logging` (→ `develop`, branched fresh off updated
+`origin/develop`). **Implementation complete, verified, code-reviewed (no findings).**
+Not yet committed/pushed; no PR yet.
 
-**Just merged `origin/develop` into this branch again** to clear PR conflicts. develop had
-advanced with PR **#51** (codegraph adoption — spec/planning only, no source). The only
-conflicts were in `.claude/memory/` (HANDOFF, MEMORY.md, today's session file — both branches
-ran `/save-memory` on 2026-07-11); resolved by **union**. No product-code conflicts.
+Staged set (exactly 11 files, `docs/architecture.md` case-collision artifact kept OUT):
+- New: `logging/RequestCorrelationFilter.java`, `logging/MdcKeys.java`, `config/LoggingConfig.java`,
+  `src/main/resources/logback-spring.xml`, + 3 tests
+  (`RequestCorrelationFilterTest`, `GlobalExceptionHandlerTest`, `LogbackProdEncoderConfigTest`).
+- Edited: `security/JwtAuthenticationFilter.java` (+userId MDC), `security/ApiKeyAuthenticationFilter.java`
+  (+envId MDC), `exception/GlobalExceptionHandler.java` (+requestId in ProblemDetail), `pom.xml`
+  (+`logstash-logback-encoder:8.0`).
+
+`./mvnw verify` green: 195 tests, Spotless clean, JaCoCo 0.83 floor met. See
+`decisions/0015-structured-json-logging-request-correlation.md`.
 
 ## Next steps
-1. **Push** this branch (memory gate satisfied by this file), then reply on PR #44 that all
-   three review points are addressed (`6eb7d28` covers cardinality). Confirm PR shows mergeable.
-2. `docs/ARCHITECTURE.md` (uppercase) is still modified/uncommitted — a large pre-existing
-   −688/+63 rewrite by another author (oanhhkim), unrelated to #29. Left out of every commit on
-   purpose. Decide separately whether to land or discard it.
+1. **Commit** the staged #28 change + this memory together (the memory gate blocks a code push
+   with no `.claude/memory/` change). Conventional-commit `feat(ops):`.
+2. **Push** the branch. NOTE: `gh` CLI is **not installed on this Windows machine** — `git push`
+   works, but `issue-board.sh` (board start/ready) and `create-pr` (PR open) both need `gh`.
+   Either install/auth `gh` (`gh auth refresh -s project` for board), or open the PR via the
+   GitHub web compare URL and move the board card by hand. Board step 1 ("start" → In progress)
+   was **skipped** for the same reason.
+3. Open PR (base `develop`, `Closes #28`), then `issue-board.sh ready 28` once `gh` is available.
 
 ## Context to Load
+- `decisions/0015-structured-json-logging-request-correlation.md` — the #28 design + ordering/MDC rationale.
+- `conventions/spring-security-filter-order-anchor.md` — related: per-chain filter ordering
+  (this change instead orders the whole servlet filter BEFORE `FilterChainProxy`).
 
-- `decisions/0012-micrometer-prometheus-metrics.md` — the #29 design + the security finding.
-- `conventions/actuator-management-chain-boot41.md` — Boot 4.1 `EndpointRequest` module move +
-  blank-`{noop}`-secret auth bypass.
-- `decisions/0014-codegraph-adoption.md` — codegraph work now merged to develop (PR #51).
+## Known repo issue (pre-existing, not #28)
+- **`docs/` case collision:** BOTH `docs/ARCHITECTURE.md` (long design doc) and
+  `docs/architecture.md` (short generated overview) are git-tracked, differing only by case. On
+  this case-insensitive Windows FS only one physical file exists, so git ALWAYS reports one as
+  modified after checkout of the other — expect a persistent `M docs/ARCHITECTURE.md` in status.
+  Fix on a case-sensitive box: delete one path. A separate uncommitted rewrite of this file
+  (author oanhhkim) is stashed as `stash@{0}` on the #29 branch context — land/discard separately.
 
-## Numbering note
-
-Filename collision to clean up later: both `decisions/0012-micrometer-prometheus-metrics.md`
-(#29) and `decisions/0012-harness-guards-spotless-coverage.md` (develop) claim **0012**.
-Distinct filenames so no git conflict, but renumber one on the next `/save-memory`.
-
-## Follow-ups
-- **#29 cardinality** (PR #44 review): documented honestly in the Javadoc as of `6eb7d28`. Kept
-  the env tag (AC requires it). If tenants ever reach thousands, revisit — drop the env tag or
-  add a `MeterFilter maximumAllowableTags`. Not urgent at current scale.
-- **Docs case-collision:** delete the lowercase `docs/architecture.md` stub on a case-sensitive box.
-- **Raise `jacoco.line.coverage`** above 0.00.
-
-**Parked / cross-branch (from prior sessions):**
-- Unrelated `docs/ARCHITECTURE.md` change still uncommitted — land or discard separately.
-- Issue #10 (`feature/issue-10-jwt-deleted-user-500`), #17 (`feature/issue-17-estimate-issue-skill`)
-  — commit/push/PR/`ready` pending.
-- Issue #14 (SonarQube) waiting on infra, holds `decisions/0006-*`.
-- **Codegraph (#48/#49/#50)** filed on the Digital banking board; #48 (Track A Tier-1 ArchUnit
-  gate) is the next implementation to pick up. See `decisions/0014` + `docs/specs/codegraph-adoption.md`.
-
-**Follow-ups (from earlier work):**
-- **#25:** reconsider Dockerfile HEALTHCHECK `readiness` → `liveness`; add DB-down readiness→503 test.
+## Follow-ups (carried over)
+- **#29** (Micrometer/Prometheus) PR #44 — was awaiting push/reply when this session started;
+  branch untouched here. Cardinality documented (`6eb7d28`); revisit env tag only at thousands of tenants.
+- **Numbering:** two `decisions/0012-*` files (micrometer + harness-guards) still collide — renumber one later.
+- **Codegraph (#48/#49/#50)** on the board; #48 (Tier-1 ArchUnit gate) next to pick up.
+- **#25:** Dockerfile HEALTHCHECK readiness→liveness? add DB-down readiness→503 test.
 - **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
 - **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
-</content>
+- **Raise `jacoco.line.coverage`** above 0.83 as coverage climbs.

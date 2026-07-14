@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Request-correlated logging (issue #28).
+
+  Two profiles, one shared goal: every line can be traced back to a single request via the
+  MDC fields set by RequestCorrelationFilter (requestId, plus userId/envId when authenticated).
+
+    * prod  -> one JSON object per line (logstash-logback-encoder), ready for a log shipper.
+    * dev / default (!prod) -> a human-readable console line with the requestId inline.
+
+  Named logback-spring.xml (not logback.xml) so Spring's <springProfile> resolution is available.
+-->
+<configuration>
+
+  <springProfile name="prod">
+    <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+      <!-- LogstashEncoder emits timestamp, level, logger, thread, message, stack traces AND every
+           MDC entry as top-level JSON fields — so requestId/userId/envId appear automatically,
+           and only when present. -->
+      <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+        <includeMdcKeyName>requestId</includeMdcKeyName>
+        <includeMdcKeyName>userId</includeMdcKeyName>
+        <includeMdcKeyName>envId</includeMdcKeyName>
+      </encoder>
+    </appender>
+    <root level="INFO">
+      <appender-ref ref="JSON"/>
+    </root>
+  </springProfile>
+
+  <springProfile name="!prod">
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+      <encoder>
+        <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [req=%X{requestId:-}] %logger{36} - %msg%n</pattern>
+      </encoder>
+    </appender>
+    <root level="INFO">
+      <appender-ref ref="CONSOLE"/>
+    </root>
+  </springProfile>
+
+</configuration>
