@@ -1,6 +1,5 @@
 package org.aibles.feature_flag.service.impl;
 
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Organization;
@@ -14,6 +13,8 @@ import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.ProjectService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,12 +50,12 @@ public class ProjectServiceImpl implements ProjectService {
   }
 
   @Override
-  public List<ProjectResponse> listByOrganisation(UUID organisationId) {
+  public Page<ProjectResponse> listByOrganisation(UUID organisationId, Pageable pageable) {
     permissionService.requireRole(
         organisationId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
-    return projectRepository.findAllByOrganizationId(organisationId).stream()
-        .map(this::toResponse)
-        .toList();
+    return projectRepository
+        .findAllByOrganizationId(organisationId, pageable)
+        .map(this::toResponse);
   }
 
   @Override

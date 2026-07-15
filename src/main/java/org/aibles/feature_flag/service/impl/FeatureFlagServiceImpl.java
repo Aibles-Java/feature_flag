@@ -24,6 +24,8 @@ import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.FeatureFlagService;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -79,12 +81,12 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   }
 
   @Override
-  public List<FeatureFlagResponse> listByProject(UUID projectId) {
+  public Page<FeatureFlagResponse> listByProject(UUID projectId, Pageable pageable) {
     permissionService.requireRoleForProject(
         projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
-    return featureFlagRepository.findAllByProjectIdAndArchivedFalse(projectId).stream()
-        .map(this::toResponse)
-        .toList();
+    return featureFlagRepository
+        .findAllByProjectIdAndArchivedFalse(projectId, pageable)
+        .map(this::toResponse);
   }
 
   @Override
@@ -144,12 +146,12 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   }
 
   @Override
-  public List<FeatureFlagResponse> listArchivedByProject(UUID projectId) {
+  public Page<FeatureFlagResponse> listArchivedByProject(UUID projectId, Pageable pageable) {
     permissionService.requireRoleForProject(
         projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
-    return featureFlagRepository.findAllByProjectIdAndArchivedTrue(projectId).stream()
-        .map(this::toResponse)
-        .toList();
+    return featureFlagRepository
+        .findAllByProjectIdAndArchivedTrue(projectId, pageable)
+        .map(this::toResponse);
   }
 
   @Override

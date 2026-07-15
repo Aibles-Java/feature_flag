@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.aibles.feature_flag.domain.entity.*;
@@ -13,6 +14,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Transactional;
@@ -87,6 +91,36 @@ class FeatureFlagRepositoryTest {
 
     assertThat(result).hasSize(1);
     assertThat(result.get(0).getKey()).isEqualTo("old");
+  }
+
+  @Test
+  void findAllByProjectIdAndArchivedFalse_paginatesWithDeterministicSort() {
+    for (int i = 0; i < 5; i++) {
+      persistFlag("flag-" + i, false);
+    }
+    persistFlag("archived", true); // must be excluded
+    em.flush();
+
+    Sort sort = Sort.by("createdAt", "id");
+    Page<FeatureFlag> firstPage =
+        flagRepository.findAllByProjectIdAndArchivedFalse(
+            project.getId(), PageRequest.of(0, 2, sort));
+
+    // Envelope metadata reflects the 5 active flags split into pages of 2.
+    assertThat(firstPage.getTotalElements()).isEqualTo(5);
+    assertThat(firstPage.getTotalPages()).isEqualTo(3);
+    assertThat(firstPage.getContent()).hasSize(2);
+
+    // Walking every page yields each active key exactly once — proving a stable, gap-free order.
+    List<String> collected = new ArrayList<>();
+    for (int page = 0; page < firstPage.getTotalPages(); page++) {
+      flagRepository
+          .findAllByProjectIdAndArchivedFalse(project.getId(), PageRequest.of(page, 2, sort))
+          .forEach(f -> collected.add(f.getKey()));
+    }
+    assertThat(collected)
+        .doesNotHaveDuplicates()
+        .containsExactlyInAnyOrder("flag-0", "flag-1", "flag-2", "flag-3", "flag-4");
   }
 
   @Test

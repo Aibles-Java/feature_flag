@@ -19,6 +19,8 @@ import org.aibles.feature_flag.repository.OrganizationMemberRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.aibles.feature_flag.service.OrganizationService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,10 +53,13 @@ public class OrganizationServiceImpl implements OrganizationService {
   }
 
   @Override
-  public List<OrganizationResponse> listMine() {
+  public Page<OrganizationResponse> listMine(Pageable pageable) {
     UUID userId = permissionService.currentUserId();
     List<UUID> orgIds = memberRepository.findOrganizationIdsByUserId(userId);
-    return organizationRepository.findAllById(orgIds).stream().map(this::toResponse).toList();
+    if (orgIds.isEmpty()) {
+      return Page.empty(pageable);
+    }
+    return organizationRepository.findByIdIn(orgIds, pageable).map(this::toResponse);
   }
 
   @Override
@@ -83,21 +88,21 @@ public class OrganizationServiceImpl implements OrganizationService {
   }
 
   @Override
-  public List<MemberResponse> listMembers(UUID orgId) {
+  public Page<MemberResponse> listMembers(UUID orgId, Pageable pageable) {
     if (!permissionService.isMember(orgId)) {
       throw new UnauthorizedException("You are not a member of this organisation");
     }
-    return memberRepository.findAllByOrganizationId(orgId).stream()
-        .map(
-            m ->
-                MemberResponse.builder()
-                    .userId(m.getUser().getId())
-                    .email(m.getUser().getEmail())
-                    .firstName(m.getUser().getFirstName())
-                    .lastName(m.getUser().getLastName())
-                    .role(m.getRole())
-                    .build())
-        .toList();
+    return memberRepository.findAllByOrganizationId(orgId, pageable).map(this::toMemberResponse);
+  }
+
+  private MemberResponse toMemberResponse(OrganizationMember m) {
+    return MemberResponse.builder()
+        .userId(m.getUser().getId())
+        .email(m.getUser().getEmail())
+        .firstName(m.getUser().getFirstName())
+        .lastName(m.getUser().getLastName())
+        .role(m.getRole())
+        .build();
   }
 
   @Override
