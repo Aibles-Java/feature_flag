@@ -20,6 +20,7 @@ import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class EnvironmentServiceImplTest {
   @Mock ProjectRepository projectRepository;
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
+  @Mock EvaluationCacheService evaluationCacheService;
 
   EnvironmentServiceImpl service;
 
@@ -51,7 +53,11 @@ class EnvironmentServiceImplTest {
   void setUp() {
     service =
         new EnvironmentServiceImpl(
-            environmentRepository, projectRepository, permissionService, eventPublisher);
+            environmentRepository,
+            projectRepository,
+            permissionService,
+            eventPublisher,
+            evaluationCacheService);
     project = Project.builder().id(projectId).name("proj").build();
     env =
         Environment.builder()
@@ -161,5 +167,6 @@ class EnvironmentServiceImplTest {
     service.delete(envId);
 
     verify(environmentRepository).deleteById(envId);
+    verify(evaluationCacheService).evictAfterCommit(envId);
   }
 }

@@ -22,6 +22,7 @@ import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.service.FeatureFlagService;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -37,6 +38,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   private final FlagEnvironmentStateRepository flagStateRepository;
   private final PermissionService permissionService;
   private final ApplicationEventPublisher eventPublisher;
+  private final EvaluationCacheService evaluationCacheService;
   private final FeatureFlagMetrics metrics;
 
   @Override
@@ -65,13 +67,13 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             .build();
     flag = featureFlagRepository.save(flag);
 
-    // Auto-create FlagEnvironmentState for all existing environments in the project
     List<Environment> environments =
         environmentRepository.findAllByProjectId(request.getProjectId());
     for (Environment env : environments) {
       FlagEnvironmentState state =
           FlagEnvironmentState.builder().featureFlag(flag).environment(env).enabled(false).build();
       flagStateRepository.save(state);
+      evaluationCacheService.evictAfterCommit(env.getId());
     }
 
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.CREATED);
@@ -117,6 +119,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
     flag.setArchived(true);
     featureFlagRepository.save(flag);
+    evictAllEnvironmentsForProject(flag.getProject().getId());
     eventPublisher.publishEvent(
         new FlagArchivedEvent(
             flag.getKey(),
@@ -134,6 +137,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
     flag.setArchived(false);
     featureFlagRepository.save(flag);
+    evictAllEnvironmentsForProject(flag.getProject().getId());
     eventPublisher.publishEvent(
         new FlagArchivedEvent(
             flag.getKey(),
@@ -187,6 +191,8 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     if (request.getRolloutPercent() != null) state.setRolloutPercent(request.getRolloutPercent());
     FlagStateResponse response = toStateResponse(flagStateRepository.save(state));
 
+    evaluationCacheService.evictAfterCommit(environmentId);
+
     eventPublisher.publishEvent(
         new FlagStateChangedEvent(
             state.getFeatureFlag().getKey(),
@@ -199,6 +205,12 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             permissionService.currentUserEmail()));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.STATE_UPDATED);
     return response;
+  }
+
+  private void evictAllEnvironmentsForProject(UUID projectId) {
+    environmentRepository
+        .findAllByProjectId(projectId)
+        .forEach(env -> evaluationCacheService.evictAfterCommit(env.getId()));
   }
 
   private FeatureFlag findById(UUID id) {

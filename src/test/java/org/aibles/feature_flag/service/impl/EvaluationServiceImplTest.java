@@ -2,12 +2,16 @@ package org.aibles.feature_flag.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
@@ -16,8 +20,9 @@ import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.dto.response.FlagEvaluationResponse;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
-import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
+import org.aibles.feature_flag.service.FlagStateSnapshot;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,7 +33,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class EvaluationServiceImplTest {
 
   @Mock FlagEnvironmentStateRepository flagStateRepository;
-  @Mock FeatureFlagRepository featureFlagRepository;
+  @Mock EvaluationCacheService evaluationCacheService;
 
   EvaluationServiceImpl service;
 
@@ -42,15 +47,41 @@ class EvaluationServiceImplTest {
     service =
         new EvaluationServiceImpl(
             flagStateRepository,
-            featureFlagRepository,
+            evaluationCacheService,
             new FeatureFlagMetrics(new SimpleMeterRegistry()));
     project = Project.builder().id(projectId).name("proj").build();
     environment =
         Environment.builder().id(envId).project(project).name("prod").apiKeyHash("key").build();
   }
 
+  /** Simulates cache hit: getOrLoad returns the provided list, loader never invoked. */
+  private void cacheHit(UUID id, List<FlagStateSnapshot> snapshots) {
+    when(evaluationCacheService.getOrLoad(eq(id), any())).thenReturn(snapshots);
+  }
+
+  /** Simulates cache miss: getOrLoad delegates to the loader function (which calls the repo). */
+  @SuppressWarnings("unchecked")
+  private void cacheMiss(UUID id) {
+    when(evaluationCacheService.getOrLoad(eq(id), any()))
+        .thenAnswer(
+            inv -> ((Function<UUID, List<FlagStateSnapshot>>) inv.getArgument(1)).apply(id));
+  }
+
   @Test
-  void getAllFlags_returnsMappedResponsesFromRepository() {
+  void getAllFlags_hitsCacheFirst_andSkipsRepository() {
+    FlagStateSnapshot snapshot =
+        new FlagStateSnapshot("beta-feature", true, null, FlagValueType.BOOLEAN, 100);
+    cacheHit(envId, List.of(snapshot));
+
+    List<FlagEvaluationResponse> result = service.getAllFlags(environment, null);
+
+    assertThat(result).hasSize(1);
+    assertThat(result.get(0).getFlagKey()).isEqualTo("beta-feature");
+    verify(flagStateRepository, never()).findAllActiveByEnvironmentId(envId);
+  }
+
+  @Test
+  void getAllFlags_loadsFromRepoOnCacheMiss() {
     FeatureFlag flag =
         FeatureFlag.builder()
             .id(UUID.randomUUID())
@@ -68,6 +99,7 @@ class EvaluationServiceImplTest {
             .rolloutPercent(100)
             .build();
 
+    cacheMiss(envId);
     when(flagStateRepository.findAllActiveByEnvironmentId(envId)).thenReturn(List.of(state));
 
     List<FlagEvaluationResponse> result = service.getAllFlags(environment, null);
@@ -75,10 +107,12 @@ class EvaluationServiceImplTest {
     assertThat(result).hasSize(1);
     assertThat(result.get(0).getFlagKey()).isEqualTo("beta-feature");
     assertThat(result.get(0).isEnabled()).isTrue();
+    verify(flagStateRepository).findAllActiveByEnvironmentId(envId);
   }
 
   @Test
   void getAllFlags_returnsEmptyList_whenNoActiveFlags() {
+    cacheMiss(envId);
     when(flagStateRepository.findAllActiveByEnvironmentId(envId)).thenReturn(List.of());
 
     List<FlagEvaluationResponse> result = service.getAllFlags(environment, "user-1");
@@ -87,89 +121,40 @@ class EvaluationServiceImplTest {
   }
 
   @Test
-  void getFlag_throwsResourceNotFound_whenFlagIsArchived() {
-    FeatureFlag archived =
-        FeatureFlag.builder()
-            .id(UUID.randomUUID())
-            .project(project)
-            .name("Old")
-            .key("old-flag")
-            .valueType(FlagValueType.BOOLEAN)
-            .archived(true)
-            .build();
-
-    when(featureFlagRepository.findByProjectIdAndKey(projectId, "old-flag"))
-        .thenReturn(Optional.of(archived));
-
-    assertThatThrownBy(() -> service.getFlag(environment, "old-flag", null))
-        .isInstanceOf(ResourceNotFoundException.class);
-  }
-
-  @Test
-  void getFlag_throwsResourceNotFound_whenFlagDoesNotExist() {
-    when(featureFlagRepository.findByProjectIdAndKey(projectId, "unknown"))
-        .thenReturn(Optional.empty());
-
-    assertThatThrownBy(() -> service.getFlag(environment, "unknown", null))
-        .isInstanceOf(ResourceNotFoundException.class);
-  }
-
-  @Test
-  void getFlag_returnsEvaluation_whenFlagIsActive() {
-    UUID flagId = UUID.randomUUID();
-    FeatureFlag flag =
-        FeatureFlag.builder()
-            .id(flagId)
-            .project(project)
-            .name("Feature")
-            .key("active-flag")
-            .valueType(FlagValueType.BOOLEAN)
-            .archived(false)
-            .build();
-    FlagEnvironmentState state =
-        FlagEnvironmentState.builder()
-            .featureFlag(flag)
-            .environment(environment)
-            .enabled(true)
-            .value("true")
-            .rolloutPercent(100)
-            .build();
-
-    when(featureFlagRepository.findByProjectIdAndKey(projectId, "active-flag"))
-        .thenReturn(Optional.of(flag));
-    when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
-        .thenReturn(Optional.of(state));
+  void getFlag_returnsFlagFromCache_whenCacheIsWarm() {
+    FlagStateSnapshot snapshot =
+        new FlagStateSnapshot("active-flag", true, "true", FlagValueType.BOOLEAN, 100);
+    cacheHit(envId, List.of(snapshot));
 
     FlagEvaluationResponse response = service.getFlag(environment, "active-flag", null);
 
     assertThat(response.getFlagKey()).isEqualTo("active-flag");
     assertThat(response.isEnabled()).isTrue();
+    verify(flagStateRepository, never()).findAllActiveByEnvironmentId(envId);
+  }
+
+  @Test
+  void getFlag_throwsResourceNotFound_whenFlagNotInActiveSnapshots() {
+    cacheHit(envId, List.of());
+
+    assertThatThrownBy(() -> service.getFlag(environment, "missing-flag", null))
+        .isInstanceOf(ResourceNotFoundException.class);
+  }
+
+  @Test
+  void getFlag_throwsResourceNotFound_whenArchivedFlagNotInActiveSnapshots() {
+    cacheMiss(envId);
+    when(flagStateRepository.findAllActiveByEnvironmentId(envId)).thenReturn(List.of());
+
+    assertThatThrownBy(() -> service.getFlag(environment, "archived-flag", null))
+        .isInstanceOf(ResourceNotFoundException.class);
   }
 
   @Test
   void getFlag_returnsDisabled_whenRolloutIsZero() {
-    UUID flagId = UUID.randomUUID();
-    FeatureFlag flag =
-        FeatureFlag.builder()
-            .id(flagId)
-            .project(project)
-            .name("Rollout")
-            .key("rollout-flag")
-            .valueType(FlagValueType.BOOLEAN)
-            .archived(false)
-            .build();
-    FlagEnvironmentState state =
-        FlagEnvironmentState.builder()
-            .featureFlag(flag)
-            .environment(environment)
-            .enabled(true)
-            .rolloutPercent(0)
-            .build();
-
-    when(featureFlagRepository.findByProjectIdAndKey(projectId, "rollout-flag"))
-        .thenReturn(Optional.of(flag));
-    when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
-        .thenReturn(Optional.of(state));
+    FlagStateSnapshot snapshot =
+        new FlagStateSnapshot("rollout-flag", true, null, FlagValueType.BOOLEAN, 0);
+    cacheHit(envId, List.of(snapshot));
 
     FlagEvaluationResponse response = service.getFlag(environment, "rollout-flag", "user-123");
 

@@ -4,44 +4,47 @@
 
 ## Current WIP
 
-**Issue #23** (externalize secrets, fail fast on placeholder config) on branch
-`feature/issue-23-externalize-secrets` (→ `develop`), PR **#39**. Addressing the
-`/review-pr` findings and clearing the `CONFLICTING` state (2026-07-14):
+**Issue #30 — evaluation caching** on branch `feature/issue-30-evaluation-caching`.
+All PR #53 review findings addressed (both from trinhvandat). 224 tests pass, `./mvnw verify` green.
+**PR #53 is open.** Branch is ahead of origin — push needed (HTTPS auth required, do it manually).
 
-- **Merged current `origin/develop` into the branch** (no rebase/force-push). Conflicts
-  resolved: `Dockerfile` (kept develop's `EXPOSE 8081` + `/actuator/health/readiness`
-  HEALTHCHECK from #25/PR #42, added only `ENV SPRING_PROFILES_ACTIVE=prod`; dropped the
-  now-redundant `EXPOSE`), `.gitignore` (union), `JwtTokenProvider(.java|Test)` (develop's
-  google-format + the `JwtProperties` constructor), `.claude/memory/*`.
-- **Datasource fail-fast gap fixed:** new `config/RequiredDataSourceEnvPostProcessor`
-  (`EnvironmentPostProcessor`, prod-only) aborts startup naming any missing/blank
-  `SPRING_DATASOURCE_URL/USERNAME/PASSWORD`. Previously only `APP_JWT_SECRET` got a clear
-  error; the datasource vars bound the literal `${VAR}` and failed later in Hikari.
-- **Docs corrected:** `application-prod.properties` comment + `README.md` now describe the
-  real behavior (datasource fail-fast is via the post-processor, not "Could not resolve
-  placeholder").
-- **Memory renumber:** on-branch `decisions/0008-secrets-externalization-fail-fast.md`
-  → `0016` (develop took 0008–0015 meanwhile); MEMORY.md + `[[links]]` updated.
+### What changed in this session
+
+Addressed trinhvandat's PR #53 review (2 findings):
+- **Finding 1 (correctness — pre-commit eviction race):** Added `EvaluationCacheService.evictAfterCommit()`
+  using `TransactionSynchronizationManager.registerSynchronization(...afterCommit)`. Replaced all
+  `evict()` calls in `FeatureFlagServiceImpl` and `EnvironmentServiceImpl.delete()` with
+  `evictAfterCommit()`. Removed stale "intentionally safe" comment.
+- **Finding 2 (MEDIUM-2 — untested eviction wiring):**
+  - Unit tests: added `verify(evaluationCacheService).evictAfterCommit(...)` to create/archive/
+    unarchive/updateState in `FeatureFlagServiceImplTest`; added env stub to archive/unarchive tests.
+  - Integration test: dropped `@Transactional` so `updateState()` commits its own txn and the
+    afterCommit hook fires; added `@MockitoBean PermissionService` to skip auth setup;
+    test now drives through real `FeatureFlagService.updateState()`.
+  - Added `evictAfterCommit_withNoActiveTransaction_evictsImmediately` to `EvaluationCacheServiceImplTest`.
+- Merged `origin/develop` (PRs #39, #54, #55 — secrets externalization, structured logging, db-reset).
+  Only `.claude/memory/` conflicts; resolved by union.
 
 ## Context to Load
 
-- `decisions/0016-secrets-externalization-fail-fast.md` — the design + the two review fixes.
-- `conventions/springboot-configprops-binding-gotchas.md` — the `${VAR}`-literal binder gotcha
-  that motivates the datasource post-processor.
+- `decisions/0015-evaluation-caching.md` — all design choices for the cache implementation.
+- `conventions/springboot4-mockito-spy-bean.md` — `@MockitoSpyBean` replaces `@SpyBean`.
 
 ## Next steps
 
-1. `./mvnw verify` green in the worktree (Spotless + tests + JaCoCo) — confirm before push.
-2. Commit the merge + fixes; push `feature/issue-23-externalize-secrets` (normal push, no force).
-   Memory gate satisfied (this file + MEMORY.md + decision are in the commit).
-3. Confirm PR #39 flips to MERGEABLE; reply on the review thread that findings are addressed.
+1. **Push branch:** `git push origin feature/issue-30-evaluation-caching` (needs GitHub HTTPS/SSH auth).
+2. **Reply on PR #53** that both findings are addressed (commit `395e9dc`).
+3. **Move card to Ready For Testing:** `.claude/scripts/issue-board.sh ready 30`
+4. Then pick up code-graph issues (#48 → #50 → #49) or parked items below.
 
-## Follow-ups (carried over)
-- **Codegraph (#48/#49/#50)** on the board; #48 (Tier-1 ArchUnit gate) next to pick up.
-- **`docs/` case collision:** `docs/ARCHITECTURE.md` vs `docs/architecture.md` — delete one on a
-  case-sensitive box.
-- Two `decisions/0012-*` files (micrometer + harness-guards) still collide — renumber one later.
-- **#25:** Dockerfile HEALTHCHECK readiness→liveness? add DB-down readiness→503 test.
-- **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
-- **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
-- **Raise `jacoco.line.coverage`** as coverage climbs.
+## Parked / cross-branch
+
+- Issues #10, #17 — commit/push/PR/`ready` still pending from earlier sessions.
+- Issue #14 (SonarQube) waiting on infra.
+
+## Follow-ups (carry-forward)
+
+- **#26:** per-IP SDK rate limit for invalid keys; Redis backend for multi-instance.
+- **#24:** make `feature_flags.key` H2-safe so SDK eval GET can assert 200 (not just "not 401").
+- **Code graph (#48/#49/#50):** ArchUnit Tier-1 gate → Tier-2 custom conditions → CodeGraphContext spike.
+- **v2 roadmap:** Redis caching to replace Caffeine for multi-instance evaluation cache.
