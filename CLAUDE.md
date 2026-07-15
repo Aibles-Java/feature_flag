@@ -74,14 +74,21 @@ No identity/segment logic in v1. The `Environment` comes directly from the secur
 ## Key configuration
 
 ```properties
-# application.properties
+# application.properties — local-dev defaults only (NOT secrets)
 spring.datasource.url=jdbc:postgresql://localhost:5432/feature_flag_db
 spring.datasource.username=ff_user
 spring.datasource.password=ff_password
 spring.jpa.hibernate.ddl-auto=validate   # Liquibase owns the schema
-app.jwt.secret=<min 512-bit secret>
+app.jwt.secret=local-dev-only-...        # dev-only signing key
 app.jwt.expiration-ms=86400000
 ```
+
+Secrets are externalized via env vars (`APP_JWT_SECRET`, `SPRING_DATASOURCE_URL/USERNAME/PASSWORD`
+— see README.md). The prod profile (`application-prod.properties`) references them with **no
+defaults**, so prod can never fall back to dev values. `config/JwtProperties` (typed
+`@ConfigurationProperties` + Bean Validation) aborts startup in any profile when the JWT secret
+is missing, an unresolved `${...}` placeholder, shorter than 512 bits (64 UTF-8 bytes), or
+contains the `change-me` placeholder marker.
 
 DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`). Never modify a changeset that has already run; always add a new one.
 

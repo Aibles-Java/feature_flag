@@ -3,6 +3,7 @@ package org.aibles.feature_flag.security;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.UUID;
+import org.aibles.feature_flag.config.JwtProperties;
 import org.aibles.feature_flag.domain.entity.User;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +17,8 @@ class JwtTokenProviderTest {
       "test-secret-key-that-is-long-enough-for-hmac-sha-256-algorithm-ok";
   private static final long ONE_HOUR = 3_600_000L;
 
-  private final JwtTokenProvider provider = new JwtTokenProvider(SECRET, ONE_HOUR);
+  private final JwtTokenProvider provider =
+      new JwtTokenProvider(new JwtProperties(SECRET, ONE_HOUR));
 
   private UserPrincipal principal(UUID id, String email) {
     return UserPrincipal.from(
@@ -36,7 +38,7 @@ class JwtTokenProviderTest {
   @Test
   void rejectsExpiredToken() {
     // Negative expiry => the token is already expired the instant it is minted.
-    JwtTokenProvider expiring = new JwtTokenProvider(SECRET, -1_000L);
+    JwtTokenProvider expiring = new JwtTokenProvider(new JwtProperties(SECRET, -1_000L));
     String token = expiring.generateToken(principal(UUID.randomUUID(), "bob@example.com"));
 
     assertThat(provider.validateToken(token)).isFalse();
@@ -69,7 +71,8 @@ class JwtTokenProviderTest {
   void rejectsTokenSignedWithDifferentSecret() {
     JwtTokenProvider other =
         new JwtTokenProvider(
-            "a-completely-different-secret-key-also-long-enough-for-hs256!!", ONE_HOUR);
+            new JwtProperties(
+                "a-completely-different-secret-key-also-long-enough-for-hs256!!", ONE_HOUR));
     String foreignToken = other.generateToken(principal(UUID.randomUUID(), "dave@example.com"));
 
     assertThat(provider.validateToken(foreignToken)).isFalse();

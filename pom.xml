@@ -20,6 +20,7 @@
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.8.9</springdoc.version>
         <bucket4j.version>8.19.0</bucket4j.version>
+        <logstash-logback-encoder.version>8.0</logstash-logback-encoder.version>
         <jacoco.version>0.8.13</jacoco.version>
         <spotless.version>2.43.0</spotless.version>
         <google-java-format.version>1.24.0</google-java-format.version>
@@ -108,6 +109,15 @@
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Structured JSON logging (issue #28): the prod Logback profile encodes each event as a
+             single JSON line with MDC fields (requestId/userId/envId) for request correlation. -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>${logstash-logback-encoder.version}</version>
             <scope>runtime</scope>
         </dependency>
 

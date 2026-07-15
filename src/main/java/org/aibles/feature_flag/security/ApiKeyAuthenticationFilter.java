@@ -12,9 +12,11 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.logging.MdcKeys;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.util.ApiKeyHasher;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
@@ -59,6 +61,11 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
     ApiKeyAuthenticationToken authentication = new ApiKeyAuthenticationToken(env);
     SecurityContextHolder.getContext().setAuthentication(authentication);
+
+    // Tag logs for this request with the resolved environment id. Cleared centrally by
+    // RequestCorrelationFilter's finally block, so no per-request cleanup is needed here.
+    MDC.put(MdcKeys.ENV_ID, env.getId().toString());
+
     filterChain.doFilter(request, response);
   }
 
