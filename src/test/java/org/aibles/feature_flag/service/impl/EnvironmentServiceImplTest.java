@@ -167,5 +167,6 @@ class EnvironmentServiceImplTest {
     service.delete(envId);
 
     verify(environmentRepository).deleteById(envId);
+    verify(evaluationCacheService).evictAfterCommit(envId);
   }
 }

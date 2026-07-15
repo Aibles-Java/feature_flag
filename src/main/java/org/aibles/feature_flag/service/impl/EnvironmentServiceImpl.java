@@ -89,7 +89,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   public void delete(UUID id) {
     permissionService.requireRoleForEnvironment(id, MemberRole.OWNER);
     environmentRepository.deleteById(id);
-    evaluationCacheService.evict(id);
+    evaluationCacheService.evictAfterCommit(id);
   }
 
   @Override

@@ -12,6 +12,8 @@ import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
+import org.aibles.feature_flag.domain.enums.MemberRole;
+import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
 import org.aibles.feature_flag.dto.response.FlagEvaluationResponse;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
@@ -20,19 +22,24 @@ import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.service.EvaluationService;
+import org.aibles.feature_flag.service.FeatureFlagService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Verifies that the Caffeine evaluation cache eliminates repeated DB queries and that admin
  * mutations invalidate the cache so fresh data is fetched on the next SDK call.
  *
  * <p>Uses a separate H2 DB to avoid Liquibase collision with the shared testdb context.
+ *
+ * <p>Not annotated with @Transactional so that featureFlagService.updateState() commits its own
+ * transaction and the afterCommit eviction hook fires during the test.
  */
 @SpringBootTest(
     properties = {
@@ -41,12 +48,17 @@ import org.springframework.transaction.annotation.Transactional;
           + "CASE_INSENSITIVE_IDENTIFIERS=TRUE",
     })
 @ActiveProfiles("test")
-@Transactional
 class EvaluationCacheIntegrationTest {
 
   @Autowired EvaluationService evaluationService;
   @Autowired EvaluationCacheService evaluationCacheService;
+  @Autowired FeatureFlagService featureFlagService;
+
   @MockitoSpyBean FlagEnvironmentStateRepository flagStateRepository;
+
+  // Stub out permission checks so featureFlagService.updateState() can be called without a
+  // real SecurityContextHolder / OrganizationMember setup.
+  @MockitoBean PermissionService permissionService;
 
   @Autowired OrganizationRepository organizationRepository;
   @Autowired ProjectRepository projectRepository;
@@ -58,6 +70,11 @@ class EvaluationCacheIntegrationTest {
 
   @BeforeEach
   void setUp() {
+    // Permission stub: allow any role check
+    org.mockito.Mockito.doNothing()
+        .when(permissionService)
+        .requireRoleForProject(ArgumentMatchers.any(), ArgumentMatchers.<MemberRole[]>any());
+
     String suffix = UUID.randomUUID().toString().substring(0, 8);
     Organization org =
         organizationRepository.save(
@@ -110,14 +127,18 @@ class EvaluationCacheIntegrationTest {
   }
 
   @Test
-  void updateState_invalidatesCache_soNextCallHitsDb() {
+  void updateState_viaRealService_invalidatesCache_soNextCallHitsDb() {
     // Warm the cache
     evaluationService.getAllFlags(env, null);
 
-    // Mutate via the flag state directly and manually evict (simulating FeatureFlagService)
-    evaluationCacheService.evict(env.getId());
+    // Mutate via the real FeatureFlagService — its @Transactional commits, triggering
+    // evictAfterCommit so the cache entry is dropped before the next SDK call.
+    UpdateFlagStateRequest req = new UpdateFlagStateRequest();
+    req.setEnabled(false);
+    req.setValue("false");
+    featureFlagService.updateState(flag.getId(), env.getId(), req);
 
-    // Second getAllFlags should hit the DB again
+    // Second getAllFlags should hit the DB again (cache was evicted after commit)
     evaluationService.getAllFlags(env, null);
 
     verify(flagStateRepository, times(2)).findAllActiveByEnvironmentId(env.getId());

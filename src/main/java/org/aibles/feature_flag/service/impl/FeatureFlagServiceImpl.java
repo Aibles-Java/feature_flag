@@ -73,7 +73,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
       FlagEnvironmentState state =
           FlagEnvironmentState.builder().featureFlag(flag).environment(env).enabled(false).build();
       flagStateRepository.save(state);
-      evaluationCacheService.evict(env.getId());
+      evaluationCacheService.evictAfterCommit(env.getId());
     }
 
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.CREATED);
@@ -191,7 +191,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     if (request.getRolloutPercent() != null) state.setRolloutPercent(request.getRolloutPercent());
     FlagStateResponse response = toStateResponse(flagStateRepository.save(state));
 
-    evaluationCacheService.evict(environmentId);
+    evaluationCacheService.evictAfterCommit(environmentId);
 
     eventPublisher.publishEvent(
         new FlagStateChangedEvent(
@@ -207,14 +207,10 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     return response;
   }
 
-  // Eviction fires inside the @Transactional boundary, before the surrounding commit. This is
-  // intentionally safe: early eviction causes at most one extra DB read on the next SDK call
-  // (which will see the committed state), never stale data. A post-commit eviction hook would be
-  // cleaner but is not required here given the low rollback probability of these write paths.
   private void evictAllEnvironmentsForProject(UUID projectId) {
     environmentRepository
         .findAllByProjectId(projectId)
-        .forEach(env -> evaluationCacheService.evict(env.getId()));
+        .forEach(env -> evaluationCacheService.evictAfterCommit(env.getId()));
   }
 
   private FeatureFlag findById(UUID id) {

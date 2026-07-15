@@ -80,6 +80,18 @@ class EvaluationCacheServiceImplTest {
   }
 
   @Test
+  void evictAfterCommit_withNoActiveTransaction_evictsImmediately() {
+    UUID envId = UUID.randomUUID();
+    cacheService.put(
+        envId, List.of(new FlagStateSnapshot("flag-x", true, null, FlagValueType.BOOLEAN, 100)));
+
+    cacheService.evictAfterCommit(envId);
+
+    // No transaction active → evict() runs synchronously
+    assertThat(cacheService.get(envId)).isEmpty();
+  }
+
+  @Test
   void put_overwritesPreviousValue() {
     UUID envId = UUID.randomUUID();
     List<FlagStateSnapshot> first =

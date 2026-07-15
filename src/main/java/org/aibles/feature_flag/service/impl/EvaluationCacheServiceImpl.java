@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.service.FlagStateSnapshot;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @RequiredArgsConstructor
@@ -35,5 +37,20 @@ public class EvaluationCacheServiceImpl implements EvaluationCacheService {
   public List<FlagStateSnapshot> getOrLoad(
       UUID environmentId, Function<UUID, List<FlagStateSnapshot>> loader) {
     return evaluationCache.get(environmentId, loader);
+  }
+
+  @Override
+  public void evictAfterCommit(UUID environmentId) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              evict(environmentId);
+            }
+          });
+    } else {
+      evict(environmentId);
+    }
   }
 }
