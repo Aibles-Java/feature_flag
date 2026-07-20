@@ -139,6 +139,53 @@ class AuthControllerIntegrationTest {
         .andExpect(status().isUnauthorized());
   }
 
+  /**
+   * The client-facing detail must be identical for an unknown token and a reuse-detected one, so
+   * the endpoint cannot be probed to distinguish token states. The specific reason stays in the
+   * server log.
+   */
+  @Test
+  void refreshRejectionMessageIsUniformAcrossTokenStates() throws Exception {
+    // Unknown token.
+    String unknownDetail =
+        objectMapper
+            .readTree(
+                mockMvc
+                    .perform(
+                        post("/api/v1/auth/refresh")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(refreshBody("0".repeat(64))))
+                    .andExpect(status().isUnauthorized())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString())
+            .get("detail")
+            .asText();
+
+    // Reuse-detected token (rotate once, then replay the old one).
+    String old = field(register("uniform"), "refreshToken");
+    mockMvc.perform(
+        post("/api/v1/auth/refresh")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(refreshBody(old)));
+    String reuseDetail =
+        objectMapper
+            .readTree(
+                mockMvc
+                    .perform(
+                        post("/api/v1/auth/refresh")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(refreshBody(old)))
+                    .andExpect(status().isUnauthorized())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString())
+            .get("detail")
+            .asText();
+
+    org.assertj.core.api.Assertions.assertThat(reuseDetail).isEqualTo(unknownDetail);
+  }
+
   @Test
   void refreshWithBlankTokenIsBadRequest() throws Exception {
     mockMvc
