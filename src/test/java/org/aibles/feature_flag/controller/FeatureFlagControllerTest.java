@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.UUID;
+import org.aibles.feature_flag.config.PaginationConfig;
 import org.aibles.feature_flag.controller.admin.FeatureFlagController;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
@@ -23,6 +24,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.web.PageableHandlerMethodArgumentResolver;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -40,9 +44,14 @@ class FeatureFlagControllerTest {
   void setUp() {
     LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
     validator.afterPropertiesSet();
+    PageableHandlerMethodArgumentResolver pageableResolver =
+        new PageableHandlerMethodArgumentResolver();
+    pageableResolver.setMaxPageSize(PaginationConfig.MAX_PAGE_SIZE);
+    pageableResolver.setFallbackPageable(PageRequest.of(0, PaginationConfig.DEFAULT_PAGE_SIZE));
     mockMvc =
         MockMvcBuilders.standaloneSetup(new FeatureFlagController(featureFlagService))
             .setControllerAdvice(new GlobalExceptionHandler())
+            .setCustomArgumentResolvers(pageableResolver)
             .setValidator(validator)
             .build();
   }
@@ -118,12 +127,13 @@ class FeatureFlagControllerTest {
             .key("feature")
             .valueType(FlagValueType.BOOLEAN)
             .build();
-    when(featureFlagService.listByProject(projectId)).thenReturn(List.of(flag));
+    when(featureFlagService.listByProject(eq(projectId), any()))
+        .thenReturn(new PageImpl<>(List.of(flag)));
 
     mockMvc
         .perform(get("/api/v1/flags").param("projectId", projectId.toString()))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].key").value("feature"));
+        .andExpect(jsonPath("$.content[0].key").value("feature"));
   }
 
   @Test
@@ -225,13 +235,14 @@ class FeatureFlagControllerTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(true)
             .build();
-    when(featureFlagService.listArchivedByProject(projectId)).thenReturn(List.of(archived));
+    when(featureFlagService.listArchivedByProject(eq(projectId), any()))
+        .thenReturn(new PageImpl<>(List.of(archived)));
 
     mockMvc
         .perform(get("/api/v1/flags/archived").param("projectId", projectId.toString()))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].key").value("old"))
-        .andExpect(jsonPath("$[0].archived").value(true));
+        .andExpect(jsonPath("$.content[0].key").value("old"))
+        .andExpect(jsonPath("$.content[0].archived").value(true));
   }
 
   @Test

@@ -3,6 +3,7 @@ package org.aibles.feature_flag.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -38,6 +39,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -252,13 +256,13 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    when(featureFlagRepository.findAllByProjectIdAndArchivedFalse(projectId))
-        .thenReturn(List.of(flag));
+    when(featureFlagRepository.findAllByProjectIdAndArchivedFalse(eq(projectId), any()))
+        .thenReturn(new PageImpl<>(List.of(flag)));
 
-    List<FeatureFlagResponse> result = service.listByProject(projectId);
+    Page<FeatureFlagResponse> result = service.listByProject(projectId, PageRequest.of(0, 20));
 
-    assertThat(result).hasSize(1);
-    assertThat(result.get(0).getKey()).isEqualTo("f");
+    assertThat(result.getContent()).hasSize(1);
+    assertThat(result.getContent().get(0).getKey()).isEqualTo("f");
   }
 
   @Test

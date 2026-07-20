@@ -1,13 +1,17 @@
 package org.aibles.feature_flag.controller.admin;
 
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.dto.request.CreateProjectRequest;
 import org.aibles.feature_flag.dto.request.UpdateProjectRequest;
+import org.aibles.feature_flag.dto.response.PageResponse;
 import org.aibles.feature_flag.dto.response.ProjectResponse;
 import org.aibles.feature_flag.service.ProjectService;
+import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,8 +29,15 @@ public class ProjectController {
   }
 
   @GetMapping
-  public List<ProjectResponse> listByOrganisation(@RequestParam UUID organisationId) {
-    return projectService.listByOrganisation(organisationId);
+  public PageResponse<ProjectResponse> listByOrganisation(
+      @RequestParam UUID organisationId,
+      @ParameterObject
+          @PageableDefault(
+              size = 20,
+              sort = {"createdAt", "id"},
+              direction = Sort.Direction.ASC)
+          Pageable pageable) {
+    return PageResponse.from(projectService.listByOrganisation(organisationId, pageable));
   }
 
   @GetMapping("/{projectId}")
