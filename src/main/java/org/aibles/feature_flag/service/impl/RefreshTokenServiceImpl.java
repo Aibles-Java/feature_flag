@@ -65,13 +65,12 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
       throw new InvalidRefreshTokenException("Refresh token reuse detected");
     }
 
-    // Atomically consume. A concurrent request that already consumed it wins; we lose and
-    // treat the loss as a reuse signal, revoking the family.
-    if (repository.consume(row.getId(), now) != 1) {
-      familyRevoker.revoke(row.getFamilyId(), now);
-      throw new InvalidRefreshTokenException("Refresh token reuse detected");
-    }
-
+    // The account check must happen BEFORE consume(). consume() is an UPDATE that holds a row
+    // lock for the rest of this transaction, and the revoke below runs REQUIRES_NEW on a second
+    // connection whose WHERE familyId = ... matches that same locked row. Revoking after
+    // consuming would block on a lock held by this very thread — a self-deadlock the database
+    // cannot detect (the outer transaction is idle-in-transaction, not waiting, so there is no
+    // cycle in the wait graph) and which no lock_timeout is configured to break.
     User user =
         userRepository
             .findById(row.getUserId())
@@ -79,6 +78,14 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
     if (!user.isEnabled()) {
       familyRevoker.revoke(row.getFamilyId(), now);
       throw new InvalidRefreshTokenException("Account is disabled");
+    }
+
+    // Atomically consume. A concurrent request that already consumed it wins; we lose and
+    // treat the loss as a reuse signal, revoking the family. Safe to revoke here: a 0-row
+    // UPDATE takes no row lock.
+    if (repository.consume(row.getId(), now) != 1) {
+      familyRevoker.revoke(row.getFamilyId(), now);
+      throw new InvalidRefreshTokenException("Refresh token reuse detected");
     }
 
     String newToken = createRow(row.getUserId(), row.getFamilyId());

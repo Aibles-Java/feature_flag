@@ -123,6 +123,8 @@ class RefreshTokenServiceImplTest {
     RefreshToken row = activeRow(presented);
     when(repository.findByTokenHash(RefreshTokenServiceImpl.hash(presented)))
         .thenReturn(Optional.of(row));
+    when(userRepository.findById(userId))
+        .thenReturn(Optional.of(User.builder().id(userId).enabled(true).build()));
     when(repository.consume(eq(row.getId()), any())).thenReturn(0); // someone else won
 
     assertThatThrownBy(() -> service.rotate(presented))

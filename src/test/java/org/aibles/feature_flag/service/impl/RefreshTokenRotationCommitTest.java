@@ -117,6 +117,33 @@ class RefreshTokenRotationCommitTest {
         .isNotNull();
   }
 
+  /**
+   * The disabled-account path revokes the family after loading the user. It must not do so while
+   * holding the row lock consume() takes, or it self-deadlocks against its own REQUIRES_NEW revoke.
+   * H2 will not reproduce the PostgreSQL lock behaviour, but this at least pins the ordering
+   * end-to-end and proves the revoke commits on this branch too.
+   */
+  @Test
+  void refreshForDisabledUserRevokesTheFamilyDurably() {
+    UUID userId = newUser();
+    String token = service.issueNewFamily(userId);
+
+    User user = userRepository.findById(userId).orElseThrow();
+    user.setEnabled(false);
+    userRepository.save(user);
+
+    assertThatThrownBy(() -> service.rotate(token))
+        .isInstanceOf(InvalidRefreshTokenException.class);
+
+    RefreshToken row =
+        repository.findByTokenHash(RefreshTokenServiceImpl.hash(token)).orElseThrow();
+    assertThat(row.getRevokedAt())
+        .as("disabled account must have its token family revoked, durably")
+        .isNotNull();
+    // The token was rejected before being consumed, so it is revoked rather than rotated.
+    assertThat(row.getRotatedAt()).isNull();
+  }
+
   @Test
   void logoutRevokesTheFamilyDurably() {
     UUID userId = newUser();
