@@ -32,20 +32,24 @@ class JwtPropertiesValidationTest {
   @Test
   void validSecretBindsAndStarts() {
     runner
-        .withPropertyValues("app.jwt.secret=" + VALID_SECRET, "app.jwt.expiration-ms=86400000")
+        .withPropertyValues(
+            "app.jwt.secret=" + VALID_SECRET,
+            "app.jwt.access-expiration-ms=86400000",
+            "app.jwt.refresh-expiration-ms=1209600000")
         .run(
             context -> {
               assertThat(context).hasNotFailed();
               JwtProperties props = context.getBean(JwtProperties.class);
               assertThat(props.secret()).isEqualTo(VALID_SECRET);
-              assertThat(props.expirationMs()).isEqualTo(86400000L);
+              assertThat(props.accessExpirationMs()).isEqualTo(86400000L);
             });
   }
 
   @Test
   void missingSecretFailsStartup() {
     runner
-        .withPropertyValues("app.jwt.expiration-ms=86400000")
+        .withPropertyValues(
+            "app.jwt.access-expiration-ms=86400000", "app.jwt.refresh-expiration-ms=1209600000")
         .run(
             context -> {
               assertThat(context).hasFailed();
@@ -56,7 +60,10 @@ class JwtPropertiesValidationTest {
   @Test
   void blankSecretFailsStartup() {
     runner
-        .withPropertyValues("app.jwt.secret=   ", "app.jwt.expiration-ms=86400000")
+        .withPropertyValues(
+            "app.jwt.secret=   ",
+            "app.jwt.access-expiration-ms=86400000",
+            "app.jwt.refresh-expiration-ms=1209600000")
         .run(context -> assertThat(context).hasFailed());
   }
 
@@ -66,7 +73,10 @@ class JwtPropertiesValidationTest {
     assertThat(sixtyThreeBytes.getBytes(StandardCharsets.UTF_8)).hasSize(63);
 
     runner
-        .withPropertyValues("app.jwt.secret=" + sixtyThreeBytes, "app.jwt.expiration-ms=86400000")
+        .withPropertyValues(
+            "app.jwt.secret=" + sixtyThreeBytes,
+            "app.jwt.access-expiration-ms=86400000",
+            "app.jwt.refresh-expiration-ms=1209600000")
         .run(
             context -> {
               assertThat(context).hasFailed();
@@ -84,14 +94,20 @@ class JwtPropertiesValidationTest {
     assertThat(fortyTwoByteChars).hasSizeLessThan(64);
 
     runner
-        .withPropertyValues("app.jwt.secret=" + fortyTwoByteChars, "app.jwt.expiration-ms=86400000")
+        .withPropertyValues(
+            "app.jwt.secret=" + fortyTwoByteChars,
+            "app.jwt.access-expiration-ms=86400000",
+            "app.jwt.refresh-expiration-ms=1209600000")
         .run(context -> assertThat(context).hasNotFailed());
   }
 
   @Test
   void triviallyLowEntropySecretFailsStartupDespiteBeingLongEnough() {
     runner
-        .withPropertyValues("app.jwt.secret=" + "x".repeat(64), "app.jwt.expiration-ms=86400000")
+        .withPropertyValues(
+            "app.jwt.secret=" + "x".repeat(64),
+            "app.jwt.access-expiration-ms=86400000",
+            "app.jwt.refresh-expiration-ms=1209600000")
         .run(
             context -> {
               assertThat(context).hasFailed();
@@ -105,7 +121,9 @@ class JwtPropertiesValidationTest {
     for (String marker : new String[] {"changeme", "your-secret", "password"}) {
       runner
           .withPropertyValues(
-              "app.jwt.secret=" + marker + padding, "app.jwt.expiration-ms=86400000")
+              "app.jwt.secret=" + marker + padding,
+              "app.jwt.access-expiration-ms=86400000",
+              "app.jwt.refresh-expiration-ms=1209600000")
           .run(context -> assertThat(context).hasFailed());
     }
   }
@@ -117,7 +135,9 @@ class JwtPropertiesValidationTest {
 
     runner
         .withPropertyValues(
-            "app.jwt.secret=" + COMMITTED_PLACEHOLDER, "app.jwt.expiration-ms=86400000")
+            "app.jwt.secret=" + COMMITTED_PLACEHOLDER,
+            "app.jwt.access-expiration-ms=86400000",
+            "app.jwt.refresh-expiration-ms=1209600000")
         .run(
             context -> {
               assertThat(context).hasFailed();
@@ -131,7 +151,9 @@ class JwtPropertiesValidationTest {
     // throwing; the validation must turn that into a message naming the env var.
     runner
         .withPropertyValues(
-            "app.jwt.secret=${FEATURE_FLAG_TEST_UNSET_VAR}", "app.jwt.expiration-ms=86400000")
+            "app.jwt.secret=${FEATURE_FLAG_TEST_UNSET_VAR}",
+            "app.jwt.access-expiration-ms=86400000",
+            "app.jwt.refresh-expiration-ms=1209600000")
         .run(
             context -> {
               assertThat(context).hasFailed();
@@ -145,14 +167,20 @@ class JwtPropertiesValidationTest {
     String shoutyPlaceholder = "CHANGE-ME-" + "x".repeat(64);
 
     runner
-        .withPropertyValues("app.jwt.secret=" + shoutyPlaceholder, "app.jwt.expiration-ms=86400000")
+        .withPropertyValues(
+            "app.jwt.secret=" + shoutyPlaceholder,
+            "app.jwt.access-expiration-ms=86400000",
+            "app.jwt.refresh-expiration-ms=1209600000")
         .run(context -> assertThat(context).hasFailed());
   }
 
   @Test
   void nonPositiveExpirationFailsStartup() {
     runner
-        .withPropertyValues("app.jwt.secret=" + VALID_SECRET, "app.jwt.expiration-ms=0")
+        .withPropertyValues(
+            "app.jwt.secret=" + VALID_SECRET,
+            "app.jwt.access-expiration-ms=0",
+            "app.jwt.refresh-expiration-ms=1209600000")
         .run(context -> assertThat(context).hasFailed());
   }
 
