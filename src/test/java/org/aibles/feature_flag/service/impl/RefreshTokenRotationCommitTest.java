@@ -8,7 +8,7 @@ import org.aibles.feature_flag.domain.entity.RefreshToken;
 import org.aibles.feature_flag.domain.entity.User;
 import org.aibles.feature_flag.dto.request.RefreshRequest;
 import org.aibles.feature_flag.dto.response.AuthResponse;
-import org.aibles.feature_flag.exception.UnauthorizedException;
+import org.aibles.feature_flag.exception.InvalidRefreshTokenException;
 import org.aibles.feature_flag.repository.RefreshTokenRepository;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.aibles.feature_flag.service.AuthService;
@@ -59,7 +59,8 @@ class RefreshTokenRotationCommitTest {
     RotationResult rotated = service.rotate(first);
 
     // Replay the already-consumed token.
-    assertThatThrownBy(() -> service.rotate(first)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> service.rotate(first))
+        .isInstanceOf(InvalidRefreshTokenException.class);
 
     // The revoke must have survived the exception.
     RefreshToken successor =
@@ -72,7 +73,7 @@ class RefreshTokenRotationCommitTest {
 
     // And the stolen successor must now be useless.
     assertThatThrownBy(() -> service.rotate(rotated.refreshToken()))
-        .isInstanceOf(UnauthorizedException.class);
+        .isInstanceOf(InvalidRefreshTokenException.class);
   }
 
   @Test
@@ -104,7 +105,8 @@ class RefreshTokenRotationCommitTest {
 
     RefreshRequest replay = new RefreshRequest();
     replay.setRefreshToken(first);
-    assertThatThrownBy(() -> authService.refresh(replay)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> authService.refresh(replay))
+        .isInstanceOf(InvalidRefreshTokenException.class);
 
     RefreshToken successor =
         repository
@@ -124,6 +126,7 @@ class RefreshTokenRotationCommitTest {
 
     assertThat(repository.findByTokenHash(RefreshTokenServiceImpl.hash(token)).orElseThrow())
         .satisfies(row -> assertThat(row.getRevokedAt()).isNotNull());
-    assertThatThrownBy(() -> service.rotate(token)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> service.rotate(token))
+        .isInstanceOf(InvalidRefreshTokenException.class);
   }
 }

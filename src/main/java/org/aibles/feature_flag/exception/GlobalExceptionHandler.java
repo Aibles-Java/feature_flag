@@ -36,6 +36,17 @@ public class GlobalExceptionHandler {
     return withRequestId(problem);
   }
 
+  @ExceptionHandler(InvalidRefreshTokenException.class)
+  public ProblemDetail handleInvalidRefreshToken(
+      InvalidRefreshTokenException ex, HttpServletRequest request) {
+    ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.UNAUTHORIZED);
+    problem.setType(URI.create("about:blank"));
+    problem.setTitle("Unauthorized");
+    problem.setDetail(ex.getMessage());
+    problem.setInstance(URI.create(request.getRequestURI()));
+    return withRequestId(problem);
+  }
+
   @ExceptionHandler(UnauthorizedException.class)
   public ProblemDetail handleUnauthorized(UnauthorizedException ex, HttpServletRequest request) {
     ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);

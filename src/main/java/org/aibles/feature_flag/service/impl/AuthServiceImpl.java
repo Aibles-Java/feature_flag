@@ -9,7 +9,7 @@ import org.aibles.feature_flag.dto.request.RefreshRequest;
 import org.aibles.feature_flag.dto.request.RegisterRequest;
 import org.aibles.feature_flag.dto.response.AuthResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
-import org.aibles.feature_flag.exception.UnauthorizedException;
+import org.aibles.feature_flag.exception.InvalidRefreshTokenException;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.aibles.feature_flag.security.JwtTokenProvider;
 import org.aibles.feature_flag.security.UserPrincipal;
@@ -77,7 +77,7 @@ public class AuthServiceImpl implements AuthService {
     User user =
         userRepository
             .findById(rotation.userId())
-            .orElseThrow(() -> new UnauthorizedException("User no longer exists"));
+            .orElseThrow(() -> new InvalidRefreshTokenException("User no longer exists"));
     UserPrincipal principal = UserPrincipal.from(user);
 
     return AuthResponse.builder()

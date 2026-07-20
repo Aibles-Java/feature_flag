@@ -12,7 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.config.JwtProperties;
 import org.aibles.feature_flag.domain.entity.RefreshToken;
 import org.aibles.feature_flag.domain.entity.User;
-import org.aibles.feature_flag.exception.UnauthorizedException;
+import org.aibles.feature_flag.exception.InvalidRefreshTokenException;
 import org.aibles.feature_flag.repository.RefreshTokenRepository;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.aibles.feature_flag.service.RefreshTokenService;
@@ -44,41 +44,41 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
    * since {@code consume} either matched no row or belongs to a family being revoked anyway.
    */
   @Override
-  @Transactional(noRollbackFor = UnauthorizedException.class)
+  @Transactional(noRollbackFor = InvalidRefreshTokenException.class)
   public RotationResult rotate(String presentedToken) {
     RefreshToken row =
         repository
             .findByTokenHash(hash(presentedToken))
-            .orElseThrow(() -> new UnauthorizedException("Invalid refresh token"));
+            .orElseThrow(() -> new InvalidRefreshTokenException("Invalid refresh token"));
 
     LocalDateTime now = LocalDateTime.now();
 
     if (row.getRevokedAt() != null) {
-      throw new UnauthorizedException("Refresh token has been revoked");
+      throw new InvalidRefreshTokenException("Refresh token has been revoked");
     }
     if (row.getExpiresAt().isBefore(now)) {
-      throw new UnauthorizedException("Refresh token has expired");
+      throw new InvalidRefreshTokenException("Refresh token has expired");
     }
     if (row.getRotatedAt() != null) {
       // A consumed token was replayed — the family is compromised.
       familyRevoker.revoke(row.getFamilyId(), now);
-      throw new UnauthorizedException("Refresh token reuse detected");
+      throw new InvalidRefreshTokenException("Refresh token reuse detected");
     }
 
     // Atomically consume. A concurrent request that already consumed it wins; we lose and
     // treat the loss as a reuse signal, revoking the family.
     if (repository.consume(row.getId(), now) != 1) {
       familyRevoker.revoke(row.getFamilyId(), now);
-      throw new UnauthorizedException("Refresh token reuse detected");
+      throw new InvalidRefreshTokenException("Refresh token reuse detected");
     }
 
     User user =
         userRepository
             .findById(row.getUserId())
-            .orElseThrow(() -> new UnauthorizedException("User no longer exists"));
+            .orElseThrow(() -> new InvalidRefreshTokenException("User no longer exists"));
     if (!user.isEnabled()) {
       familyRevoker.revoke(row.getFamilyId(), now);
-      throw new UnauthorizedException("Account is disabled");
+      throw new InvalidRefreshTokenException("Account is disabled");
     }
 
     String newToken = createRow(row.getUserId(), row.getFamilyId());

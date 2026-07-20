@@ -14,7 +14,7 @@ import java.util.UUID;
 import org.aibles.feature_flag.config.JwtProperties;
 import org.aibles.feature_flag.domain.entity.RefreshToken;
 import org.aibles.feature_flag.domain.entity.User;
-import org.aibles.feature_flag.exception.UnauthorizedException;
+import org.aibles.feature_flag.exception.InvalidRefreshTokenException;
 import org.aibles.feature_flag.repository.RefreshTokenRepository;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.aibles.feature_flag.service.RefreshTokenService.RotationResult;
@@ -112,7 +112,8 @@ class RefreshTokenServiceImplTest {
     when(repository.findByTokenHash(RefreshTokenServiceImpl.hash(presented)))
         .thenReturn(Optional.of(row));
 
-    assertThatThrownBy(() -> service.rotate(presented)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> service.rotate(presented))
+        .isInstanceOf(InvalidRefreshTokenException.class);
     verify(familyRevoker).revoke(eq(familyId), any());
   }
 
@@ -124,7 +125,8 @@ class RefreshTokenServiceImplTest {
         .thenReturn(Optional.of(row));
     when(repository.consume(eq(row.getId()), any())).thenReturn(0); // someone else won
 
-    assertThatThrownBy(() -> service.rotate(presented)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> service.rotate(presented))
+        .isInstanceOf(InvalidRefreshTokenException.class);
     verify(familyRevoker).revoke(eq(familyId), any());
   }
 
@@ -136,7 +138,8 @@ class RefreshTokenServiceImplTest {
     when(repository.findByTokenHash(RefreshTokenServiceImpl.hash(presented)))
         .thenReturn(Optional.of(row));
 
-    assertThatThrownBy(() -> service.rotate(presented)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> service.rotate(presented))
+        .isInstanceOf(InvalidRefreshTokenException.class);
   }
 
   @Test
@@ -147,7 +150,8 @@ class RefreshTokenServiceImplTest {
     when(repository.findByTokenHash(RefreshTokenServiceImpl.hash(presented)))
         .thenReturn(Optional.of(row));
 
-    assertThatThrownBy(() -> service.rotate(presented)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> service.rotate(presented))
+        .isInstanceOf(InvalidRefreshTokenException.class);
     verify(repository, never()).consume(any(), any());
   }
 
@@ -161,7 +165,8 @@ class RefreshTokenServiceImplTest {
     when(userRepository.findById(userId))
         .thenReturn(Optional.of(User.builder().id(userId).enabled(false).build()));
 
-    assertThatThrownBy(() -> service.rotate(presented)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> service.rotate(presented))
+        .isInstanceOf(InvalidRefreshTokenException.class);
     verify(familyRevoker).revoke(eq(familyId), any());
   }
 
@@ -170,7 +175,7 @@ class RefreshTokenServiceImplTest {
     when(repository.findByTokenHash(any())).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.rotate("f".repeat(64)))
-        .isInstanceOf(UnauthorizedException.class);
+        .isInstanceOf(InvalidRefreshTokenException.class);
   }
 
   @Test

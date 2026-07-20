@@ -15,7 +15,7 @@ import org.aibles.feature_flag.dto.request.RefreshRequest;
 import org.aibles.feature_flag.dto.request.RegisterRequest;
 import org.aibles.feature_flag.dto.response.AuthResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
-import org.aibles.feature_flag.exception.UnauthorizedException;
+import org.aibles.feature_flag.exception.InvalidRefreshTokenException;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.aibles.feature_flag.security.JwtTokenProvider;
 import org.aibles.feature_flag.security.UserPrincipal;
@@ -141,12 +141,13 @@ class AuthServiceImplTest {
   @Test
   void refreshPropagatesRotationFailure() {
     when(refreshTokenService.rotate("bad-refresh"))
-        .thenThrow(new UnauthorizedException("Refresh token reuse detected"));
+        .thenThrow(new InvalidRefreshTokenException("Refresh token reuse detected"));
 
     RefreshRequest req = new RefreshRequest();
     req.setRefreshToken("bad-refresh");
 
-    assertThatThrownBy(() -> authService.refresh(req)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> authService.refresh(req))
+        .isInstanceOf(InvalidRefreshTokenException.class);
     verify(jwtTokenProvider, never()).generateToken(any());
   }
 
