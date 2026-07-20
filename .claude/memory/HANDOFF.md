@@ -4,44 +4,55 @@
 
 ## Current WIP
 
-**Issue #23** (externalize secrets, fail fast on placeholder config) on branch
-`feature/issue-23-externalize-secrets` (→ `develop`), PR **#39**. Addressing the
-`/review-pr` findings and clearing the `CONFLICTING` state (2026-07-14):
+**Issue #32** (refresh tokens with short-lived access tokens) on branch
+`feature/issue-32-refresh-tokens` (→ `develop`). **All 7 plan tasks implemented and
+committed; not yet pushed. No PR yet.** 11 commits ahead of `origin/develop`.
 
-- **Merged current `origin/develop` into the branch** (no rebase/force-push). Conflicts
-  resolved: `Dockerfile` (kept develop's `EXPOSE 8081` + `/actuator/health/readiness`
-  HEALTHCHECK from #25/PR #42, added only `ENV SPRING_PROFILES_ACTIVE=prod`; dropped the
-  now-redundant `EXPOSE`), `.gitignore` (union), `JwtTokenProvider(.java|Test)` (develop's
-  google-format + the `JwtProperties` constructor), `.claude/memory/*`.
-- **Datasource fail-fast gap fixed:** new `config/RequiredDataSourceEnvPostProcessor`
-  (`EnvironmentPostProcessor`, prod-only) aborts startup naming any missing/blank
-  `SPRING_DATASOURCE_URL/USERNAME/PASSWORD`. Previously only `APP_JWT_SECRET` got a clear
-  error; the datasource vars bound the literal `${VAR}` and failed later in Hikari.
-- **Docs corrected:** `application-prod.properties` comment + `README.md` now describe the
-  real behavior (datasource fail-fast is via the post-processor, not "Could not resolve
-  placeholder").
-- **Memory renumber:** on-branch `decisions/0008-secrets-externalization-fail-fast.md`
-  → `0016` (develop took 0008–0015 meanwhile); MEMORY.md + `[[links]]` updated.
+- `./mvnw verify` green: **239 tests, 0 failures, Spotless clean, JaCoCo floor met.**
+- Full flow works end-to-end over the real security chain (`AuthControllerIntegrationTest`):
+  login issues an access JWT (15min) + opaque refresh token (14d, SHA-256 at rest);
+  `POST /api/v1/auth/refresh` rotates; reusing a rotated token revokes the whole family;
+  `POST /api/v1/auth/logout` revokes the family and is idempotent (always 204).
+- Security review run (skill's 3-step fan-out): 3 findings raised, **all filtered below the
+  ≥8 confidence bar** by adversarial re-check. The one real defect behind finding 1 (a
+  PostgreSQL self-deadlock, not an auth bypass) was fixed in commit `433266f`.
+
+**Deviations from the plan (all in commit messages):** `InvalidRefreshTokenException` → 401
+instead of flipping the global `UnauthorizedException`→403 mapping; `@SpringBootTest` (not the
+plan's `@DataJpaTest`, which the repo never uses); prod inherits the TTLs (no env override —
+"no defaults in prod" is a secrets rule, TTLs aren't secrets).
+
+**⚠️ BREAKING API change:** login response field `token` → `accessToken`, `type` → `tokenType`
+(+ new `refreshToken`, `expiresIn`). Documented in README "Ops migration" block. Must headline
+the PR body.
+
+**Also cleared a long-standing repo issue:** the `docs/ARCHITECTURE.md` vs `docs/architecture.md`
+case collision (commit `cba9edb`) — detailed v1.0 doc restored at non-colliding
+`docs/architecture-design-v1.md`; lowercase stays the live doc. Removes a HANDOFF follow-up.
 
 ## Context to Load
 
-- `decisions/0016-secrets-externalization-fail-fast.md` — the design + the two review fixes.
-- `conventions/springboot-configprops-binding-gotchas.md` — the `${VAR}`-literal binder gotcha
-  that motivates the datasource post-processor.
+- `decisions/0017-refresh-token-family-revoke-transaction-semantics.md` — the two non-obvious
+  transaction bugs and why the fixes look the way they do. Read before touching
+  `RefreshTokenServiceImpl` / `RefreshTokenFamilyRevoker`.
+- `conventions/second-springboottest-context-shared-h2.md` — the shared-context H2 datasource
+  convention the new integration tests follow.
 
 ## Next steps
 
-1. `./mvnw verify` green in the worktree (Spotless + tests + JaCoCo) — confirm before push.
-2. Commit the merge + fixes; push `feature/issue-23-externalize-secrets` (normal push, no force).
-   Memory gate satisfied (this file + MEMORY.md + decision are in the commit).
-3. Confirm PR #39 flips to MERGEABLE; reply on the review thread that findings are addressed.
+1. **Push** `feature/issue-32-refresh-tokens` (normal push; memory gate is now satisfied —
+   this file + MEMORY.md + decision 0017 are in the working tree, stage & commit them with the
+   push). Enable the backstop once per clone: `git config core.hooksPath .githooks`.
+2. **Open the PR** via the `create-pr` skill. Headline the BREAKING `token`→`accessToken` change.
+   Note in the body: 3 security findings reviewed & dismissed, deadlock fix `433266f`, prod
+   inherits TTLs by choice.
+3. Move the board card to *Ready For Testing*: `.claude/scripts/issue-board.sh ready 32`
+   (remember the gh-cli off-PATH prefix — see MEMORY.md).
 
-## Follow-ups (carried over)
-- **Codegraph (#48/#49/#50)** on the board; #48 (Tier-1 ArchUnit gate) next to pick up.
-- **`docs/` case collision:** `docs/ARCHITECTURE.md` vs `docs/architecture.md` — delete one on a
-  case-sensitive box.
-- Two `decisions/0012-*` files (micrometer + harness-guards) still collide — renumber one later.
-- **#25:** Dockerfile HEALTHCHECK readiness→liveness? add DB-down readiness→503 test.
-- **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
-- **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
-- **Raise `jacoco.line.coverage`** as coverage climbs.
+## Backlog notes surfaced this session (non-blocking, not in scope for #32)
+- Absolute session cap for refresh families (`family_created_at` + 30–90d) and a `@Scheduled`
+  `deleteByExpiresAtBefore` cleanup — the design spec deliberately scoped both OUT as v1 non-goals.
+- Uniform client-facing refresh error message + move the specific reason to the server log
+  (hardening; the `requestId` plumbing already supports the split).
+- No admin "disable user" endpoint exists yet, so the disabled-account refresh path is only
+  reachable via direct DB change today.
