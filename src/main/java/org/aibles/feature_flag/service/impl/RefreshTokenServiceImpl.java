@@ -28,6 +28,7 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
   private final RefreshTokenRepository repository;
   private final UserRepository userRepository;
   private final JwtProperties jwtProperties;
+  private final RefreshTokenFamilyRevoker familyRevoker;
 
   @Override
   @Transactional
@@ -36,11 +37,11 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
   }
 
   /**
-   * Every rejection path here reports failure by throwing, and two of them revoke the family first.
-   * Spring rolls back on unchecked exceptions by default, which would undo the revoke the throw is
-   * meant to announce — reuse detection would silently do nothing. {@code noRollbackFor} keeps the
-   * revoke committed. Nothing on these paths should be rolled back: {@code consume} either did not
-   * match a row or belongs to a family we are revoking anyway.
+   * Rejection paths report failure by throwing, and three of them revoke the family first. The
+   * revoke must not be undone by the rollback that throw triggers — see {@link
+   * RefreshTokenFamilyRevoker}, which commits it in its own transaction. {@code noRollbackFor} is
+   * kept as a second line of defence for this method's own writes: nothing here should roll back,
+   * since {@code consume} either matched no row or belongs to a family being revoked anyway.
    */
   @Override
   @Transactional(noRollbackFor = UnauthorizedException.class)
@@ -60,14 +61,14 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
     }
     if (row.getRotatedAt() != null) {
       // A consumed token was replayed — the family is compromised.
-      repository.revokeFamily(row.getFamilyId(), now);
+      familyRevoker.revoke(row.getFamilyId(), now);
       throw new UnauthorizedException("Refresh token reuse detected");
     }
 
     // Atomically consume. A concurrent request that already consumed it wins; we lose and
     // treat the loss as a reuse signal, revoking the family.
     if (repository.consume(row.getId(), now) != 1) {
-      repository.revokeFamily(row.getFamilyId(), now);
+      familyRevoker.revoke(row.getFamilyId(), now);
       throw new UnauthorizedException("Refresh token reuse detected");
     }
 
@@ -76,7 +77,7 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
             .findById(row.getUserId())
             .orElseThrow(() -> new UnauthorizedException("User no longer exists"));
     if (!user.isEnabled()) {
-      repository.revokeFamily(row.getFamilyId(), now);
+      familyRevoker.revoke(row.getFamilyId(), now);
       throw new UnauthorizedException("Account is disabled");
     }
 
@@ -89,7 +90,7 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
   public void logout(String presentedToken) {
     repository
         .findByTokenHash(hash(presentedToken))
-        .ifPresent(row -> repository.revokeFamily(row.getFamilyId(), LocalDateTime.now()));
+        .ifPresent(row -> familyRevoker.revoke(row.getFamilyId(), LocalDateTime.now()));
   }
 
   private String createRow(UUID userId, UUID familyId) {

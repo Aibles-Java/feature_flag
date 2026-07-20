@@ -35,6 +35,7 @@ class RefreshTokenServiceImplTest {
   @Mock private RefreshTokenRepository repository;
   @Mock private UserRepository userRepository;
   @Mock private JwtProperties jwtProperties;
+  @Mock private RefreshTokenFamilyRevoker familyRevoker;
   @InjectMocks private RefreshTokenServiceImpl service;
 
   private final UUID userId = UUID.randomUUID();
@@ -83,7 +84,7 @@ class RefreshTokenServiceImplTest {
     assertThat(result.userId()).isEqualTo(userId);
     assertThat(result.refreshToken()).hasSize(64).isNotEqualTo(presented);
     verify(repository).consume(eq(row.getId()), any());
-    verify(repository, never()).revokeFamily(any(), any());
+    verify(familyRevoker, never()).revoke(any(), any());
   }
 
   @Test
@@ -112,7 +113,7 @@ class RefreshTokenServiceImplTest {
         .thenReturn(Optional.of(row));
 
     assertThatThrownBy(() -> service.rotate(presented)).isInstanceOf(UnauthorizedException.class);
-    verify(repository).revokeFamily(eq(familyId), any());
+    verify(familyRevoker).revoke(eq(familyId), any());
   }
 
   @Test
@@ -124,7 +125,7 @@ class RefreshTokenServiceImplTest {
     when(repository.consume(eq(row.getId()), any())).thenReturn(0); // someone else won
 
     assertThatThrownBy(() -> service.rotate(presented)).isInstanceOf(UnauthorizedException.class);
-    verify(repository).revokeFamily(eq(familyId), any());
+    verify(familyRevoker).revoke(eq(familyId), any());
   }
 
   @Test
@@ -161,7 +162,7 @@ class RefreshTokenServiceImplTest {
         .thenReturn(Optional.of(User.builder().id(userId).enabled(false).build()));
 
     assertThatThrownBy(() -> service.rotate(presented)).isInstanceOf(UnauthorizedException.class);
-    verify(repository).revokeFamily(eq(familyId), any());
+    verify(familyRevoker).revoke(eq(familyId), any());
   }
 
   @Test
@@ -181,7 +182,7 @@ class RefreshTokenServiceImplTest {
 
     service.logout(presented);
 
-    verify(repository).revokeFamily(eq(familyId), any());
+    verify(familyRevoker).revoke(eq(familyId), any());
   }
 
   @Test
@@ -190,6 +191,6 @@ class RefreshTokenServiceImplTest {
 
     service.logout("h".repeat(64)); // no throw, no revoke
 
-    verify(repository, never()).revokeFamily(any(), any());
+    verify(familyRevoker, never()).revoke(any(), any());
   }
 }

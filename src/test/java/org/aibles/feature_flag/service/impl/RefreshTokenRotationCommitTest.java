@@ -6,9 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.RefreshToken;
 import org.aibles.feature_flag.domain.entity.User;
+import org.aibles.feature_flag.dto.request.RefreshRequest;
+import org.aibles.feature_flag.dto.response.AuthResponse;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.RefreshTokenRepository;
 import org.aibles.feature_flag.repository.UserRepository;
+import org.aibles.feature_flag.service.AuthService;
 import org.aibles.feature_flag.service.RefreshTokenService;
 import org.aibles.feature_flag.service.RefreshTokenService.RotationResult;
 import org.junit.jupiter.api.Test;
@@ -35,6 +38,7 @@ import org.springframework.test.context.TestPropertySource;
 class RefreshTokenRotationCommitTest {
 
   @Autowired RefreshTokenService service;
+  @Autowired AuthService authService;
   @Autowired RefreshTokenRepository repository;
   @Autowired UserRepository userRepository;
 
@@ -82,6 +86,33 @@ class RefreshTokenRotationCommitTest {
         .isPresent();
     assertThat(repository.findByTokenHash(RefreshTokenServiceImpl.hash(first)).orElseThrow())
         .satisfies(row -> assertThat(row.getRotatedAt()).isNotNull());
+  }
+
+  /**
+   * The same guarantee, but reached through AuthService.refresh(), which is itself @Transactional
+   * and therefore becomes the outer transaction. This is the case a noRollbackFor on rotate() alone
+   * does NOT cover — the outer transaction's rollback rules win and undo the revoke.
+   */
+  @Test
+  void replayThroughAuthServiceAlsoRevokesTheFamilyDurably() {
+    UUID userId = newUser();
+    String first = service.issueNewFamily(userId);
+
+    RefreshRequest good = new RefreshRequest();
+    good.setRefreshToken(first);
+    AuthResponse rotated = authService.refresh(good);
+
+    RefreshRequest replay = new RefreshRequest();
+    replay.setRefreshToken(first);
+    assertThatThrownBy(() -> authService.refresh(replay)).isInstanceOf(UnauthorizedException.class);
+
+    RefreshToken successor =
+        repository
+            .findByTokenHash(RefreshTokenServiceImpl.hash(rotated.getRefreshToken()))
+            .orElseThrow();
+    assertThat(successor.getRevokedAt())
+        .as("family revoke must commit even when an outer @Transactional caller rolls back")
+        .isNotNull();
   }
 
   @Test
