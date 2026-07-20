@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="010-create-refresh-tokens" author="dev">
+        <createTable tableName="refresh_token">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="user_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_refresh_token_user"
+                             references="users(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="family_id" type="UUID">
+                <constraints nullable="false"/>
+            </column>
+            <column name="token_hash" type="VARCHAR(64)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_refresh_token_hash"/>
+            </column>
+            <column name="expires_at" type="TIMESTAMPTZ">
+                <constraints nullable="false"/>
+            </column>
+            <column name="rotated_at" type="TIMESTAMPTZ"/>
+            <column name="revoked_at" type="TIMESTAMPTZ"/>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex tableName="refresh_token" indexName="idx_refresh_token_family">
+            <column name="family_id"/>
+        </createIndex>
+        <createIndex tableName="refresh_token" indexName="idx_refresh_token_user">
+            <column name="user_id"/>
+        </createIndex>
+        <rollback>
+            <dropTable tableName="refresh_token"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
