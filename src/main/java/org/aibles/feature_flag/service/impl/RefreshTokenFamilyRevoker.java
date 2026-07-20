@@ -30,8 +30,11 @@ class RefreshTokenFamilyRevoker {
 
   private final RefreshTokenRepository repository;
 
+  // public on purpose: Spring's default transaction attribute source only advises public methods
+  // (publicMethodsOnly=true), so a package-private @Transactional method risks silently losing its
+  // REQUIRES_NEW propagation — which is the whole point of this bean. Keep it public.
   @Transactional(propagation = Propagation.REQUIRES_NEW)
-  int revoke(UUID familyId, LocalDateTime now) {
+  public int revoke(UUID familyId, LocalDateTime now) {
     return repository.revokeFamily(familyId, now);
   }
 }
