@@ -1,6 +1,7 @@
 package org.aibles.feature_flag.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -8,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.UUID;
+import org.aibles.feature_flag.config.PaginationConfig;
 import org.aibles.feature_flag.controller.admin.EnvironmentController;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
@@ -20,6 +22,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.web.PageableHandlerMethodArgumentResolver;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -37,9 +42,14 @@ class EnvironmentControllerTest {
   void setUp() {
     LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
     validator.afterPropertiesSet();
+    PageableHandlerMethodArgumentResolver pageableResolver =
+        new PageableHandlerMethodArgumentResolver();
+    pageableResolver.setMaxPageSize(PaginationConfig.MAX_PAGE_SIZE);
+    pageableResolver.setFallbackPageable(PageRequest.of(0, PaginationConfig.DEFAULT_PAGE_SIZE));
     mockMvc =
         MockMvcBuilders.standaloneSetup(new EnvironmentController(environmentService))
             .setControllerAdvice(new GlobalExceptionHandler())
+            .setCustomArgumentResolvers(pageableResolver)
             .setValidator(validator)
             .build();
   }
@@ -79,12 +89,13 @@ class EnvironmentControllerTest {
             .name("prod")
             .projectId(projectId)
             .build();
-    when(environmentService.listByProject(projectId)).thenReturn(List.of(response));
+    when(environmentService.listByProject(eq(projectId), any()))
+        .thenReturn(new PageImpl<>(List.of(response)));
 
     mockMvc
         .perform(get("/api/v1/environments").param("projectId", projectId.toString()))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].name").value("prod"));
+        .andExpect(jsonPath("$.content[0].name").value("prod"));
   }
 
   @Test

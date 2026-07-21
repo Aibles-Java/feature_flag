@@ -3,6 +3,7 @@ package org.aibles.feature_flag.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
@@ -30,6 +31,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -148,12 +152,13 @@ class EnvironmentServiceImplTest {
 
   @Test
   void listByProject_delegatesToRepository() {
-    when(environmentRepository.findAllByProjectId(projectId)).thenReturn(List.of(env));
+    when(environmentRepository.findAllByProjectId(eq(projectId), any()))
+        .thenReturn(new PageImpl<>(List.of(env)));
 
-    List<EnvironmentResponse> result = service.listByProject(projectId);
+    Page<EnvironmentResponse> result = service.listByProject(projectId, PageRequest.of(0, 20));
 
-    assertThat(result).hasSize(1);
-    assertThat(result.get(0).getName()).isEqualTo("prod");
+    assertThat(result.getContent()).hasSize(1);
+    assertThat(result.getContent().get(0).getName()).isEqualTo("prod");
   }
 
   @Test

@@ -1,6 +1,5 @@
 package org.aibles.feature_flag.service.impl;
 
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
@@ -19,6 +18,8 @@ import org.aibles.feature_flag.service.EnvironmentService;
 import org.aibles.feature_flag.util.ApiKeyGenerator;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,12 +57,10 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   }
 
   @Override
-  public List<EnvironmentResponse> listByProject(UUID projectId) {
+  public Page<EnvironmentResponse> listByProject(UUID projectId, Pageable pageable) {
     permissionService.requireRoleForProject(
         projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
-    return environmentRepository.findAllByProjectId(projectId).stream()
-        .map(this::toResponse)
-        .toList();
+    return environmentRepository.findAllByProjectId(projectId, pageable).map(this::toResponse);
   }
 
   @Override

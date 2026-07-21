@@ -3,6 +3,7 @@ package org.aibles.feature_flag.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
@@ -30,6 +31,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -94,12 +99,13 @@ class OrganizationServiceImplTest {
   void listMine_returnsOrgsTheUserBelongsTo() {
     when(permissionService.currentUserId()).thenReturn(userId);
     when(memberRepository.findOrganizationIdsByUserId(userId)).thenReturn(List.of(orgId));
-    when(organizationRepository.findAllById(List.of(orgId))).thenReturn(List.of(org));
+    when(organizationRepository.findByIdIn(eq(List.of(orgId)), any()))
+        .thenReturn(new PageImpl<>(List.of(org)));
 
-    List<OrganizationResponse> result = service.listMine();
+    Page<OrganizationResponse> result = service.listMine(PageRequest.of(0, 20));
 
-    assertThat(result).hasSize(1);
-    assertThat(result.get(0).getSlug()).isEqualTo("acme");
+    assertThat(result.getContent()).hasSize(1);
+    assertThat(result.getContent().get(0).getSlug()).isEqualTo("acme");
   }
 
   @Test
@@ -192,6 +198,7 @@ class OrganizationServiceImplTest {
   void listMembers_throwsUnauthorized_whenCallerIsNotMember() {
     when(permissionService.isMember(orgId)).thenReturn(false);
 
-    assertThatThrownBy(() -> service.listMembers(orgId)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> service.listMembers(orgId, Pageable.unpaged()))
+        .isInstanceOf(UnauthorizedException.class);
   }
 }
