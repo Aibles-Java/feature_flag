@@ -11,8 +11,9 @@ import org.springframework.validation.annotation.Validated;
 
 /**
  * JWT signing configuration, bound from {@code app.jwt.*} (env: {@code APP_JWT_SECRET}, {@code
- * APP_JWT_EXPIRATION_MS}). Validated at startup so a misconfigured secret aborts boot with a clear
- * binding-failure report instead of running with a weak/known key.
+ * APP_JWT_ACCESS_EXPIRATION_MS}, {@code APP_JWT_REFRESH_EXPIRATION_MS}). Validated at startup so a
+ * misconfigured secret aborts boot with a clear binding-failure report instead of running with a
+ * weak/known key.
  */
 @ConfigurationProperties(prefix = "app.jwt")
 @Validated
