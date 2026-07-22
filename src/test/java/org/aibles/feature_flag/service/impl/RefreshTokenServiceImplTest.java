@@ -171,7 +171,8 @@ class RefreshTokenServiceImplTest {
     verify(familyRevoker).revoke(eq(familyId), any());
     // The enabled-check runs BEFORE consume() (commit 433266f) so the disabled-user path never
     // holds consume()'s row lock when the REQUIRES_NEW revoke fires. Asserting consume is skipped
-    // locks in that ordering against a future re-reordering that would reintroduce the self-deadlock.
+    // locks in that ordering against a future re-reordering that would reintroduce the
+    // self-deadlock.
     verify(repository, never()).consume(any(), any());
   }
 
