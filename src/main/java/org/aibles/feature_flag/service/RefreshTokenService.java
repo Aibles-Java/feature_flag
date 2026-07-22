@@ -7,7 +7,10 @@ public interface RefreshTokenService {
   /** Starts a new rotation family for the user; returns the plaintext refresh token. */
   String issueNewFamily(UUID userId);
 
-  /** Validates + rotates a presented token. Throws UnauthorizedException on any invalid case. */
+  /**
+   * Validates + rotates a presented token. Throws InvalidRefreshTokenException (HTTP 401) on any
+   * invalid case — unknown, revoked, expired, reused, or a disabled account.
+   */
   RotationResult rotate(String presentedToken);
 
   /** Revokes the family of the presented token. Idempotent; never throws on unknown token. */
