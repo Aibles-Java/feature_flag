@@ -163,13 +163,16 @@ class RefreshTokenServiceImplTest {
     RefreshToken row = activeRow(presented);
     when(repository.findByTokenHash(RefreshTokenServiceImpl.hash(presented)))
         .thenReturn(Optional.of(row));
-    when(repository.consume(eq(row.getId()), any())).thenReturn(1);
     when(userRepository.findById(userId))
         .thenReturn(Optional.of(User.builder().id(userId).enabled(false).build()));
 
     assertThatThrownBy(() -> service.rotate(presented))
         .isInstanceOf(InvalidRefreshTokenException.class);
     verify(familyRevoker).revoke(eq(familyId), any());
+    // The enabled-check runs BEFORE consume() (commit 433266f) so the disabled-user path never
+    // holds consume()'s row lock when the REQUIRES_NEW revoke fires. Asserting consume is skipped
+    // locks in that ordering against a future re-reordering that would reintroduce the self-deadlock.
+    verify(repository, never()).consume(any(), any());
   }
 
   @Test
