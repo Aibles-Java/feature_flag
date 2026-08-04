@@ -37,8 +37,16 @@ otherwise slip through as a literal and fail later with an obscure driver error.
 | `SPRING_DATASOURCE_URL` | yes | JDBC URL, e.g. `jdbc:postgresql://db:5432/feature_flag_db` |
 | `SPRING_DATASOURCE_USERNAME` | yes | Database user |
 | `SPRING_DATASOURCE_PASSWORD` | yes | Database password |
-| `APP_JWT_EXPIRATION_MS` | no | JWT lifetime in ms (default `86400000` = 24h) |
+| `APP_JWT_ACCESS_EXPIRATION_MS` | no | Access-token lifetime in ms (default `900000` = 15 min) |
+| `APP_JWT_REFRESH_EXPIRATION_MS` | no | Refresh-token lifetime in ms (default `1209600000` = 14 days) |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | no | docker-compose Postgres overrides (default local-dev values) |
+
+> **Ops migration (issue #32):** `APP_JWT_EXPIRATION_MS` is no longer read — replace it with
+> the two variables above. Access tokens now last 15 minutes instead of 24 hours;
+> `POST /api/v1/auth/refresh` exchanges a refresh token for a new access token and rotates the
+> refresh token itself, and `POST /api/v1/auth/logout` revokes that device's whole token family.
+> Reusing an already-rotated refresh token is treated as theft and revokes the family.
+> The login response now returns `accessToken`/`refreshToken` — the old `token` field is gone.
 
 **`SPRING_PROFILES_ACTIVE=prod` is a mandatory deployment gate**: without it the app
 boots on the committed local-dev defaults, including a publicly known JWT signing key.

@@ -5,6 +5,8 @@ import java.net.URI;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.aibles.feature_flag.logging.MdcKeys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -15,6 +17,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+  private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
   @ExceptionHandler(ResourceNotFoundException.class)
   public ProblemDetail handleNotFound(ResourceNotFoundException ex, HttpServletRequest request) {
@@ -32,6 +36,23 @@ public class GlobalExceptionHandler {
     problem.setType(URI.create("about:blank"));
     problem.setTitle("Conflict");
     problem.setDetail(ex.getMessage());
+    problem.setInstance(URI.create(request.getRequestURI()));
+    return withRequestId(problem);
+  }
+
+  @ExceptionHandler(InvalidRefreshTokenException.class)
+  public ProblemDetail handleInvalidRefreshToken(
+      InvalidRefreshTokenException ex, HttpServletRequest request) {
+    // The specific reason (reuse detected, expired, revoked, disabled account) is a signal for the
+    // defender, not the caller — it goes to the correlated server log. The client gets a single
+    // coarse message so the endpoint cannot be probed to distinguish token states, honouring the
+    // contract documented on InvalidRefreshTokenException. Reuse detection in particular is worth
+    // alerting on server-side.
+    log.warn("Refresh token rejected: {}", ex.getMessage());
+    ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.UNAUTHORIZED);
+    problem.setType(URI.create("about:blank"));
+    problem.setTitle("Unauthorized");
+    problem.setDetail("Invalid or expired refresh token");
     problem.setInstance(URI.create(request.getRequestURI()));
     return withRequestId(problem);
   }
