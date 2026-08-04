@@ -1,0 +1,3 @@
+# Fail fast in the prod profile when a required SPRING_DATASOURCE_* env var is missing (issue #23).
+org.springframework.boot.env.EnvironmentPostProcessor=\
+org.aibles.feature_flag.config.RequiredDataSourceEnvPostProcessor

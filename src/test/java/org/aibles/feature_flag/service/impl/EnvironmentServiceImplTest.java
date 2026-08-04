@@ -1,5 +1,14 @@
 package org.aibles.feature_flag.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.MemberRole;
@@ -9,6 +18,7 @@ import org.aibles.feature_flag.dto.response.EnvironmentResponse;
 import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.util.ApiKeyHasher;
@@ -20,130 +30,141 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class EnvironmentServiceImplTest {
 
-    @Mock EnvironmentRepository environmentRepository;
-    @Mock ProjectRepository projectRepository;
-    @Mock PermissionService permissionService;
+  @Mock EnvironmentRepository environmentRepository;
+  @Mock ProjectRepository projectRepository;
+  @Mock PermissionService permissionService;
+  @Mock ApplicationEventPublisher eventPublisher;
 
-    EnvironmentServiceImpl service;
+  EnvironmentServiceImpl service;
 
-    UUID projectId = UUID.randomUUID();
-    UUID envId = UUID.randomUUID();
-    Project project;
-    Environment env;
+  UUID projectId = UUID.randomUUID();
+  UUID envId = UUID.randomUUID();
+  Project project;
+  Environment env;
 
-    @BeforeEach
-    void setUp() {
-        service = new EnvironmentServiceImpl(environmentRepository, projectRepository, permissionService);
-        project = Project.builder().id(projectId).name("proj").build();
-        env = Environment.builder().id(envId).project(project).name("prod")
-                .apiKeyHash(ApiKeyHasher.hash("old-key")).build();
-        doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
-        doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
-    }
+  @BeforeEach
+  void setUp() {
+    service =
+        new EnvironmentServiceImpl(
+            environmentRepository, projectRepository, permissionService, eventPublisher);
+    project = Project.builder().id(projectId).name("proj").build();
+    env =
+        Environment.builder()
+            .id(envId)
+            .project(project)
+            .name("prod")
+            .apiKeyHash(ApiKeyHasher.hash("old-key"))
+            .build();
+    doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
+    doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
+  }
 
-    @Test
-    void create_throwsDuplicate_whenNameExistsInProject() {
-        when(environmentRepository.existsByProjectIdAndName(projectId, "prod")).thenReturn(true);
+  @Test
+  void create_throwsDuplicate_whenNameExistsInProject() {
+    when(environmentRepository.existsByProjectIdAndName(projectId, "prod")).thenReturn(true);
 
-        CreateEnvironmentRequest req = new CreateEnvironmentRequest();
-        req.setProjectId(projectId);
-        req.setName("prod");
+    CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+    req.setProjectId(projectId);
+    req.setName("prod");
 
-        assertThatThrownBy(() -> service.create(req))
-                .isInstanceOf(DuplicateResourceException.class);
-        verify(environmentRepository, never()).save(any());
-    }
+    assertThatThrownBy(() -> service.create(req)).isInstanceOf(DuplicateResourceException.class);
+    verify(environmentRepository, never()).save(any());
+  }
 
-    @Test
-    void create_storesHashAndReturnsPlaintextOnce() {
-        when(environmentRepository.existsByProjectIdAndName(projectId, "staging")).thenReturn(false);
-        when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
-        when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
+  @Test
+  void create_storesHashAndReturnsPlaintextOnce() {
+    when(environmentRepository.existsByProjectIdAndName(projectId, "staging")).thenReturn(false);
+    when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        CreateEnvironmentRequest req = new CreateEnvironmentRequest();
-        req.setProjectId(projectId);
-        req.setName("staging");
+    CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+    req.setProjectId(projectId);
+    req.setName("staging");
 
-        EnvironmentSecretResponse response = service.create(req);
+    EnvironmentSecretResponse response = service.create(req);
 
-        assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
+    assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
 
-        ArgumentCaptor<Environment> saved = ArgumentCaptor.forClass(Environment.class);
-        verify(environmentRepository).save(saved.capture());
-        assertThat(saved.getValue().getApiKeyHash())
-                .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
-                .isNotEqualTo(response.getApiKey());
-    }
+    ArgumentCaptor<Environment> saved = ArgumentCaptor.forClass(Environment.class);
+    verify(environmentRepository).save(saved.capture());
+    assertThat(saved.getValue().getApiKeyHash())
+        .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
+        .isNotEqualTo(response.getApiKey());
+  }
 
-    @Test
-    void create_throwsResourceNotFound_whenProjectDoesNotExist() {
-        when(environmentRepository.existsByProjectIdAndName(projectId, "x")).thenReturn(false);
-        when(projectRepository.findById(projectId)).thenReturn(Optional.empty());
+  @Test
+  void create_throwsResourceNotFound_whenProjectDoesNotExist() {
+    when(environmentRepository.existsByProjectIdAndName(projectId, "x")).thenReturn(false);
+    when(projectRepository.findById(projectId)).thenReturn(Optional.empty());
 
-        CreateEnvironmentRequest req = new CreateEnvironmentRequest();
-        req.setProjectId(projectId);
-        req.setName("x");
+    CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+    req.setProjectId(projectId);
+    req.setName("x");
 
-        assertThatThrownBy(() -> service.create(req))
-                .isInstanceOf(ResourceNotFoundException.class);
-    }
+    assertThatThrownBy(() -> service.create(req)).isInstanceOf(ResourceNotFoundException.class);
+  }
 
-    @Test
-    void rotate_replacesHashAndReturnsNewPlaintextOnce() {
-        when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
-        when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
+  @Test
+  void rotate_replacesHashAndReturnsNewPlaintextOnce() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        EnvironmentSecretResponse response = service.rotateApiKey(envId);
+    when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
 
-        assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
-        assertThat(env.getApiKeyHash())
-                .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
-                .isNotEqualTo(ApiKeyHasher.hash("old-key"));
-    }
+    EnvironmentSecretResponse response = service.rotateApiKey(envId);
 
-    @Test
-    void update_changesNameAndDescription() {
-        when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
-        when(environmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
+    assertThat(env.getApiKeyHash())
+        .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
+        .isNotEqualTo(ApiKeyHasher.hash("old-key"));
 
-        UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
-        req.setName("production");
-        req.setDescription("Main env");
+    ArgumentCaptor<ApiKeyRotatedEvent> captor = ArgumentCaptor.forClass(ApiKeyRotatedEvent.class);
+    verify(eventPublisher).publishEvent(captor.capture());
+    ApiKeyRotatedEvent event = captor.getValue();
+    assertThat(event.environmentName()).isEqualTo("prod");
+    assertThat(event.projectName()).isEqualTo("proj");
+    assertThat(event.actorEmail()).isEqualTo("actor@example.com");
+  }
 
-        EnvironmentResponse response = service.update(envId, req);
+  @Test
+  void update_changesNameAndDescription() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    when(environmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThat(response.getName()).isEqualTo("production");
-        assertThat(response.getDescription()).isEqualTo("Main env");
-    }
+    UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+    req.setName("production");
+    req.setDescription("Main env");
 
-    @Test
-    void listByProject_delegatesToRepository() {
-        when(environmentRepository.findAllByProjectId(projectId)).thenReturn(List.of(env));
+    EnvironmentResponse response = service.update(envId, req);
 
-        List<EnvironmentResponse> result = service.listByProject(projectId);
+    assertThat(response.getName()).isEqualTo("production");
+    assertThat(response.getDescription()).isEqualTo("Main env");
+  }
 
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getName()).isEqualTo("prod");
-    }
+  @Test
+  void listByProject_delegatesToRepository() {
+    when(environmentRepository.findAllByProjectId(eq(projectId), any()))
+        .thenReturn(new PageImpl<>(List.of(env)));
 
-    @Test
-    void delete_deletesById() {
-        service.delete(envId);
+    Page<EnvironmentResponse> result = service.listByProject(projectId, PageRequest.of(0, 20));
 
-        verify(environmentRepository).deleteById(envId);
-    }
+    assertThat(result.getContent()).hasSize(1);
+    assertThat(result.getContent().get(0).getName()).isEqualTo("prod");
+  }
+
+  @Test
+  void delete_deletesById() {
+    service.delete(envId);
+
+    verify(environmentRepository).deleteById(envId);
+  }
 }

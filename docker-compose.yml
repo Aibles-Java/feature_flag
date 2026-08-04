@@ -2,16 +2,18 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: ff_postgres
+    # Local-dev defaults; override via environment or a git-ignored .env file
+    # (see README.md "Environment variables").
     environment:
-      POSTGRES_DB: feature_flag_db
-      POSTGRES_USER: ff_user
-      POSTGRES_PASSWORD: ff_password
+      POSTGRES_DB: ${POSTGRES_DB:-feature_flag_db}
+      POSTGRES_USER: ${POSTGRES_USER:-ff_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ff_password}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ff_user -d feature_flag_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ff_user} -d ${POSTGRES_DB:-feature_flag_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,15 +25,20 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      # The image defaults to SPRING_PROFILES_ACTIVE=prod, so every value below must be
+      # supplied explicitly — the prod profile has no fallback to the local-dev defaults.
       # Inside the compose network the DB is reached by service name, not localhost.
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/feature_flag_db
-      SPRING_DATASOURCE_USERNAME: ff_user
-      SPRING_DATASOURCE_PASSWORD: ff_password
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-feature_flag_db}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-ff_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-ff_password}
+      # Required by the prod profile (JwtProperties aborts startup without it).
+      # Copy .env.example to .env and fill this in: openssl rand -hex 64
+      APP_JWT_SECRET: ${APP_JWT_SECRET:?set APP_JWT_SECRET in .env — >= 64 UTF-8 bytes, e.g. openssl rand -hex 64}
     ports:
       # Matches server.port=8081 / Dockerfile EXPOSE.
       - "8081:8081"
-    # No container healthcheck yet: there is no health endpoint on this branch. Once an
-    # Actuator health endpoint exists, add a HEALTHCHECK on /actuator/health/readiness here.
+    # The container healthcheck (/actuator/health/readiness) is inherited from the
+    # Dockerfile HEALTHCHECK — no need to redeclare it here.
 
 volumes:
   postgres_data:

@@ -25,7 +25,12 @@ while both entries exist.
   ride along. (Issue #27 was committed this way.)
 - The residual `M docs/architecture.md` in `git status` is expected noise, not your change.
 
-**Real fix (follow-up, not done yet):** delete one of the two — almost certainly remove the
-lowercase `docs/architecture.md` stub (the uppercase rewrite is the current doc), committed from
-a Linux/macOS box or via `git rm --cached` so the case rename actually takes. Until then, treat
-the dirty entry as background noise.
+**Resolved.** `develop` renamed the uppercase file to `docs/architecture-design-v1.md` (a
+case-distinct name), and issue #27's branch dropped its own `docs/ARCHITECTURE.md` index entry via
+`git rm --cached` at the merge. Once both are in, the tree is genuinely clean on Windows.
+
+**Why the `git rm --cached` was mandatory, not cosmetic:** while both entries exist the phantom path
+is *always* dirty, so `git merge` refuses to start — "Your local changes to the following files
+would be overwritten by merge: docs/ARCHITECTURE.md" — and `git restore` / `git stash push` just
+flips which of the two names is dirty. Dropping the index entry is the only way out; stashing is
+not.

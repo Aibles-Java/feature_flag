@@ -4,53 +4,79 @@
 
 ## Current WIP
 
-**Issue #27** (fix Docker port + non-root) on branch `feature/issue-27-docker-port-nonroot`
-(→ `develop`, branched from fresh `develop` — deliberately does NOT include #25). Code
-implemented + **verified end-to-end with real Docker**, committed (`2671a6f`) — **not yet
-pushed** (about to push after this memory commit). PR not yet opened.
+**Issue #32** (refresh tokens with short-lived access tokens) on branch
+`feature/issue-32-refresh-tokens` (→ `develop`). **PR #59 open;** just merged latest
+`develop` in to resolve conflicts (only the two memory-index files clashed).
 
-Done (3 files):
-- `Dockerfile`: `EXPOSE 8080→8081`; non-root `spring` user + `USER spring`.
-- `docker-compose.yml`: new `app` service (build, `depends_on postgres service_healthy`,
-  `8081:8081`, datasource → `postgres:5432` service name). No app healthcheck (actuator/#25
-  not on develop — comment left).
-- `CLAUDE.md`: Swagger/api-docs URLs :8080 → :8081.
+- `./mvnw verify` green: **239 tests, 0 failures, Spotless clean, JaCoCo floor met.**
+- Full flow works end-to-end over the real security chain (`AuthControllerIntegrationTest`):
+  login issues an access JWT (15min) + opaque refresh token (14d, SHA-256 at rest);
+  `POST /api/v1/auth/refresh` rotates; reusing a rotated token revokes the whole family;
+  `POST /api/v1/auth/logout` revokes the family and is idempotent (always 204).
+- Security review run (skill's 3-step fan-out): 3 findings raised, **all filtered below the
+  ≥8 confidence bar** by adversarial re-check. The one real defect behind finding 1 (a
+  PostgreSQL self-deadlock, not an auth bypass) was fixed in commit `433266f`.
 
-Verified: `docker compose up -d --build` → `Tomcat started on port 8081`, `:8081/api-docs`=200,
-`whoami`=spring (uid 100), `:8080`=nothing. (Had to unpublish postgres 5432 in a throwaway
-compose override — host already holds 5432.)
+**Deviations from the plan (all in commit messages):** `InvalidRefreshTokenException` → 401
+instead of flipping the global `UnauthorizedException`→403 mapping; `@SpringBootTest` (not the
+plan's `@DataJpaTest`, which the repo never uses); prod inherits the TTLs (no env override —
+"no defaults in prod" is a secrets rule, TTLs aren't secrets).
+
+**⚠️ BREAKING API change:** login response field `token` → `accessToken`, `type` → `tokenType`
+(+ new `refreshToken`, `expiresIn`). Documented in README "Ops migration" block. Headlines the
+PR body.
+
+**Also cleared a long-standing repo issue:** the `docs/ARCHITECTURE.md` vs `docs/architecture.md`
+case collision (commit `cba9edb`) — detailed v1.0 doc restored at non-colliding
+`docs/architecture-design-v1.md`; lowercase stays the live doc.
+
+**Already on `develop` (issue #33, pagination):** `PageResponse<T>` envelope + `PaginationConfig`
+(max-100 clamp); all 6 admin list endpoints paginated; ADR-0003. See
+`decisions/0017-pagination-admin-list-endpoints.md`. ⚠️ Both #32 and #33 shipped a decision
+file numbered **0017** — renumber one when convenient.
+
+## Follow-up surfaced on develop (do NOT lose)
+- **Bug #52 root cause identified** (`GET /organisations/{id}/members` → 500): the code-review of #33
+  found `OrganizationServiceImpl.listMembers`/`toMemberResponse` reads lazy `getUser().getEmail()`
+  outside a transaction (`open-in-view=false`, no `@Transactional`) → `LazyInitializationException`.
+  **Pre-existing** (not caused by #33), so left for #52. Fix: `@Transactional(readOnly=true)` on the
+  read path (or `JOIN FETCH om.user`) + an integration test that actually hits the endpoint on a real
+  DB (mocked service/controller tests can't catch it). #52 also reports `register returns 201-empty`
+  — separate, needs its own look.
 
 ## Context to Load
 
-- `decisions/0011-docker-port-nonroot.md` — the choices + verification.
-- `conventions/windows-docs-case-collision.md` — why `docs/architecture.md` shows perpetually
-  `M`; stage explicit paths, never `git add -A`.
+- `decisions/0017-refresh-token-family-revoke-transaction-semantics.md` — the two non-obvious
+  transaction bugs and why the fixes look the way they do. Read before touching
+  `RefreshTokenServiceImpl` / `RefreshTokenFamilyRevoker`.
+- `conventions/second-springboottest-context-shared-h2.md` — the shared-context H2 datasource
+  convention the new integration tests follow.
+- `decisions/0017-pagination-admin-list-endpoints.md` + `docs/adr/ADR-0003-pagination-strategy.md`.
 
-## Next steps
+## Next steps (issue #32 / PR #59)
+1. Push the conflict-resolution merge commit on `feature/issue-32-refresh-tokens` so PR #59
+   goes mergeable again. **gh is at `C:\Users\ACER\AppData\Local\gh-cli\bin` (not on PATH)** —
+   prepend it; see `~/.claude/projects/.../memory/gh-cli-off-path-location.md`.
+2. PR #59 body already headlines the BREAKING `token`→`accessToken` change, the 3 dismissed
+   security findings, the deadlock fix `433266f`, and prod inheriting TTLs by choice.
+3. Board card *Ready For Testing*: `.claude/scripts/issue-board.sh ready 32` (gh off-PATH prefix).
 
-1. Push `feature/issue-27-docker-port-nonroot` (memory gate needs `.claude/memory/` in the
-   push — satisfied by this commit). gh at `C:\Users\ACER\AppData\Local\gh-cli\bin\gh.exe`
-   (NOT on PATH; prepend it).
-2. Open PR with `create-pr` (`Closes #27`).
-3. `.claude/scripts/issue-board.sh ready 27` after PR opens.
+## Backlog notes from the #32 session (non-blocking, not in scope for #32)
+- Absolute session cap for refresh families (`family_created_at` + 30–90d) and a `@Scheduled`
+  `deleteByExpiresAtBefore` cleanup — the design spec deliberately scoped both OUT as v1 non-goals.
+- No admin "disable user" endpoint exists yet, so the disabled-account refresh path is only
+  reachable via direct DB change today.
 
-**Cross-branch / open PRs:**
-- **#25** (actuator health) — PR **#42** OPEN, MERGEABLE + CI green; holds decision 0010 +
-  conventions `permitall-does-not-skip-servlet-filters`. Overlaps #27 on Dockerfile (EXPOSE 8081
-  + a HEALTHCHECK): when both merge, keep both — the actuator HEALTHCHECK from #25 supersedes the
-  compose comment in #27.
-- **#26** (rate limiting) — MERGED to develop (PR #41).
-- **#24** (hash API keys) — MERGED to develop (PR #40).
-- Issue #10 (`feature/issue-10-jwt-deleted-user-500`) — commit/push/PR/`ready 10` pending.
-- Issue #17 (`feature/issue-17-estimate-issue-skill`) — commit + push + PR + `ready 17`.
-- Issue #14 (SonarQube) waiting on infra, holds `decisions/0006-*`.
+## Known repo issue (pre-existing)
+- **`docs/` case collision**: `docs/ARCHITECTURE.md` vs `docs/architecture.md` (differ only by case)
+  → git perpetually reports one modified on this Windows FS. Kept out of every commit. Fix on a
+  case-sensitive box by deleting one path.
 
-**Follow-ups:**
-- **Docs case-collision:** delete the lowercase `docs/architecture.md` stub (keep uppercase
-  rewrite) to stop the perpetual dirty tree — do it from a case-sensitive box / `git rm --cached`.
-- Stashed change `stash@{0}` on branch #25: "docs/architecture.md full rewrite" — now redundant
-  (the rewrite already landed on develop as `docs/ARCHITECTURE.md`); drop it.
-- **#27:** add `/actuator/health/readiness` HEALTHCHECK to the compose `app` service once #25 merges.
-- **#25:** reconsider Dockerfile HEALTHCHECK `readiness`→`liveness`; add DB-down 503 test.
+## Follow-ups (carried over)
+- **#28** JSON logging — PR **#54** open (mergeable), board Ready For Testing.
+- **#31** audit log — depends on #33's paginated read endpoint; JSONB-on-H2 risk.
+- **Codegraph #48/#49/#50** on board; #48 (Tier-1 ArchUnit) next greenfield pick.
+- Two `decisions/0012-*` files still collide, and now two `0017-*` files — renumber later.
+- **#25:** Dockerfile HEALTHCHECK readiness→liveness? DB-down readiness→503 test.
 - **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
-- Raise `jacoco.line.coverage` above 0.00.
+- **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.

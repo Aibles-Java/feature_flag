@@ -31,6 +31,10 @@
       {
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-push-memory-gate.sh\" claude"}]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/liquibase-immutable-guard.sh\""}]
       }
     ],
     "PostToolUse": [
@@ -45,6 +49,12 @@
       },
       {
         "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/remind-save.sh\""}]
+      },
+      {
+        "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-changed.sh\""}]
+      },
+      {
+        "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/security-review-gate.sh\""}]
       }
     ]
   }
