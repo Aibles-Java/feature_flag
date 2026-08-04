@@ -80,7 +80,8 @@ spring.datasource.username=ff_user
 spring.datasource.password=ff_password
 spring.jpa.hibernate.ddl-auto=validate   # Liquibase owns the schema
 app.jwt.secret=local-dev-only-...        # dev-only signing key
-app.jwt.expiration-ms=86400000
+app.jwt.access-expiration-ms=900000       # 15 min
+app.jwt.refresh-expiration-ms=1209600000  # 14 days
 ```
 
 Secrets are externalized via env vars (`APP_JWT_SECRET`, `SPRING_DATASOURCE_URL/USERNAME/PASSWORD`

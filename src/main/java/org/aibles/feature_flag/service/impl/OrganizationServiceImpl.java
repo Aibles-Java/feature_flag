@@ -100,6 +100,7 @@ public class OrganizationServiceImpl implements OrganizationService {
   }
 
   @Override
+  @Transactional(readOnly = true)
   public Page<MemberResponse> listMembers(UUID orgId, Pageable pageable) {
     if (!permissionService.isMember(orgId)) {
       throw new UnauthorizedException("You are not a member of this organisation");

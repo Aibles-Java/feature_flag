@@ -1,4 +1,4 @@
-# 0018 — Append-only audit log for admin mutations (issue #31)
+# 0020 — Append-only audit log for admin mutations (issue #31)
 
 **What:** A compliance audit trail — one row per admin mutation, with before/after JSON — plus a
 paginated per-org read endpoint.
@@ -37,9 +37,19 @@ paginated per-org read endpoint.
   Flags have no hard-delete (archive/unarchive only), so none is audited for flag DELETE.
 
 ## Dependency / stacking
-- Branch `feature/issue-31-audit-log` is **stacked on `feature/issue-33-pagination-admin-list`** (PR #57,
-  still open) because the read endpoint needs #33's `PageResponse`/`PaginationConfig`. When #33 merges,
-  rebase #31 onto develop. Enum entityId for FLAG_STATE = the `FlagEnvironmentState` id.
+- Branch `feature/issue-31-audit-log` was **stacked on `feature/issue-33-pagination-admin-list`** (PR #57)
+  because the read endpoint needs #33's `PageResponse`/`PaginationConfig`. Enum entityId for FLAG_STATE =
+  the `FlagEnvironmentState` id.
+- **Resolved at the develop merge** (#33 landed as PR #57, #32 as PR #59):
+  - **Migration renumbered `010` → `011`** (file *and* `changeSet id`, which follows the filename):
+    develop's #32 had already taken `010` for `010-create-refresh-tokens.xml`. Two changesets sharing a
+    number is not just cosmetic — `db.changelog-master.xml` orders by include, and the
+    `(id, author, filename)` triple is the DATABASECHANGELOG key. Safe to renumber because this
+    changeset has never run anywhere yet.
+  - `OrganizationServiceImpl.listMembers` — took **develop's** `@Transactional(readOnly = true)`. That is
+    the #52 lazy-load fix; this branch predated it and would have silently reverted it.
+  - Decision renumbered `0018` → **0020**: 0018 is claimed by PR #60 (issue #34) and 0019 by PR #43
+    (issue #27), both still open.
 
 ## Enum / schema notes
 - `AuditAction`: CREATE, UPDATE, DELETE, ARCHIVE, UNARCHIVE, INVITE_MEMBER, REMOVE_MEMBER,

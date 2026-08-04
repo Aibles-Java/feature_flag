@@ -18,7 +18,7 @@
     <property name="json.type" value="jsonb" dbms="postgresql"/>
     <property name="json.type" value="json" dbms="h2"/>
 
-    <changeSet id="010-create-audit-log" author="dev">
+    <changeSet id="011-create-audit-log" author="dev">
         <createTable tableName="audit_log">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
