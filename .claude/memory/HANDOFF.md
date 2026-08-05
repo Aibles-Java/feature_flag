@@ -4,79 +4,70 @@
 
 ## Current WIP
 
-**Issue #32** (refresh tokens with short-lived access tokens) on branch
-`feature/issue-32-refresh-tokens` (→ `develop`). **PR #59 open;** just merged latest
-`develop` in to resolve conflicts (only the two memory-index files clashed).
+**Issue #35** (identifier-based percentage rollout) on branch
+`feature/issue-35-percentage-rollout` (→ `develop`, cut fresh off `develop` @ `04ac6bf`).
+Implemented + `./mvnw clean verify` green (**274 tests, 0 failures**, Spotless clean, coverage met).
+**Not yet pushed / no PR** — the memory commit lands first (the gate needs `.claude/memory/`).
 
-- `./mvnw verify` green: **239 tests, 0 failures, Spotless clean, JaCoCo floor met.**
-- Full flow works end-to-end over the real security chain (`AuthControllerIntegrationTest`):
-  login issues an access JWT (15min) + opaque refresh token (14d, SHA-256 at rest);
-  `POST /api/v1/auth/refresh` rotates; reusing a rotated token revokes the whole family;
-  `POST /api/v1/auth/logout` revokes the family and is idempotent (always 204).
-- Security review run (skill's 3-step fan-out): 3 findings raised, **all filtered below the
-  ≥8 confidence bar** by adversarial re-check. The one real defect behind finding 1 (a
-  PostgreSQL self-deadlock, not an auth bypass) was fixed in commit `433266f`.
+The issue's four *code* scope bullets were **already on `develop`** (landed via
+`feat/rollout-percent`, issue never closed). What this branch actually adds:
 
-**Deviations from the plan (all in commit messages):** `InvalidRefreshTokenException` → 401
-instead of flipping the global `UnauthorizedException`→403 mapping; `@SpringBootTest` (not the
-plan's `@DataJpaTest`, which the repo never uses); prod inherits the TTLs (no env override —
-"no defaults in prod" is a secrets rule, TTLs aren't secrets).
-
-**⚠️ BREAKING API change:** login response field `token` → `accessToken`, `type` → `tokenType`
-(+ new `refreshToken`, `expiresIn`). Documented in README "Ops migration" block. Headlines the
-PR body.
-
-**Also cleared a long-standing repo issue:** the `docs/ARCHITECTURE.md` vs `docs/architecture.md`
-case collision (commit `cba9edb`) — detailed v1.0 doc restored at non-colliding
-`docs/architecture-design-v1.md`; lowercase stays the live doc.
-
-**Already on `develop` (issue #33, pagination):** `PageResponse<T>` envelope + `PaginationConfig`
-(max-100 clamp); all 6 admin list endpoints paginated; ADR-0003. See
-`decisions/0017-pagination-admin-list-endpoints.md`. ⚠️ Both #32 and #33 shipped a decision
-file numbered **0017** — renumber one when convenient.
-
-## Follow-up surfaced on develop (do NOT lose)
-- **Bug #52 root cause identified** (`GET /organisations/{id}/members` → 500): the code-review of #33
-  found `OrganizationServiceImpl.listMembers`/`toMemberResponse` reads lazy `getUser().getEmail()`
-  outside a transaction (`open-in-view=false`, no `@Transactional`) → `LazyInitializationException`.
-  **Pre-existing** (not caused by #33), so left for #52. Fix: `@Transactional(readOnly=true)` on the
-  read path (or `JOIN FETCH om.user`) + an integration test that actually hits the endpoint on a real
-  DB (mocked service/controller tests can't catch it). #52 also reports `register returns 201-empty`
-  — separate, needs its own look.
+- `util/RolloutEvaluator.java` — **fixed a real bug**: `Math.abs(hash) % 100` → `(hash &
+  Integer.MAX_VALUE) % BUCKETS`. Extracted package-private `toBucket(int)` + `bucketFor(id, key)`
+  seams (the bug is unreachable through the public API). Full contract Javadoc.
+- `util/RolloutEvaluatorTest.java` (new, 24 tests) — the acceptance criteria: determinism,
+  monotonicity, chi-square uniformity over 10,000 identifiers, per-flagKey independence, the
+  `toBucket` sign regression, documented edge cases. All identifiers generated, never random.
+- `docs/adr/ADR-0004-percentage-rollout-contract.md` (new) — fail-open contract, cache invariant,
+  sign-bug rationale, alternatives rejected. Also added the **missing ADR-0003 row** to
+  `docs/adr/README.md` (the pagination PR never indexed it).
+- `controller/sdk/EvaluationController.java` — `@Parameter(description = …)` on both `identifier`
+  params. NOTE: this is the **first method-level springdoc annotation in the codebase** (only
+  `OpenApiConfig` used swagger models before) — call it out in review.
+- `EvaluationServiceImplTest` (+5 tests) — fail-open contract at the API boundary.
+- `FeatureFlagControllerTest` (+2 tests) — first tests for the `@Min(0)/@Max(100)` admin validation
+  (wired but previously unproven).
 
 ## Context to Load
 
-- `decisions/0017-refresh-token-family-revoke-transaction-semantics.md` — the two non-obvious
-  transaction bugs and why the fixes look the way they do. Read before touching
-  `RefreshTokenServiceImpl` / `RefreshTokenFamilyRevoker`.
-- `conventions/second-springboottest-context-shared-h2.md` — the shared-context H2 datasource
-  convention the new integration tests follow.
-- `decisions/0017-pagination-admin-list-endpoints.md` + `docs/adr/ADR-0003-pagination-strategy.md`.
+- `decisions/0021-percentage-rollout-contract-issue-35.md` — the contract, the bug, the tests.
+- `conventions/stale-issue-scope-verify-before-implementing.md` — why to grep before implementing.
 
-## Next steps (issue #32 / PR #59)
-1. Push the conflict-resolution merge commit on `feature/issue-32-refresh-tokens` so PR #59
-   goes mergeable again. **gh is at `C:\Users\ACER\AppData\Local\gh-cli\bin` (not on PATH)** —
-   prepend it; see `~/.claude/projects/.../memory/gh-cli-off-path-location.md`.
-2. PR #59 body already headlines the BREAKING `token`→`accessToken` change, the 3 dismissed
-   security findings, the deadlock fix `433266f`, and prod inheriting TTLs by choice.
-3. Board card *Ready For Testing*: `.claude/scripts/issue-board.sh ready 32` (gh off-PATH prefix).
+## Next steps
 
-## Backlog notes from the #32 session (non-blocking, not in scope for #32)
-- Absolute session cap for refresh families (`family_created_at` + 30–90d) and a `@Scheduled`
-  `deleteByExpiresAtBefore` cleanup — the design spec deliberately scoped both OUT as v1 non-goals.
-- No admin "disable user" endpoint exists yet, so the disabled-account refresh path is only
-  reachable via direct DB change today.
+1. Commit + push `feature/issue-35-percentage-rollout`.
+2. Open PR with `create-pr` (`Closes #35`); then `.claude/scripts/issue-board.sh ready 35`.
+3. In the PR, flag for the reviewer: (a) SDK `enabled` now means *effective per identifier* — a
+   meaning change, though not a shape change; (b) fail-open makes a partial rollout bypassable —
+   deliberate, see ADR-0004; (c) the new springdoc annotation style.
 
-## Known repo issue (pre-existing)
-- **`docs/` case collision**: `docs/ARCHITECTURE.md` vs `docs/architecture.md` (differ only by case)
-  → git perpetually reports one modified on this Windows FS. Kept out of every commit. Fix on a
-  case-sensitive box by deleting one path.
+## Cross-branch / open PRs (all three conflict-resolved this session — MERGEABLE + CI green)
 
-## Follow-ups (carried over)
-- **#28** JSON logging — PR **#54** open (mergeable), board Ready For Testing.
-- **#31** audit log — depends on #33's paginated read endpoint; JSONB-on-H2 risk.
-- **Codegraph #48/#49/#50** on board; #48 (Tier-1 ArchUnit) next greenfield pick.
-- Two `decisions/0012-*` files still collide, and now two `0017-*` files — renumber later.
-- **#25:** Dockerfile HEALTHCHECK readiness→liveness? DB-down readiness→503 test.
-- **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
-- **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
+- **#43** (issue #27, docker port/non-root) — merged `develop` in; kept #25's readiness HEALTHCHECK
+  layered under `USER spring`; compose now passes `APP_JWT_SECRET` (the image bakes the prod profile,
+  so it would have crash-looped). Decision **0019**.
+- **#58** (issue #31, audit log) — merged `develop` in; **migration renumbered 010 → 011** (#32 took
+  010 for refresh-tokens; git did NOT flag it — two different filenames both added); kept develop's
+  `@Transactional(readOnly=true)` on `listMembers` (the #52 fix). Decision **0020**.
+- **#60** (issue #34, GHCR publish + Trivy) — merged `develop` in; verified the raised
+  `jacoco.line.coverage=0.87` still holds after #32 landed (measured 0.8938).
+  Decision **0018**.
+- Decision numbers across open PRs: 0018 (#60) / 0019 (#43) / 0020 (#58) / **0021 (#35, this
+  branch)** — collision-free in any merge order.
+- **#53** (issue #30, evaluation cache) — open; its pre-rollout `FlagStateSnapshot` design is what
+  satisfies #35's caching bullet. ADR-0004 records the invariant any future cache layer must keep.
+- Unanswered review comment on **#58**: "check the warning please" — every CI warning is
+  pre-existing on `develop` (verified by diffing against run `30373689296`); the only one worth
+  fixing is `HHH90000025 H2Dialect ... specified explicitly` (drop `hibernate.dialect` from
+  `application-test.properties`). Awaiting the reviewer's preference.
+
+## Known landmines
+
+- **Windows docs case-collision** (`docs/ARCHITECTURE.md` vs `docs/architecture.md`): while both
+  paths are tracked the phantom one is *always* dirty and **`git merge` refuses to start** —
+  `git stash` only flips which name is dirty. Fix is `git rm --cached docs/ARCHITECTURE.md`.
+  `develop` renamed the uppercase file to `docs/architecture-design-v1.md`; PRs #43 and #58 each
+  carry the `git rm --cached` plus an updated `conventions/windows-docs-case-collision.md`. This
+  branch is off `develop` so it never had the phantom — do **not** re-update that convention file
+  here, it would conflict three ways.
+- `./mvnw test -Dtest='A+B'` is not valid surefire syntax — use `-Dtest='A,B'`.
