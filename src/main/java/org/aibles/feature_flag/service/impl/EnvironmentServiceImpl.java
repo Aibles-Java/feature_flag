@@ -98,7 +98,10 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     Environment saved = environmentRepository.save(env);
     eventPublisher.publishEvent(
         new ApiKeyRotatedEvent(
-            saved.getName(), saved.getProject().getName(), permissionService.currentUserEmail()));
+            saved.getId(),
+            saved.getName(),
+            saved.getProject().getName(),
+            permissionService.currentUserEmail()));
     return toSecretResponse(saved, plaintextKey);
   }
 

@@ -5,6 +5,7 @@ import java.net.URI;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.aibles.feature_flag.logging.MdcKeys;
+import org.aibles.feature_flag.webhook.WebhookUrlNotAllowedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -35,6 +36,21 @@ public class GlobalExceptionHandler {
     ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);
     problem.setType(URI.create("about:blank"));
     problem.setTitle("Conflict");
+    problem.setDetail(ex.getMessage());
+    problem.setInstance(URI.create(request.getRequestURI()));
+    return withRequestId(problem);
+  }
+
+  /**
+   * A webhook URL rejected by the SSRF guard is a client input problem, so 400 — not 500. The
+   * message names only the host the operator supplied, never what it resolved to.
+   */
+  @ExceptionHandler(WebhookUrlNotAllowedException.class)
+  public ProblemDetail handleWebhookUrlNotAllowed(
+      WebhookUrlNotAllowedException ex, HttpServletRequest request) {
+    ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+    problem.setType(URI.create("about:blank"));
+    problem.setTitle("Bad Request");
     problem.setDetail(ex.getMessage());
     problem.setInstance(URI.create(request.getRequestURI()));
     return withRequestId(problem);

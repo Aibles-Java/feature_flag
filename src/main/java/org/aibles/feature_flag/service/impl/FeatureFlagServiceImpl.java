@@ -17,7 +17,9 @@ import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
+import org.aibles.feature_flag.notification.event.FlagCreatedEvent;
 import org.aibles.feature_flag.notification.event.FlagStateChangedEvent;
+import org.aibles.feature_flag.notification.event.FlagUpdatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
@@ -76,6 +78,13 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
       flagStateRepository.save(state);
     }
 
+    eventPublisher.publishEvent(
+        new FlagCreatedEvent(
+            project.getId(),
+            flag.getKey(),
+            flag.getName(),
+            flag.getValueType(),
+            permissionService.currentUserEmail()));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.CREATED);
     return toResponse(flag);
   }
@@ -107,6 +116,13 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     if (request.getName() != null) flag.setName(request.getName());
     if (request.getDescription() != null) flag.setDescription(request.getDescription());
     FeatureFlagResponse response = toResponse(featureFlagRepository.save(flag));
+    eventPublisher.publishEvent(
+        new FlagUpdatedEvent(
+            flag.getProject().getId(),
+            flag.getKey(),
+            flag.getName(),
+            flag.getDescription(),
+            permissionService.currentUserEmail()));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.UPDATED);
     return response;
   }
@@ -121,6 +137,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     featureFlagRepository.save(flag);
     eventPublisher.publishEvent(
         new FlagArchivedEvent(
+            flag.getProject().getId(),
             flag.getKey(),
             flag.getProject().getName(),
             true,
@@ -138,6 +155,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     featureFlagRepository.save(flag);
     eventPublisher.publishEvent(
         new FlagArchivedEvent(
+            flag.getProject().getId(),
             flag.getKey(),
             flag.getProject().getName(),
             false,
@@ -191,6 +209,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
 
     eventPublisher.publishEvent(
         new FlagStateChangedEvent(
+            state.getEnvironment().getId(),
             state.getFeatureFlag().getKey(),
             state.getEnvironment().getName(),
             state.getFeatureFlag().getProject().getName(),

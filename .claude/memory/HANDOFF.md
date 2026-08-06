@@ -4,79 +4,82 @@
 
 ## Current WIP
 
-**Issue #32** (refresh tokens with short-lived access tokens) on branch
-`feature/issue-32-refresh-tokens` (→ `develop`). **PR #59 open;** just merged latest
-`develop` in to resolve conflicts (only the two memory-index files clashed).
+**Issue #36** (webhooks for flag change events) on branch `feature/issue-36-webhooks`
+(→ `develop`, cut off `develop` @ `04ac6bf`). Implemented; `./mvnw clean verify` green —
+**320 tests, 0 failures** (develop has 243, so +77), Spotless clean, coverage met.
 
-- `./mvnw verify` green: **239 tests, 0 failures, Spotless clean, JaCoCo floor met.**
-- Full flow works end-to-end over the real security chain (`AuthControllerIntegrationTest`):
-  login issues an access JWT (15min) + opaque refresh token (14d, SHA-256 at rest);
-  `POST /api/v1/auth/refresh` rotates; reusing a rotated token revokes the whole family;
-  `POST /api/v1/auth/logout` revokes the family and is idempotent (always 204).
-- Security review run (skill's 3-step fan-out): 3 findings raised, **all filtered below the
-  ≥8 confidence bar** by adversarial re-check. The one real defect behind finding 1 (a
-  PostgreSQL self-deadlock, not an auth bypass) was fixed in commit `433266f`.
+Two design calls were confirmed with the human before coding: **AES-GCM encryption at rest** with a
+new `APP_WEBHOOK_ENCRYPTION_KEY`, and **fan-out to every environment in the project** for
+project-scoped flag events. Both recorded in `decisions/0022` + ADR-0005.
 
-**Deviations from the plan (all in commit messages):** `InvalidRefreshTokenException` → 401
-instead of flipping the global `UnauthorizedException`→403 mapping; `@SpringBootTest` (not the
-plan's `@DataJpaTest`, which the repo never uses); prod inherits the TTLs (no env override —
-"no defaults in prod" is a secrets rule, TTLs aren't secrets).
+What landed:
 
-**⚠️ BREAKING API change:** login response field `token` → `accessToken`, `type` → `tokenType`
-(+ new `refreshToken`, `expiresIn`). Documented in README "Ops migration" block. Headlines the
-PR body.
+- **Migration 012** (3 changesets): `webhook_subscription`, `webhook_subscription_event_type`
+  (`@ElementCollection`), `webhook_delivery_attempt`. All cascade from their parent — the opposite of
+  `audit_log` (011), which has no FKs by design.
+- **`util/SecretCipher`** — AES-256-GCM, reversible **on purpose** (see the warning below).
+- **`webhook/`** — `SsrfGuard`, `WebhookSigner`, `WebhookSender` (retry + attempt logging),
+  `WebhookDispatcher` (`@Async @TransactionalEventListener(AFTER_COMMIT)`), `WebhookPayload`,
+  `WebhookUrlNotAllowedException` (→ 400 in `GlobalExceptionHandler`).
+- **CRUD** — `WebhookSubscriptionController` at `/api/v1/webhooks` (+ `/secret/rotate`,
+  `/deliveries`), service with `PermissionService` checks, one-time secret reveal like
+  `EnvironmentSecretResponse`.
+- **Events** — added ids to `FlagStateChangedEvent`/`ApiKeyRotatedEvent`/`FlagArchivedEvent`; new
+  `FlagCreatedEvent`/`FlagUpdatedEvent` (create/update published nothing before). All 4 publish sites
+  + `SlackEventListenerTest` updated.
+- **Config** — `WebhookProperties` (JwtProperties-style fail-fast validation), `WebhookConfig`
+  (timeout'd `RestClient`, self-contained `ObjectMapper`, `SecretCipher` bean).
+- **Docs** — ADR-0005, README env-var row + ops note, `.env.example`, CLAUDE.md section.
 
-**Also cleared a long-standing repo issue:** the `docs/ARCHITECTURE.md` vs `docs/architecture.md`
-case collision (commit `cba9edb`) — detailed v1.0 doc restored at non-colliding
-`docs/architecture-design-v1.md`; lowercase stays the live doc.
+## ⚠️ The one thing not to "fix"
 
-**Already on `develop` (issue #33, pagination):** `PageResponse<T>` envelope + `PaginationConfig`
-(max-100 clamp); all 6 admin list endpoints paginated; ADR-0003. See
-`decisions/0017-pagination-admin-list-endpoints.md`. ⚠️ Both #32 and #33 shipped a decision
-file numbered **0017** — renumber one when convenient.
+**The webhook secret is encrypted, NOT hashed.** HMAC signing needs the plaintext on every delivery.
+The repo's `ApiKeyHasher`/SHA-256 precedent (SDK keys, refresh tokens) points the wrong way — anyone
+"aligning" webhook secrets with it breaks signing permanently. Said explicitly in `SecretCipher`'s
+Javadoc, ADR-0005, CLAUDE.md and `decisions/0022`.
 
-## Follow-up surfaced on develop (do NOT lose)
-- **Bug #52 root cause identified** (`GET /organisations/{id}/members` → 500): the code-review of #33
-  found `OrganizationServiceImpl.listMembers`/`toMemberResponse` reads lazy `getUser().getEmail()`
-  outside a transaction (`open-in-view=false`, no `@Transactional`) → `LazyInitializationException`.
-  **Pre-existing** (not caused by #33), so left for #52. Fix: `@Transactional(readOnly=true)` on the
-  read path (or `JOIN FETCH om.user`) + an integration test that actually hits the endpoint on a real
-  DB (mocked service/controller tests can't catch it). #52 also reports `register returns 201-empty`
-  — separate, needs its own look.
+Second: `SsrfGuard` deliberately runs **twice** (subscribe + every delivery attempt). DNS is mutable;
+removing the delivery-time check reopens rebinding.
 
 ## Context to Load
 
-- `decisions/0017-refresh-token-family-revoke-transaction-semantics.md` — the two non-obvious
-  transaction bugs and why the fixes look the way they do. Read before touching
-  `RefreshTokenServiceImpl` / `RefreshTokenFamilyRevoker`.
-- `conventions/second-springboottest-context-shared-h2.md` — the shared-context H2 datasource
-  convention the new integration tests follow.
-- `decisions/0017-pagination-admin-list-endpoints.md` + `docs/adr/ADR-0003-pagination-strategy.md`.
+- `decisions/0022-webhooks-hmac-encrypted-secret-ssrf.md` — the contradiction, the crypto choice, the
+  testing traps.
+- `docs/adr/ADR-0005-webhook-delivery-and-secret-storage.md` — full rationale + accepted risks.
 
-## Next steps (issue #32 / PR #59)
-1. Push the conflict-resolution merge commit on `feature/issue-32-refresh-tokens` so PR #59
-   goes mergeable again. **gh is at `C:\Users\ACER\AppData\Local\gh-cli\bin` (not on PATH)** —
-   prepend it; see `~/.claude/projects/.../memory/gh-cli-off-path-location.md`.
-2. PR #59 body already headlines the BREAKING `token`→`accessToken` change, the 3 dismissed
-   security findings, the deadlock fix `433266f`, and prod inheriting TTLs by choice.
-3. Board card *Ready For Testing*: `.claude/scripts/issue-board.sh ready 32` (gh off-PATH prefix).
+## Next steps
 
-## Backlog notes from the #32 session (non-blocking, not in scope for #32)
-- Absolute session cap for refresh families (`family_created_at` + 30–90d) and a `@Scheduled`
-  `deleteByExpiresAtBefore` cleanup — the design spec deliberately scoped both OUT as v1 non-goals.
-- No admin "disable user" endpoint exists yet, so the disabled-account refresh path is only
-  reachable via direct DB change today.
+1. Commit + push `feature/issue-36-webhooks`; open PR with `create-pr` (`Closes #36`); then
+   `.claude/scripts/issue-board.sh ready 36`.
+2. In the PR, flag: (a) **new required prod env var** `APP_WEBHOOK_ENCRYPTION_KEY`, needed even when
+   webhooks are disabled, and not rotatable; (b) the encrypted-not-hashed decision; (c) the accepted
+   SSRF TOCTOU window; (d) `docs/adr/README.md` will need a trivial index merge with PR #61.
+3. **`/security-review` is warranted** and has NOT been run — this touches crypto, an SSRF guard, and
+   secret storage. CLAUDE.md's gate asks for it before committing to sensitive areas. Also
+   `/review-pr`: the session config forbids me spawning agents unasked, so neither ran.
 
-## Known repo issue (pre-existing)
-- **`docs/` case collision**: `docs/ARCHITECTURE.md` vs `docs/architecture.md` (differ only by case)
-  → git perpetually reports one modified on this Windows FS. Kept out of every commit. Fix on a
-  case-sensitive box by deleting one path.
+## Cross-branch / open PRs
 
-## Follow-ups (carried over)
-- **#28** JSON logging — PR **#54** open (mergeable), board Ready For Testing.
-- **#31** audit log — depends on #33's paginated read endpoint; JSONB-on-H2 risk.
-- **Codegraph #48/#49/#50** on board; #48 (Tier-1 ArchUnit) next greenfield pick.
-- Two `decisions/0012-*` files still collide, and now two `0017-*` files — renumber later.
-- **#25:** Dockerfile HEALTHCHECK readiness→liveness? DB-down readiness→503 test.
-- **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
-- **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
+- **#43** (issue #27, docker port/non-root) — MERGEABLE, CI green. Decision **0019**.
+- **#58** (issue #31, audit log) — MERGEABLE, CI green. Migration **011**. Decision **0020**.
+  Unanswered review comment "check the warning please": every CI warning is pre-existing on develop
+  (verified against run `30373689296`); only `HHH90000025 H2Dialect` is worth fixing.
+- **#60** (issue #34, GHCR + Trivy) — MERGEABLE, CI green. Decision **0018**. Raises the JaCoCo floor
+  to **0.87**; verified #58 (0.9099) and develop+#60 (0.8938) both clear it.
+- **#61** (issue #35, percentage rollout) — MERGEABLE, CI green. Decision **0021**, ADR-0004. Adds the
+  ADR-0003 **and** ADR-0004 index rows, so `docs/adr/README.md` collides trivially with this branch.
+- **#53** (issue #30, evaluation cache) — open. Its pre-rollout `FlagStateSnapshot` design satisfies
+  #35's caching bullet; ADR-0004 records the invariant.
+- Migrations: develop at 010 · **011 = #58** · **012 = #36 (this branch)**.
+- Decisions: **0018** #60 · **0019** #43 · **0020** #58 · **0021** #61 · **0022** #36 — collision-free
+  in any merge order.
+
+## Known landmines
+
+- **Windows docs case-collision** (`docs/ARCHITECTURE.md` vs `docs/architecture.md`): while both paths
+  are tracked the phantom one is *always* dirty and **`git merge` refuses to start**; `git stash` only
+  flips which name is dirty. Fix is `git rm --cached docs/ARCHITECTURE.md`. develop already renamed
+  the uppercase file to `docs/architecture-design-v1.md`; PRs #43 and #58 each carry the fix. Branches
+  cut off current develop (#61, #36) never had the phantom.
+- `./mvnw test -Dtest='A+B'` is invalid surefire syntax — use `-Dtest='A,B'`.
+- `WebhookProperties` is a record: accessors have **no** `is` prefix.
