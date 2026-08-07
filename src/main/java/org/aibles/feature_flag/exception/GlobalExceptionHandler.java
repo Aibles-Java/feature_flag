@@ -5,7 +5,6 @@ import java.net.URI;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.aibles.feature_flag.logging.MdcKeys;
-import org.aibles.feature_flag.webhook.WebhookUrlNotAllowedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;

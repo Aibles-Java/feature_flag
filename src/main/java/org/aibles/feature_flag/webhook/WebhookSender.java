@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.aibles.feature_flag.config.WebhookProperties;
 import org.aibles.feature_flag.domain.entity.WebhookDeliveryAttempt;
 import org.aibles.feature_flag.domain.entity.WebhookSubscription;
+import org.aibles.feature_flag.exception.WebhookUrlNotAllowedException;
 import org.aibles.feature_flag.repository.WebhookDeliveryAttemptRepository;
 import org.aibles.feature_flag.util.SecretCipher;
 import org.springframework.http.MediaType;
@@ -72,7 +73,15 @@ public class WebhookSender {
 
     long backoffMillis = properties.initialBackoff().toMillis();
     for (int attempt = 1; attempt <= properties.maxAttempts(); attempt++) {
-      if (attemptDelivery(subscription, payload, body, secret, attempt)) {
+      Outcome outcome = attemptDelivery(subscription, payload, body, secret, attempt);
+      if (outcome == Outcome.SUCCESS) {
+        return;
+      }
+      if (outcome == Outcome.PERMANENT) {
+        // Retrying a permanent rejection just burns attempts and delays nothing useful.
+        log.warn(
+            "Webhook delivery to subscription {} rejected permanently; not retrying",
+            subscription.getId());
         return;
       }
       if (attempt < properties.maxAttempts()) {
@@ -89,9 +98,15 @@ public class WebhookSender {
   }
 
   /**
-   * @return true when the delivery succeeded and no further attempt is needed
+   * Whether the attempt succeeded, is worth retrying, or failed for a reason retrying cannot fix.
    */
-  private boolean attemptDelivery(
+  private enum Outcome {
+    SUCCESS,
+    RETRYABLE,
+    PERMANENT
+  }
+
+  private Outcome attemptDelivery(
       WebhookSubscription subscription,
       WebhookPayload payload,
       String body,
@@ -103,6 +118,9 @@ public class WebhookSender {
       // so a subscribe-time-only check would be bypassable by DNS rebinding.
       ssrfGuard.verifyAllowed(subscription.getUrl());
 
+      // Each attempt is signed with a fresh timestamp so a retry does not fall outside the
+      // receiver's freshness window. The delivery id inside the body stays the same, which is
+      // what lets a receiver dedupe retries.
       long timestamp = Instant.now().getEpochSecond();
       webhookRestClient
           .post()
@@ -110,6 +128,7 @@ public class WebhookSender {
           .contentType(MediaType.APPLICATION_JSON)
           .header(WebhookSigner.TIMESTAMP_HEADER, Long.toString(timestamp))
           .header(WebhookSigner.EVENT_HEADER, payload.event().name())
+          .header(WebhookSigner.DELIVERY_HEADER, payload.deliveryId())
           .header(WebhookSigner.SIGNATURE_HEADER, signer.sign(secret, timestamp, body))
           // Sign and send the same bytes: passing the serialized String (not the object)
           // guarantees the receiver digests exactly what was signed.
@@ -118,24 +137,33 @@ public class WebhookSender {
           .toBodilessEntity();
 
       record(subscription, payload, attempt, true, null, null, startedAt);
-      return true;
+      return Outcome.SUCCESS;
+    } catch (WebhookUrlNotAllowedException e) {
+      // The URL is blocked (or now resolves somewhere blocked). Retrying cannot change that.
+      record(subscription, payload, attempt, false, null, e.getClass().getSimpleName(), startedAt);
+      return Outcome.PERMANENT;
     } catch (RestClientResponseException e) {
       // The endpoint answered with 4xx/5xx — status is safe to record.
+      int status = e.getStatusCode().value();
       record(
-          subscription,
-          payload,
-          attempt,
-          false,
-          e.getStatusCode().value(),
-          e.getClass().getSimpleName(),
-          startedAt);
-      return false;
+          subscription, payload, attempt, false, status, e.getClass().getSimpleName(), startedAt);
+      return isRetryableStatus(status) ? Outcome.RETRYABLE : Outcome.PERMANENT;
     } catch (RuntimeException e) {
-      // Connection/DNS/SSRF failures: record the exception CLASS only. getMessage() embeds
-      // the target URL, and a webhook URL can itself carry a token.
+      // Connection/DNS failures: record the exception CLASS only. getMessage() embeds the
+      // target URL, and a webhook URL can itself carry a token. Worth retrying — these are
+      // typically transient.
       record(subscription, payload, attempt, false, null, e.getClass().getSimpleName(), startedAt);
-      return false;
+      return Outcome.RETRYABLE;
     }
+  }
+
+  /**
+   * 5xx is the server's problem and may clear; a 4xx means the request itself is wrong, so
+   * replaying it unchanged will fail identically. The two exceptions are 408 (Request Timeout) and
+   * 429 (Too Many Requests), which explicitly invite a retry.
+   */
+  private static boolean isRetryableStatus(int status) {
+    return status >= 500 || status == 408 || status == 429;
   }
 
   private void record(

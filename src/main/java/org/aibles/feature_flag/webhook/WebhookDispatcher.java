@@ -139,14 +139,17 @@ public class WebhookDispatcher {
     if (subscriptions.isEmpty()) {
       return;
     }
-    WebhookPayload payload =
-        new WebhookPayload(
-            eventType, Instant.now().getEpochSecond(), environmentId.toString(), data);
+    long occurredAt = Instant.now().getEpochSecond();
 
     for (WebhookSubscription subscription : subscriptions) {
       if (!subscription.listensFor(eventType)) {
         continue;
       }
+      // A fresh delivery id per subscription, generated here so it stays fixed across that
+      // delivery's retries — each subscriber gets its own idempotency key.
+      WebhookPayload payload =
+          new WebhookPayload(
+              eventType, UUID.randomUUID().toString(), occurredAt, environmentId.toString(), data);
       try {
         sender.deliver(subscription, payload);
       } catch (RuntimeException e) {

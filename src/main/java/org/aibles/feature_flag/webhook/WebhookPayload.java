@@ -10,6 +10,11 @@ import org.aibles.feature_flag.domain.enums.WebhookEventType;
  * not change the envelope — receivers can switch on {@code event} and read the keys they know.
  *
  * @param event the event type, also sent as the {@code X-Webhook-Event} header
+ * @param deliveryId unique per delivery and <strong>stable across its retries</strong>, also sent
+ *     as the {@code X-Webhook-Delivery} header. This is the receiver's idempotency key: a delivery
+ *     that was processed but whose response was lost will be retried, and without an id the
+ *     receiver has no way to tell that retry apart from a genuinely new event. Inside the signed
+ *     body, so it cannot be rewritten in transit.
  * @param occurredAt epoch seconds when the delivery was assembled
  * @param environmentId the environment this delivery is scoped to; for project-scoped events this
  *     is the environment being fanned out to, so a receiver always knows which environment it is
@@ -17,4 +22,8 @@ import org.aibles.feature_flag.domain.enums.WebhookEventType;
  * @param data event-specific fields — never a secret (no API keys, no webhook secrets)
  */
 public record WebhookPayload(
-    WebhookEventType event, long occurredAt, String environmentId, Map<String, Object> data) {}
+    WebhookEventType event,
+    String deliveryId,
+    long occurredAt,
+    String environmentId,
+    Map<String, Object> data) {}

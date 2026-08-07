@@ -1,7 +1,7 @@
-package org.aibles.feature_flag.webhook;
+package org.aibles.feature_flag.exception;
 
 /**
- * Thrown when a webhook URL is rejected by {@link SsrfGuard}. Mapped to 400 by {@code
+ * Thrown when a webhook URL is rejected by {@code SsrfGuard}. Mapped to 400 by {@code
  * GlobalExceptionHandler} so an operator subscribing a bad URL gets a clear validation error.
  */
 public class WebhookUrlNotAllowedException extends RuntimeException {

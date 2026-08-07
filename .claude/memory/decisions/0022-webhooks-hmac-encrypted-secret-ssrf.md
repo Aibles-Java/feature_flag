@@ -75,6 +75,31 @@ before.
 - `WebhookProperties` is a **record**, so accessors have no `is` prefix — `allowPrivateAddresses()`,
   not `isAllowPrivateAddresses()`. Cost one compile cycle.
 
+## Found on a second review pass (all fixed in the same PR)
+
+1. **A redirect bypasses `SsrfGuard` completely** — a public URL can `302` to
+   `169.254.169.254` and the guard never sees the hop. Safe today *only* because Spring's
+   `SimpleClientHttpRequestFactory` sets `setInstanceFollowRedirects` for `GET` and deliveries are
+   `POST`. Verified empirically, not assumed. That is a property of the configured request factory,
+   invisible in our code, so `WebhookRedirectNotFollowedTest` pins it — swapping to the JDK/Apache
+   client would otherwise silently reopen the hole.
+2. **4xx was being retried.** Replaying an unchanged bad request fails identically, so 3 attempts
+   burned the budget for nothing. Now `SUCCESS`/`RETRYABLE`/`PERMANENT`: retry 5xx, 408, 429 and
+   connection errors; treat other 4xx and any SSRF rejection as permanent.
+3. **No idempotency key.** A delivery the subscriber processed but whose response was lost gets
+   retried and is indistinguishable from a new event → silent double-processing. Added `deliveryId`
+   (signed body + `X-Webhook-Delivery`), fixed across retries while the timestamp/signature change
+   per attempt.
+4. **Convention violation:** the exception lived in `webhook/`, but every other exception in this repo
+   is in `exception/` — and `GlobalExceptionHandler` importing a feature package is backwards. Moved.
+5. **`EnumSet.copyOf(Collection)` throws on an empty non-EnumSet** → a direct service call with an
+   empty event-type set was a 500. `@NotEmpty` covers the API path; the service now builds the set
+   additively so it cannot 500.
+
+Lesson worth keeping: the two real security findings were both about **what the code does not say** —
+an implicit request-factory behaviour and a missing idempotency key. Neither is visible by reading the
+guard itself.
+
 ## Numbering
 
 Migration **012** (011 reserved by issue #31 / PR #58). Decision **0022** (0018 → PR #60, 0019 → #43,

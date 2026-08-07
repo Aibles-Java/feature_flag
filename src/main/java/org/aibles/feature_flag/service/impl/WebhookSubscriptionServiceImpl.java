@@ -1,11 +1,13 @@
 package org.aibles.feature_flag.service.impl;
 
 import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.WebhookDeliveryAttempt;
 import org.aibles.feature_flag.domain.entity.WebhookSubscription;
 import org.aibles.feature_flag.domain.enums.MemberRole;
+import org.aibles.feature_flag.domain.enums.WebhookEventType;
 import org.aibles.feature_flag.dto.request.CreateWebhookSubscriptionRequest;
 import org.aibles.feature_flag.dto.request.UpdateWebhookSubscriptionRequest;
 import org.aibles.feature_flag.dto.response.WebhookDeliveryAttemptResponse;
@@ -60,7 +62,7 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
             .environmentId(request.getEnvironmentId())
             .url(request.getUrl())
             .secretCiphertext(secretCipher.encrypt(plaintextSecret))
-            .eventTypes(EnumSet.copyOf(request.getEventTypes()))
+            .eventTypes(toEnumSet(request.getEventTypes()))
             .enabled(true)
             .build();
 
@@ -99,7 +101,7 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
       subscription.setUrl(request.getUrl());
     }
     if (request.getEventTypes() != null && !request.getEventTypes().isEmpty()) {
-      subscription.setEventTypes(EnumSet.copyOf(request.getEventTypes()));
+      subscription.setEventTypes(toEnumSet(request.getEventTypes()));
     }
     if (request.getEnabled() != null) {
       subscription.setEnabled(request.getEnabled());
@@ -136,6 +138,17 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
     permissionService.requireRoleForEnvironment(
         subscription.getEnvironmentId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
     return deliveryAttemptRepository.findAllBySubscriptionId(id, pageable).map(this::toResponse);
+  }
+
+  /**
+   * {@code EnumSet.copyOf(Collection)} throws on an empty non-EnumSet, so build the set additively.
+   * The API contract is enforced by {@code @NotEmpty} on the request; this only stops a direct
+   * service call with an empty set from surfacing as a 500.
+   */
+  private static Set<WebhookEventType> toEnumSet(Set<WebhookEventType> types) {
+    Set<WebhookEventType> copy = EnumSet.noneOf(WebhookEventType.class);
+    copy.addAll(types);
+    return copy;
   }
 
   private WebhookSubscription findById(UUID id) {

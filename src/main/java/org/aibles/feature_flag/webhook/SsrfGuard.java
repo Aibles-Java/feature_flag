@@ -8,6 +8,7 @@ import java.util.Locale;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.config.WebhookProperties;
+import org.aibles.feature_flag.exception.WebhookUrlNotAllowedException;
 import org.springframework.stereotype.Component;
 
 /**

@@ -91,7 +91,8 @@ class WebhookDeliveryIntegrationTest {
 
   private Environment environment;
 
-  record ReceivedRequest(String body, String signature, String timestamp, String event) {}
+  record ReceivedRequest(
+      String body, String signature, String timestamp, String event, String delivery) {}
 
   @BeforeEach
   void setUp() throws IOException {
@@ -131,7 +132,8 @@ class WebhookDeliveryIntegrationTest {
             body,
             exchange.getRequestHeaders().getFirst(WebhookSigner.SIGNATURE_HEADER),
             exchange.getRequestHeaders().getFirst(WebhookSigner.TIMESTAMP_HEADER),
-            exchange.getRequestHeaders().getFirst(WebhookSigner.EVENT_HEADER)));
+            exchange.getRequestHeaders().getFirst(WebhookSigner.EVENT_HEADER),
+            exchange.getRequestHeaders().getFirst(WebhookSigner.DELIVERY_HEADER)));
     exchange.sendResponseHeaders(responseStatus.get(), -1);
     exchange.close();
   }
@@ -212,6 +214,56 @@ class WebhookDeliveryIntegrationTest {
     assertThat(attempts).allMatch(a -> !a.isSucceeded());
     assertThat(attempts).allMatch(a -> a.getResponseStatus() == 500);
     assertThat(attempts).extracting("attempt").containsExactlyInAnyOrder(1, 2, 3);
+  }
+
+  /**
+   * A 4xx means the request itself is wrong, so replaying it unchanged fails identically. Retrying
+   * would burn all three attempts and delay nothing — so exactly one attempt must be made.
+   */
+  @Test
+  @DisplayName("a 4xx response is permanent: exactly one attempt, no retries")
+  void doesNotRetryClientErrors() throws InterruptedException {
+    responseStatus.set(404);
+    WebhookSubscription subscription = subscribe(WebhookEventType.FLAG_STATE_CHANGED);
+
+    publishCommitted(stateChange());
+
+    await().atMost(Duration.ofSeconds(10)).until(() -> attemptsFor(subscription).size() == 1);
+    // Give the (absent) backoff window time to produce a second attempt if the policy regressed.
+    Thread.sleep(500);
+
+    assertThat(received).hasSize(1);
+    List<WebhookDeliveryAttempt> attempts = attemptsFor(subscription);
+    assertThat(attempts).hasSize(1);
+    assertThat(attempts.get(0).getResponseStatus()).isEqualTo(404);
+    assertThat(attempts.get(0).isSucceeded()).isFalse();
+  }
+
+  /**
+   * The delivery id is the receiver's idempotency key, so it has to stay fixed while the timestamp
+   * (and therefore the signature) changes per attempt.
+   */
+  @Test
+  @DisplayName("retries reuse one delivery id but re-sign with a fresh timestamp")
+  void retriesShareADeliveryIdAndReSign() {
+    responseStatus.set(503);
+    subscribe(WebhookEventType.FLAG_STATE_CHANGED);
+
+    publishCommitted(stateChange());
+
+    await().atMost(Duration.ofSeconds(15)).until(() -> received.size() == 3);
+
+    assertThat(received).extracting(ReceivedRequest::delivery).doesNotContainNull();
+    assertThat(received.stream().map(ReceivedRequest::delivery).distinct())
+        .as("one delivery id across all retries")
+        .hasSize(1);
+    // Every attempt must still verify on its own timestamp.
+    for (ReceivedRequest request : received) {
+      assertThat(
+              signer.verify(
+                  SECRET, Long.parseLong(request.timestamp()), request.body(), request.signature()))
+          .isTrue();
+    }
   }
 
   @Test

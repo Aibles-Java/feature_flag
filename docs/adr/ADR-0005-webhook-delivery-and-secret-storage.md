@@ -60,7 +60,22 @@ Two supporting details: the signature covers the exact serialized bytes that go 
 sender passes the pre-serialized `String`, never re-serializing), and `verify` uses
 `MessageDigest.isEqual` so comparison is constant-time.
 
-### 3. Retry in-process, 3 attempts, doubling backoff, every attempt persisted
+### 3. Retry only what retrying can fix, and give the receiver an idempotency key
+
+**Not every failure is worth a retry.** A 4xx means the request itself is wrong, so replaying it
+unchanged fails identically — three attempts would burn the budget and delay nothing. Only 5xx (the
+server's problem, may clear), 408 and 429 (which explicitly invite a retry), and connection/DNS
+errors are retried. An SSRF rejection is permanent by definition. `WebhookSender` models this as
+`SUCCESS` / `RETRYABLE` / `PERMANENT` rather than a boolean, so the distinction is visible.
+
+**Every delivery carries a `deliveryId`**, in the signed body and as `X-Webhook-Delivery`, unique per
+delivery and **stable across its retries**. This is the receiver's idempotency key. Without it, a
+delivery that the subscriber processed but whose response was lost is retried and is
+*indistinguishable* from a genuinely new event — the subscriber double-processes with no way to
+detect it. Retries re-sign with a fresh timestamp (so a retry never falls outside the receiver's
+freshness window) while the id stays fixed.
+
+### 3b. Retry mechanics: in-process, 3 attempts, doubling backoff, every attempt persisted
 
 Delivery runs on the existing `@Async @TransactionalEventListener(AFTER_COMMIT)` pipeline that
 `SlackEventListener` already uses — after-commit so a rolled-back mutation notifies nobody, async so
@@ -96,6 +111,14 @@ at `WebhookSender.attemptDelivery`.
 
 `app.webhook.allow-private-addresses` exists only so local dev and the integration test can POST to
 `127.0.0.1`; it defaults to `false`.
+
+**A redirect would bypass the guard entirely**, and the thing preventing that is not in our code. A
+subscriber could register a public URL that `302`s to `http://169.254.169.254/`; the guard validates
+the registered URL and cannot see the hop. Deliveries are safe today only because Spring's
+`SimpleClientHttpRequestFactory` enables `setInstanceFollowRedirects` for `GET`, and deliveries are
+`POST` — an implementation detail of the configured request factory. Swapping that factory (the JDK
+and Apache clients follow redirects on POST for some statuses) would silently reopen the hole, so
+`WebhookRedirectNotFollowedTest` pins the behaviour rather than leaving it to a comment.
 
 ### 5. Project-scoped events fan out to every environment
 

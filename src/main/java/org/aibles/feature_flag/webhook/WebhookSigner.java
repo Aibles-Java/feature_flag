@@ -25,6 +25,9 @@ public class WebhookSigner {
   public static final String TIMESTAMP_HEADER = "X-Webhook-Timestamp";
   public static final String EVENT_HEADER = "X-Webhook-Event";
 
+  /** Idempotency key — stable across retries of one delivery. See {@link WebhookPayload}. */
+  public static final String DELIVERY_HEADER = "X-Webhook-Delivery";
+
   /** Prefix identifying the scheme, so a future v2 can rotate without ambiguity. */
   private static final String PREFIX = "sha256=";
 
