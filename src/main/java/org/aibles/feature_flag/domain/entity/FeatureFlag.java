@@ -45,6 +45,16 @@ public class FeatureFlag {
   @Builder.Default
   private boolean archived = false;
 
+  /**
+   * Optional planned removal date (issue #37). Null means no expiry.
+   *
+   * <p>v1 <strong>reports</strong> expired flags; it never auto-disables them. Flipping a flag off
+   * because a date passed would be an unannounced production behaviour change, which is exactly
+   * what a feature-flag platform exists to avoid.
+   */
+  @Column(name = "expires_at")
+  private LocalDateTime expiresAt;
+
   @CreationTimestamp
   @Column(name = "created_at", nullable = false, updatable = false)
   private LocalDateTime createdAt;

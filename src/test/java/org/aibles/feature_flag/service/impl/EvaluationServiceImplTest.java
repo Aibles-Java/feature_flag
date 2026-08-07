@@ -15,6 +15,7 @@ import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.dto.response.FlagEvaluationResponse;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.hygiene.FlagEvaluationTracker;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
@@ -29,6 +30,7 @@ class EvaluationServiceImplTest {
 
   @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock FeatureFlagRepository featureFlagRepository;
+  @Mock FlagEvaluationTracker evaluationTracker;
 
   EvaluationServiceImpl service;
 
@@ -43,7 +45,8 @@ class EvaluationServiceImplTest {
         new EvaluationServiceImpl(
             flagStateRepository,
             featureFlagRepository,
-            new FeatureFlagMetrics(new SimpleMeterRegistry()));
+            new FeatureFlagMetrics(new SimpleMeterRegistry()),
+            evaluationTracker);
     project = Project.builder().id(projectId).name("proj").build();
     environment =
         Environment.builder().id(envId).project(project).name("prod").apiKeyHash("key").build();

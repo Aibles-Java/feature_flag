@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Issue #37: flag hygiene — stale detection and expiry.
+
+      Both columns are nullable with no default, so this is a non-blocking add on an existing
+      table and every current row keeps meaning "never evaluated" / "no expiry set".
+    -->
+    <changeSet id="013-1-add-last-evaluated-at" author="dev">
+        <comment>Per (flag, environment) last SDK evaluation, written throttled from the read path.</comment>
+        <addColumn tableName="flag_environment_states">
+            <column name="last_evaluated_at" type="TIMESTAMPTZ"/>
+        </addColumn>
+
+        <!--
+          The stale report scans by environment/flag and orders on this column. NULLs are
+          included on purpose: "never evaluated" is the strongest staleness signal.
+        -->
+        <createIndex tableName="flag_environment_states" indexName="idx_flag_state_last_evaluated">
+            <column name="last_evaluated_at"/>
+        </createIndex>
+
+        <rollback>
+            <dropIndex tableName="flag_environment_states" indexName="idx_flag_state_last_evaluated"/>
+            <dropColumn tableName="flag_environment_states" columnName="last_evaluated_at"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="013-2-add-expires-at" author="dev">
+        <comment>Optional flag expiry. v1 reports expired flags; it never auto-disables them.</comment>
+        <addColumn tableName="feature_flags">
+            <column name="expires_at" type="TIMESTAMPTZ"/>
+        </addColumn>
+
+        <!-- Expiry report is always scoped to a project. -->
+        <createIndex tableName="feature_flags" indexName="idx_feature_flag_project_expires">
+            <column name="project_id"/>
+            <column name="expires_at"/>
+        </createIndex>
+
+        <rollback>
+            <dropIndex tableName="feature_flags" indexName="idx_feature_flag_project_expires"/>
+            <dropColumn tableName="feature_flags" columnName="expires_at"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

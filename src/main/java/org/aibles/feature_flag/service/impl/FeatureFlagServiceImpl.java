@@ -64,6 +64,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             .key(request.getKey())
             .description(request.getDescription())
             .valueType(request.getValueType())
+            .expiresAt(request.getExpiresAt())
             .build();
     flag = featureFlagRepository.save(flag);
 
@@ -106,6 +107,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     // key is intentionally not updated — it is immutable
     if (request.getName() != null) flag.setName(request.getName());
     if (request.getDescription() != null) flag.setDescription(request.getDescription());
+    if (request.getExpiresAt() != null) flag.setExpiresAt(request.getExpiresAt());
     FeatureFlagResponse response = toResponse(featureFlagRepository.save(flag));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.UPDATED);
     return response;
@@ -217,6 +219,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         .description(flag.getDescription())
         .valueType(flag.getValueType())
         .archived(flag.isArchived())
+        .expiresAt(flag.getExpiresAt())
         .projectId(flag.getProject().getId())
         .createdAt(flag.getCreatedAt())
         .build();
@@ -229,6 +232,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         .enabled(state.isEnabled())
         .value(state.getValue())
         .rolloutPercent(state.getRolloutPercent())
+        .lastEvaluatedAt(state.getLastEvaluatedAt())
         .build();
   }
 }

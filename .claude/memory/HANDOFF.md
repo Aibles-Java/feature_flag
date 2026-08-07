@@ -4,79 +4,67 @@
 
 ## Current WIP
 
-**Issue #32** (refresh tokens with short-lived access tokens) on branch
-`feature/issue-32-refresh-tokens` (→ `develop`). **PR #59 open;** just merged latest
-`develop` in to resolve conflicts (only the two memory-index files clashed).
+**Issue #37** (flag hygiene: stale detection + expiry) on branch `feature/issue-37-flag-hygiene`
+(→ `develop`, cut off `develop` @ `04ac6bf`). `./mvnw clean verify` green — **271 tests, 0 failures**
+(develop has 243, so +28), Spotless clean, coverage met. **Not yet pushed / no PR.**
 
-- `./mvnw verify` green: **239 tests, 0 failures, Spotless clean, JaCoCo floor met.**
-- Full flow works end-to-end over the real security chain (`AuthControllerIntegrationTest`):
-  login issues an access JWT (15min) + opaque refresh token (14d, SHA-256 at rest);
-  `POST /api/v1/auth/refresh` rotates; reusing a rotated token revokes the whole family;
-  `POST /api/v1/auth/logout` revokes the family and is idempotent (always 204).
-- Security review run (skill's 3-step fan-out): 3 findings raised, **all filtered below the
-  ≥8 confidence bar** by adversarial re-check. The one real defect behind finding 1 (a
-  PostgreSQL self-deadlock, not an auth bypass) was fixed in commit `433266f`.
+- **Migration 013** — `flag_environment_states.last_evaluated_at`, `feature_flags.expires_at`, plus
+  their indexes. Both nullable, so it is a non-blocking add.
+- **`hygiene/FlagEvaluationTracker`** — two-layer throttle (Caffeine expiring set + threshold guard in
+  the UPDATE). Wired into `EvaluationServiceImpl`, outside any cache-load path.
+- **`FlagHygieneService` / `FlagHygieneController`** — `GET /api/v1/flag-hygiene?projectId=&status=`,
+  paginated, VIEWER+.
+- **`HygieneProperties`** (`app.hygiene.stale-after=30d`, `evaluation-touch-throttle=5m`), picked up
+  by the app's `@ConfigurationPropertiesScan` — no config class needed.
+- Admin DTOs gained `expiresAt` / `lastEvaluatedAt`. **The SDK `FlagEvaluationResponse` is unchanged**
+  (an AC).
 
-**Deviations from the plan (all in commit messages):** `InvalidRefreshTokenException` → 401
-instead of flipping the global `UnauthorizedException`→403 mapping; `@SpringBootTest` (not the
-plan's `@DataJpaTest`, which the repo never uses); prod inherits the TTLs (no env override —
-"no defaults in prod" is a secrets rule, TTLs aren't secrets).
+## ⚠️ Three things not to "simplify"
 
-**⚠️ BREAKING API change:** login response field `token` → `accessToken`, `type` → `tokenType`
-(+ new `refreshToken`, `expiresIn`). Documented in README "Ops migration" block. Headlines the
-PR body.
-
-**Also cleared a long-standing repo issue:** the `docs/ARCHITECTURE.md` vs `docs/architecture.md`
-case collision (commit `cba9edb`) — detailed v1.0 doc restored at non-colliding
-`docs/architecture-design-v1.md`; lowercase stays the live doc.
-
-**Already on `develop` (issue #33, pagination):** `PageResponse<T>` envelope + `PaginationConfig`
-(max-100 clamp); all 6 admin list endpoints paginated; ADR-0003. See
-`decisions/0017-pagination-admin-list-endpoints.md`. ⚠️ Both #32 and #33 shipped a decision
-file numbered **0017** — renumber one when convenient.
-
-## Follow-up surfaced on develop (do NOT lose)
-- **Bug #52 root cause identified** (`GET /organisations/{id}/members` → 500): the code-review of #33
-  found `OrganizationServiceImpl.listMembers`/`toMemberResponse` reads lazy `getUser().getEmail()`
-  outside a transaction (`open-in-view=false`, no `@Transactional`) → `LazyInitializationException`.
-  **Pre-existing** (not caused by #33), so left for #52. Fix: `@Transactional(readOnly=true)` on the
-  read path (or `JOIN FETCH om.user`) + an integration test that actually hits the endpoint on a real
-  DB (mocked service/controller tests can't catch it). #52 also reports `register returns 201-empty`
-  — separate, needs its own look.
+1. **`REQUIRES_NEW` on the touch queries is mandatory.** The evaluation path is
+   `@Transactional(readOnly = true)`; joining it makes the write an UPDATE in a read-only transaction
+   — PostgreSQL rejects it, **H2 allows it**, so removing the annotation passes every test and breaks
+   production. `FlagHygieneIntegrationTest.evaluationPersistsLastEvaluatedAt` guards this.
+2. **The touch must stay a bulk JPQL UPDATE**, which skips `@UpdateTimestamp`. Using the entity setter
+   would bump `updated_at` on every SDK read.
+3. **The tracker call must stay outside any cache-load function** — inside one, a cache hit (#30/PR
+   #53) skips tracking and the hottest flags get reported stale.
 
 ## Context to Load
 
-- `decisions/0017-refresh-token-family-revoke-transaction-semantics.md` — the two non-obvious
-  transaction bugs and why the fixes look the way they do. Read before touching
-  `RefreshTokenServiceImpl` / `RefreshTokenFamilyRevoker`.
-- `conventions/second-springboottest-context-shared-h2.md` — the shared-context H2 datasource
-  convention the new integration tests follow.
-- `decisions/0017-pagination-admin-list-endpoints.md` + `docs/adr/ADR-0003-pagination-strategy.md`.
+- `decisions/0023-flag-hygiene-stale-detection-expiry.md` — all three traps plus the reporting design.
 
-## Next steps (issue #32 / PR #59)
-1. Push the conflict-resolution merge commit on `feature/issue-32-refresh-tokens` so PR #59
-   goes mergeable again. **gh is at `C:\Users\ACER\AppData\Local\gh-cli\bin` (not on PATH)** —
-   prepend it; see `~/.claude/projects/.../memory/gh-cli-off-path-location.md`.
-2. PR #59 body already headlines the BREAKING `token`→`accessToken` change, the 3 dismissed
-   security findings, the deadlock fix `433266f`, and prod inheriting TTLs by choice.
-3. Board card *Ready For Testing*: `.claude/scripts/issue-board.sh ready 32` (gh off-PATH prefix).
+## Next steps
 
-## Backlog notes from the #32 session (non-blocking, not in scope for #32)
-- Absolute session cap for refresh families (`family_created_at` + 30–90d) and a `@Scheduled`
-  `deleteByExpiresAtBefore` cleanup — the design spec deliberately scoped both OUT as v1 non-goals.
-- No admin "disable user" endpoint exists yet, so the disabled-account refresh path is only
-  reachable via direct DB change today.
+1. Commit + push; open PR with `create-pr` (`Closes #37`); `.claude/scripts/issue-board.sh ready 37`.
+2. Flag in the PR: `CLAUDE.md` collides trivially with PR #62 (both append before "v2 Roadmap");
+   `/security-review` not needed here (no crypto/auth), but `/review-pr` is still worth running.
 
-## Known repo issue (pre-existing)
-- **`docs/` case collision**: `docs/ARCHITECTURE.md` vs `docs/architecture.md` (differ only by case)
-  → git perpetually reports one modified on this Windows FS. Kept out of every commit. Fix on a
-  case-sensitive box by deleting one path.
+## Cross-branch / open PRs
 
-## Follow-ups (carried over)
-- **#28** JSON logging — PR **#54** open (mergeable), board Ready For Testing.
-- **#31** audit log — depends on #33's paginated read endpoint; JSONB-on-H2 risk.
-- **Codegraph #48/#49/#50** on board; #48 (Tier-1 ArchUnit) next greenfield pick.
-- Two `decisions/0012-*` files still collide, and now two `0017-*` files — renumber later.
-- **#25:** Dockerfile HEALTHCHECK readiness→liveness? DB-down readiness→503 test.
-- **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
-- **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
+- **#43** (issue #27, docker) — MERGEABLE, CI green. Decision **0019**.
+- **#58** (issue #31, audit log) — MERGEABLE, CI green. Migration **011**, decision **0020**.
+  Unanswered comment "check the warning please": every CI warning is pre-existing on develop
+  (verified vs run `30373689296`); only `HHH90000025 H2Dialect` is worth fixing.
+- **#60** (issue #34, GHCR + Trivy) — MERGEABLE, CI green. Decision **0018**. Raises the JaCoCo floor
+  to 0.87; #58 measured 0.9099 and develop+#60 0.8938, so both clear it.
+- **#61** (issue #35, percentage rollout) — MERGEABLE, CI green. Decision **0021**, ADR-0004.
+- **#62** (issue #36, webhooks) — MERGEABLE, CI green. Migration **012**, decision **0022**, ADR-0005.
+  A self-review pass fixed 5 findings (`a61e0e0`). **`/security-review` still not run** and warranted
+  there (crypto-at-rest + SSRF guard).
+- **#53** (issue #30, evaluation cache) — open; interacts with #37, see trap 3 above.
+- Migrations: develop at 010 · **011 = #58** · **012 = #62** · **013 = #37 (this branch)**.
+- Decisions: **0018** #60 · **0019** #43 · **0020** #58 · **0021** #61 · **0022** #62 · **0023** #37 —
+  collision-free in any merge order.
+
+## Known landmines
+
+- **Any `@SpringBootTest` inserting a `FeatureFlag` needs `NON_KEYWORDS=KEY,VALUE`** in its H2 URL —
+  `key` is reserved in H2 2.x and the insert dies with a bare syntax error.
+- **Windows docs case-collision** (`docs/ARCHITECTURE.md` vs `docs/architecture.md`): while both paths
+  are tracked the phantom one is always dirty and **`git merge` refuses to start**; `git stash` only
+  flips which is dirty. Fix: `git rm --cached docs/ARCHITECTURE.md`. Branches cut off current develop
+  never had it.
+- `./mvnw test -Dtest='A+B'` is invalid surefire syntax — use `-Dtest='A,B'`.
+- Beans with internal caches (`FlagEvaluationTracker`, rate limiter) keep state **across test methods**
+  in one Spring context.
