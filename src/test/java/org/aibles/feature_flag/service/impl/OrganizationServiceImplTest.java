@@ -44,6 +44,7 @@ class OrganizationServiceImplTest {
   @Mock OrganizationMemberRepository memberRepository;
   @Mock UserRepository userRepository;
   @Mock PermissionService permissionService;
+  @Mock AuditService auditService;
 
   OrganizationServiceImpl service;
 
@@ -55,7 +56,11 @@ class OrganizationServiceImplTest {
   void setUp() {
     service =
         new OrganizationServiceImpl(
-            organizationRepository, memberRepository, userRepository, permissionService);
+            organizationRepository,
+            memberRepository,
+            userRepository,
+            permissionService,
+            auditService);
     org = Organization.builder().id(orgId).name("Acme").slug("acme").build();
     doNothing().when(permissionService).requireRole(any(), any(MemberRole[].class));
   }

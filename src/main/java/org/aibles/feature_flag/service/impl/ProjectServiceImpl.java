@@ -4,6 +4,8 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.AuditAction;
+import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateProjectRequest;
 import org.aibles.feature_flag.dto.request.UpdateProjectRequest;
@@ -25,6 +27,7 @@ public class ProjectServiceImpl implements ProjectService {
   private final ProjectRepository projectRepository;
   private final OrganizationRepository organizationRepository;
   private final PermissionService permissionService;
+  private final AuditService auditService;
 
   @Override
   @Transactional
@@ -46,7 +49,15 @@ public class ProjectServiceImpl implements ProjectService {
             .name(request.getName())
             .description(request.getDescription())
             .build();
-    return toResponse(projectRepository.save(project));
+    ProjectResponse response = toResponse(projectRepository.save(project));
+    auditService.record(
+        AuditEntityType.PROJECT,
+        response.getId(),
+        AuditAction.CREATE,
+        request.getOrganisationId(),
+        null,
+        response);
+    return response;
   }
 
   @Override
@@ -70,19 +81,25 @@ public class ProjectServiceImpl implements ProjectService {
   @Transactional
   public ProjectResponse update(UUID id, UpdateProjectRequest request) {
     Project project = findById(id);
-    permissionService.requireRole(
-        project.getOrganization().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    UUID orgId = project.getOrganization().getId();
+    permissionService.requireRole(orgId, MemberRole.OWNER, MemberRole.ADMIN);
+    ProjectResponse before = toResponse(project);
     if (request.getName() != null) project.setName(request.getName());
     if (request.getDescription() != null) project.setDescription(request.getDescription());
-    return toResponse(projectRepository.save(project));
+    ProjectResponse after = toResponse(projectRepository.save(project));
+    auditService.record(AuditEntityType.PROJECT, id, AuditAction.UPDATE, orgId, before, after);
+    return after;
   }
 
   @Override
   @Transactional
   public void delete(UUID id) {
     Project project = findById(id);
-    permissionService.requireRole(project.getOrganization().getId(), MemberRole.OWNER);
+    UUID orgId = project.getOrganization().getId();
+    permissionService.requireRole(orgId, MemberRole.OWNER);
+    ProjectResponse before = toResponse(project);
     projectRepository.delete(project);
+    auditService.record(AuditEntityType.PROJECT, id, AuditAction.DELETE, orgId, before, null);
   }
 
   private Project findById(UUID id) {

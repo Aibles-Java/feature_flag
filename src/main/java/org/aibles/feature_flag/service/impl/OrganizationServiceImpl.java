@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.OrganizationMember;
 import org.aibles.feature_flag.domain.entity.User;
+import org.aibles.feature_flag.domain.enums.AuditAction;
+import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
 import org.aibles.feature_flag.dto.request.InviteMemberRequest;
@@ -32,6 +34,7 @@ public class OrganizationServiceImpl implements OrganizationService {
   private final OrganizationMemberRepository memberRepository;
   private final UserRepository userRepository;
   private final PermissionService permissionService;
+  private final AuditService auditService;
 
   @Override
   @Transactional
@@ -49,7 +52,10 @@ public class OrganizationServiceImpl implements OrganizationService {
         OrganizationMember.builder().organization(org).user(user).role(MemberRole.OWNER).build();
     memberRepository.save(member);
 
-    return toResponse(org);
+    OrganizationResponse response = toResponse(org);
+    auditService.record(
+        AuditEntityType.ORGANIZATION, org.getId(), AuditAction.CREATE, org.getId(), null, response);
+    return response;
   }
 
   @Override
@@ -76,15 +82,21 @@ public class OrganizationServiceImpl implements OrganizationService {
   public OrganizationResponse update(UUID id, UpdateOrganizationRequest request) {
     permissionService.requireRole(id, MemberRole.OWNER, MemberRole.ADMIN);
     Organization org = findById(id);
+    OrganizationResponse before = toResponse(org);
     if (request.getName() != null) org.setName(request.getName());
-    return toResponse(organizationRepository.save(org));
+    OrganizationResponse after = toResponse(organizationRepository.save(org));
+    auditService.record(AuditEntityType.ORGANIZATION, id, AuditAction.UPDATE, id, before, after);
+    return after;
   }
 
   @Override
   @Transactional
   public void delete(UUID id) {
     permissionService.requireRole(id, MemberRole.OWNER);
+    Organization org = findById(id);
+    OrganizationResponse before = toResponse(org);
     organizationRepository.deleteById(id);
+    auditService.record(AuditEntityType.ORGANIZATION, id, AuditAction.DELETE, id, before, null);
   }
 
   @Override
@@ -123,13 +135,10 @@ public class OrganizationServiceImpl implements OrganizationService {
         OrganizationMember.builder().organization(org).user(user).role(request.getRole()).build();
     memberRepository.save(member);
 
-    return MemberResponse.builder()
-        .userId(user.getId())
-        .email(user.getEmail())
-        .firstName(user.getFirstName())
-        .lastName(user.getLastName())
-        .role(request.getRole())
-        .build();
+    MemberResponse response = toMemberResponse(member);
+    auditService.record(
+        AuditEntityType.MEMBER, user.getId(), AuditAction.INVITE_MEMBER, orgId, null, response);
+    return response;
   }
 
   @Override
@@ -144,7 +153,10 @@ public class OrganizationServiceImpl implements OrganizationService {
         && memberRepository.countByOrganizationIdAndRole(orgId, MemberRole.OWNER) <= 1) {
       throw new UnauthorizedException("Cannot remove the only OWNER of an organisation");
     }
+    MemberResponse before = toMemberResponse(member);
     memberRepository.delete(member);
+    auditService.record(
+        AuditEntityType.MEMBER, userId, AuditAction.REMOVE_MEMBER, orgId, before, null);
   }
 
   private Organization findById(UUID id) {
