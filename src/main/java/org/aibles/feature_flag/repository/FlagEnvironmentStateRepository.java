@@ -17,4 +17,15 @@ public interface FlagEnvironmentStateRepository extends JpaRepository<FlagEnviro
   List<FlagEnvironmentState> findAllActiveByEnvironmentId(@Param("envId") UUID environmentId);
 
   List<FlagEnvironmentState> findAllByFeatureFlagId(UUID featureFlagId);
+
+  /**
+   * Every state row of an environment, archived flags included, ordered by flag key — the basis for
+   * a clone and for an export snapshot (issue #38). Unlike {@link #findAllActiveByEnvironmentId} it
+   * hides nothing, so a snapshot describes the environment completely; the deterministic order
+   * makes two exports of the same state byte-identical and therefore diffable.
+   */
+  @Query(
+      "SELECT s FROM FlagEnvironmentState s JOIN FETCH s.featureFlag f WHERE s.environment.id = :envId ORDER BY f.key")
+  List<FlagEnvironmentState> findAllByEnvironmentIdOrderByFlagKey(
+      @Param("envId") UUID environmentId);
 }
