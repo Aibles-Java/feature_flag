@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Issue #31: append-only audit log for flag and org mutations.
+      One row is inserted per admin mutation (in the same transaction as the change).
+      The application never updates or deletes these rows.
+
+      before_state / after_state hold the entity's DTO shape as JSON — native `jsonb`
+      on PostgreSQL (queryable), and H2's `json` type on the test database. The type is
+      switched per-DBMS via the json.type property so the single table definition works
+      on both. There is intentionally NO foreign key on actor_user_id / org_id: the audit
+      trail is an independent historical ledger that must outlive the entities it records.
+    -->
+    <property name="json.type" value="jsonb" dbms="postgresql"/>
+    <property name="json.type" value="json" dbms="h2"/>
+
+    <changeSet id="011-create-audit-log" author="dev">
+        <createTable tableName="audit_log">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="actor_user_id" type="UUID"/>
+            <column name="org_id" type="UUID">
+                <constraints nullable="false"/>
+            </column>
+            <column name="action" type="VARCHAR(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="entity_type" type="VARCHAR(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="entity_id" type="UUID"/>
+            <column name="before_state" type="${json.type}"/>
+            <column name="after_state" type="${json.type}"/>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- Read endpoint: list an org's audit rows newest-first. -->
+        <createIndex tableName="audit_log" indexName="idx_audit_log_org_created">
+            <column name="org_id"/>
+            <column name="created_at"/>
+        </createIndex>
+
+        <!-- Lookup the history of a specific entity. -->
+        <createIndex tableName="audit_log" indexName="idx_audit_log_entity">
+            <column name="entity_type"/>
+            <column name="entity_id"/>
+            <column name="created_at"/>
+        </createIndex>
+
+        <rollback>
+            <dropTable tableName="audit_log"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

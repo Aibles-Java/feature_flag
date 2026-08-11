@@ -4,13 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.AuditAction;
+import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
@@ -43,6 +47,7 @@ class EnvironmentServiceImplTest {
   @Mock ProjectRepository projectRepository;
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
+  @Mock AuditService auditService;
 
   EnvironmentServiceImpl service;
 
@@ -55,8 +60,13 @@ class EnvironmentServiceImplTest {
   void setUp() {
     service =
         new EnvironmentServiceImpl(
-            environmentRepository, projectRepository, permissionService, eventPublisher);
-    project = Project.builder().id(projectId).name("proj").build();
+            environmentRepository,
+            projectRepository,
+            permissionService,
+            eventPublisher,
+            auditService);
+    Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
+    project = Project.builder().id(projectId).organization(org).name("proj").build();
     env =
         Environment.builder()
             .id(envId)
@@ -133,6 +143,17 @@ class EnvironmentServiceImplTest {
     assertThat(event.environmentName()).isEqualTo("prod");
     assertThat(event.projectName()).isEqualTo("proj");
     assertThat(event.actorEmail()).isEqualTo("actor@example.com");
+
+    // Security: the rotation is audited as an event only — the key must never reach the audit row
+    // (before/after are both null).
+    verify(auditService)
+        .record(
+            eq(AuditEntityType.API_KEY),
+            eq(envId),
+            eq(AuditAction.ROTATE_API_KEY),
+            any(),
+            isNull(),
+            isNull());
   }
 
   @Test
@@ -163,6 +184,8 @@ class EnvironmentServiceImplTest {
 
   @Test
   void delete_deletesById() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+
     service.delete(envId);
 
     verify(environmentRepository).deleteById(envId);
