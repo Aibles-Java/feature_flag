@@ -14,5 +14,6 @@
     <include file="db/changelog/migrations/008-add-rollout-percent.xml"/>
     <include file="db/changelog/migrations/009-hash-api-keys.xml"/>
     <include file="db/changelog/migrations/010-create-refresh-tokens.xml"/>
+    <include file="db/changelog/migrations/011-create-audit-log.xml"/>
 
 </databaseChangeLog>
