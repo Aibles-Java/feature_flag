@@ -3,7 +3,7 @@ package org.aibles.feature_flag.util;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Deterministic identifier-based percentage rollout (issue #35).
+ * Deterministic identifier-based percentage rollout.
  *
  * <p>An identifier is bucketed into one of 100 buckets by hashing {@code identifier:flagKey} with
  * MurmurHash3. The same identifier therefore always lands in the same bucket for a given flag, so a

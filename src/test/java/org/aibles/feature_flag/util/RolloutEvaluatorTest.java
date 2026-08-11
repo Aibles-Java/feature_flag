@@ -12,7 +12,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * Issue #35 acceptance criteria for {@link RolloutEvaluator}.
+ * Bucketing guarantees of {@link RolloutEvaluator}: determinism, monotonicity, uniform
+ * distribution, per-flag independence and the fail-open contract when no identifier is supplied.
  *
  * <p>Everything here is deterministic — identifiers are generated, never random — so a failure is a
  * real regression in the bucketing, not a flake.
