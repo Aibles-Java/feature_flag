@@ -4,79 +4,47 @@
 
 ## Current WIP
 
-**Issue #32** (refresh tokens with short-lived access tokens) on branch
-`feature/issue-32-refresh-tokens` (→ `develop`). **PR #59 open;** just merged latest
-`develop` in to resolve conflicts (only the two memory-index files clashed).
+**Issue #38** (environment cloning + flag import/export) on branch
+`feature/issue-38-env-clone-import-export` (→ `develop`), branched fresh from
+`origin/develop`. Implementation **complete and committed** (`b637b71`); PR not yet
+opened at the time of writing.
 
-- `./mvnw verify` green: **239 tests, 0 failures, Spotless clean, JaCoCo floor met.**
-- Full flow works end-to-end over the real security chain (`AuthControllerIntegrationTest`):
-  login issues an access JWT (15min) + opaque refresh token (14d, SHA-256 at rest);
-  `POST /api/v1/auth/refresh` rotates; reusing a rotated token revokes the whole family;
-  `POST /api/v1/auth/logout` revokes the family and is idempotent (always 204).
-- Security review run (skill's 3-step fan-out): 3 findings raised, **all filtered below the
-  ≥8 confidence bar** by adversarial re-check. The one real defect behind finding 1 (a
-  PostgreSQL self-deadlock, not an auth bypass) was fixed in commit `433266f`.
+- `./mvnw verify` green: **276 tests, 0 failures, Spotless clean, JaCoCo floor met.**
+- Three endpoints under `/api/v1/environments/{envId}`: `POST /clone`, `GET /export`,
+  `POST /import`. All require OWNER/ADMIN on the org.
+- **Zero Liquibase changesets** — the two new `AuditAction` values (CLONE, IMPORT) fit
+  the existing bare `VARCHAR(32)` `audit_log.action` column.
+- 26 new tests (`EnvironmentTransferServiceImplTest` 19, `EnvironmentTransferControllerTest` 7),
+  one per acceptance criterion including the lossless round-trip (real Jackson
+  serialize → deserialize) and the dry-run no-write assertion.
 
-**Deviations from the plan (all in commit messages):** `InvalidRefreshTokenException` → 401
-instead of flipping the global `UnauthorizedException`→403 mapping; `@SpringBootTest` (not the
-plan's `@DataJpaTest`, which the repo never uses); prod inherits the TTLs (no env override —
-"no defaults in prod" is a secrets rule, TTLs aren't secrets).
+**Files added:** `service/EnvironmentTransferService` + `service/impl/…Impl`,
+`controller/admin/EnvironmentTransferController`, `dto/request/{CloneEnvironmentRequest,
+ImportEnvironmentRequest}`, `dto/response/{EnvironmentSnapshotResponse,
+ImportResultResponse}`, `domain/enums/{ImportConflictStrategy, ImportOutcome}`,
+`exception/InvalidRequestException`.
+**Modified:** `GlobalExceptionHandler` (+400 handler), `AuditAction` (+CLONE, +IMPORT),
+`FlagEnvironmentStateRepository` (+`findAllByEnvironmentIdOrderByFlagKey`), `CLAUDE.md`,
+`docs/architecture-design-v1.md`.
 
-**⚠️ BREAKING API change:** login response field `token` → `accessToken`, `type` → `tokenType`
-(+ new `refreshToken`, `expiresIn`). Documented in README "Ops migration" block. Headlines the
-PR body.
-
-**Also cleared a long-standing repo issue:** the `docs/ARCHITECTURE.md` vs `docs/architecture.md`
-case collision (commit `cba9edb`) — detailed v1.0 doc restored at non-colliding
-`docs/architecture-design-v1.md`; lowercase stays the live doc.
-
-**Already on `develop` (issue #33, pagination):** `PageResponse<T>` envelope + `PaginationConfig`
-(max-100 clamp); all 6 admin list endpoints paginated; ADR-0003. See
-`decisions/0017-pagination-admin-list-endpoints.md`. ⚠️ Both #32 and #33 shipped a decision
-file numbered **0017** — renumber one when convenient.
-
-## Follow-up surfaced on develop (do NOT lose)
-- **Bug #52 root cause identified** (`GET /organisations/{id}/members` → 500): the code-review of #33
-  found `OrganizationServiceImpl.listMembers`/`toMemberResponse` reads lazy `getUser().getEmail()`
-  outside a transaction (`open-in-view=false`, no `@Transactional`) → `LazyInitializationException`.
-  **Pre-existing** (not caused by #33), so left for #52. Fix: `@Transactional(readOnly=true)` on the
-  read path (or `JOIN FETCH om.user`) + an integration test that actually hits the endpoint on a real
-  DB (mocked service/controller tests can't catch it). #52 also reports `register returns 201-empty`
-  — separate, needs its own look.
+**Review gates:** the session ran without the code-reviewer / security-review subagents
+(the operator's session config disallowed spawning them). The security-sensitive surface
+was self-reviewed instead — fresh key on clone, no secret in any snapshot or audit row,
+project derived from the path env not the payload, `@Size(max = 2000)` on the flag list.
+Worth a real `/review-pr` pass on the PR.
 
 ## Context to Load
 
-- `decisions/0017-refresh-token-family-revoke-transaction-semantics.md` — the two non-obvious
-  transaction bugs and why the fixes look the way they do. Read before touching
-  `RefreshTokenServiceImpl` / `RefreshTokenFamilyRevoker`.
-- `conventions/second-springboottest-context-shared-h2.md` — the shared-context H2 datasource
-  convention the new integration tests follow.
-- `decisions/0017-pagination-admin-list-endpoints.md` + `docs/adr/ADR-0003-pagination-strategy.md`.
+- `decisions/0021-environment-clone-import-export.md` — the design and its rationale.
+- `decisions/0020-audit-log-flag-org-mutations.md` — audit conventions this follows.
 
-## Next steps (issue #32 / PR #59)
-1. Push the conflict-resolution merge commit on `feature/issue-32-refresh-tokens` so PR #59
-   goes mergeable again. **gh is at `C:\Users\ACER\AppData\Local\gh-cli\bin` (not on PATH)** —
-   prepend it; see `~/.claude/projects/.../memory/gh-cli-off-path-location.md`.
-2. PR #59 body already headlines the BREAKING `token`→`accessToken` change, the 3 dismissed
-   security findings, the deadlock fix `433266f`, and prod inheriting TTLs by choice.
-3. Board card *Ready For Testing*: `.claude/scripts/issue-board.sh ready 32` (gh off-PATH prefix).
+## Next steps
 
-## Backlog notes from the #32 session (non-blocking, not in scope for #32)
-- Absolute session cap for refresh families (`family_created_at` + 30–90d) and a `@Scheduled`
-  `deleteByExpiresAtBefore` cleanup — the design spec deliberately scoped both OUT as v1 non-goals.
-- No admin "disable user" endpoint exists yet, so the disabled-account refresh path is only
-  reachable via direct DB change today.
-
-## Known repo issue (pre-existing)
-- **`docs/` case collision**: `docs/ARCHITECTURE.md` vs `docs/architecture.md` (differ only by case)
-  → git perpetually reports one modified on this Windows FS. Kept out of every commit. Fix on a
-  case-sensitive box by deleting one path.
-
-## Follow-ups (carried over)
-- **#28** JSON logging — PR **#54** open (mergeable), board Ready For Testing.
-- **#31** audit log — depends on #33's paginated read endpoint; JSONB-on-H2 risk.
-- **Codegraph #48/#49/#50** on board; #48 (Tier-1 ArchUnit) next greenfield pick.
-- Two `decisions/0012-*` files still collide, and now two `0017-*` files — renumber later.
-- **#25:** Dockerfile HEALTHCHECK readiness→liveness? DB-down readiness→503 test.
-- **#26:** per-IP SDK limit for invalid keys; Redis backend for multi-instance.
-- **#24:** make `feature_flags.key` H2-safe so SDK eval can be tested for a real 200.
+1. Open the PR with the `create-pr` skill (base `develop`, `Closes #38`), then
+   `.claude/scripts/issue-board.sh ready 38`.
+2. Run `/review-pr` on it — the self-review above is not a substitute.
+3. **File a follow-up issue:** `EnvironmentServiceImpl.create()` doesn't backfill
+   `FlagEnvironmentState` rows for the project's existing flags, so a newly created
+   environment has no state rows and the SDK returns nothing for it. The fan-out only
+   exists in the other direction (`FeatureFlagServiceImpl.create`). Import works around
+   it; the asymmetry itself is untouched.
