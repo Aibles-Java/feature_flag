@@ -83,4 +83,15 @@ src/main/resources/
 - DB schema is Liquibase-owned (`ddl-auto=validate`) — never modify an already-run changeset, always add a new one under `db/changelog/migrations/`.
 - `ApiKeyGenerator` uses `SecureRandom` → 32 bytes → 64-char hex string; runs on environment creation and key rotation.
 
+## Architecture governance (enforced, not just documented)
+
+The layering and two-chain invariants above are asserted in code by
+`src/test/java/org/aibles/feature_flag/architecture/ArchitectureTest.java` (ArchUnit, test scope).
+Rules R1–R7 run under Surefire, so breaking one fails `./mvnw verify` and CI — no separate step.
+R7 (no package cycles) is frozen against a committed baseline in `src/test/resources/archunit_store`
+because the `config` ↔ `security` cycle pre-dates the rule; new cycles still fail.
+Data-flow invariants ArchUnit cannot prove (e.g. "every mutating service method calls a
+`PermissionService.require*` guard first") are **not** covered — see
+[ADR-0004](adr/ADR-0004-archunit-architecture-governance.md) and `docs/specs/codegraph-adoption.md`.
+
 See `CLAUDE.md` for full development conventions and workflow gates.
