@@ -1,2 +1,6 @@
 /mvnw text eol=lf
 *.cmd text eol=crlf
+
+# ArchUnit frozen-violation baseline: matched by exact line content, so pin the
+# line endings rather than letting core.autocrlf vary them per platform.
+src/test/resources/archunit_store/** text eol=lf

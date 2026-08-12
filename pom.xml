@@ -20,6 +20,7 @@
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.8.9</springdoc.version>
         <bucket4j.version>8.19.0</bucket4j.version>
+        <archunit.version>1.4.2</archunit.version>
         <logstash-logback-encoder.version>8.0</logstash-logback-encoder.version>
         <jacoco.version>0.8.13</jacoco.version>
         <spotless.version>2.43.0</spotless.version>
@@ -147,6 +148,13 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Architecture governance: CLAUDE.md invariants as build-gating tests (issue #48) -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

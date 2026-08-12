@@ -50,7 +50,7 @@ Organization → Project → Environment (has API key)
 
 0. **Management chain** (`/actuator/**`, `@Order(0)`) — added in issue #29. `/actuator/health` + `/actuator/health/**` are public; everything else (notably `prometheus`, `info`) requires HTTP Basic with role `METRICS` via a local in-memory scraper user. When `app.metrics.password` is blank the account is built `.disabled(true)` to avoid an empty-secret auth bypass.
 
-1. **SDK chain** (`/api/v1/sdk/**`, order=1) — `ApiKeyAuthenticationFilter` reads `X-Environment-Key` header, resolves the `Environment` entity, and sets `ApiKeyAuthenticationToken` as the principal. The resolved `Environment` object is available via `SecurityContextHolder` in `EvaluationController`.
+1. **SDK chain** (`/api/v1/sdk/**`, order=1) — `ApiKeyAuthenticationFilter` reads `X-Environment-Key` header, resolves the `Environment` entity, and sets `ApiKeyAuthenticationToken` as the principal. `EvaluationController` receives that principal as an injected `Authentication` method parameter — it does **not** read `SecurityContextHolder` directly, and ArchUnit rule R4 now enforces that it stays that way.
 
 2. **Admin chain** (all other `/api/v1/**`, order=2) — `JwtAuthenticationFilter` validates Bearer tokens. `UserPrincipal` (containing UUID userId) is set as principal.
 
@@ -167,6 +167,7 @@ DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`)
 - **Code review:** Run the code-reviewer agent after every significant change. Address all CRITICAL and HIGH findings.
 - **Security review:** Before committing to `security/`, JWT config, `db/changelog/migrations/`, or `ApiKeyGenerator`, run a security review. A Stop hook (`security-review-gate.sh`) nudges when these paths change.
 - **Migrations are immutable:** A PreToolUse hook (`liquibase-immutable-guard.sh`) blocks edits to existing files under `db/changelog/migrations/` — add a new changeset instead.
+- **Architecture rules are build-gating:** `architecture/ArchitectureTest.java` (ArchUnit) asserts the layering, no-authz-in-controllers, centralized-`SecurityContextHolder`, and two-chain-principal invariants described above. Breaking one fails `./mvnw verify`. Don't relax a rule to make a change pass — either the change is wrong, or the invariant genuinely moved and the rule edit belongs in the same PR with a note in [ADR-0004](docs/adr/ADR-0004-archunit-architecture-governance.md).
 
 **Working a GitHub issue:** follow the `issue-workflow` skill — `.claude/scripts/issue-board.sh start <issue#>` assigns it and moves the Digital banking board card to *In progress*; after opening the PR, `issue-board.sh ready <issue#>` moves it to *Ready For Testing*. A push is **blocked** by the memory gate (`.claude/hooks/pre-push-memory-gate.sh`) if its commits touch code but not `.claude/memory/` — run `/save-memory` first so memory ships with the work (override: `SKIP_MEMORY_CHECK=1 git push`). Enable the git-level backstop once per clone with `git config core.hooksPath .githooks`.
 
