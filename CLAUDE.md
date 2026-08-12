@@ -50,7 +50,7 @@ Organization → Project → Environment (has API key)
 
 0. **Management chain** (`/actuator/**`, `@Order(0)`) — added in issue #29. `/actuator/health` + `/actuator/health/**` are public; everything else (notably `prometheus`, `info`) requires HTTP Basic with role `METRICS` via a local in-memory scraper user. When `app.metrics.password` is blank the account is built `.disabled(true)` to avoid an empty-secret auth bypass.
 
-1. **SDK chain** (`/api/v1/sdk/**`, order=1) — `ApiKeyAuthenticationFilter` reads `X-Environment-Key` header, resolves the `Environment` entity, and sets `ApiKeyAuthenticationToken` as the principal. The resolved `Environment` object is available via `SecurityContextHolder` in `EvaluationController`.
+1. **SDK chain** (`/api/v1/sdk/**`, order=1) — `ApiKeyAuthenticationFilter` reads `X-Environment-Key` header, resolves the `Environment` entity, and sets `ApiKeyAuthenticationToken` as the principal. `EvaluationController` receives that principal as an injected `Authentication` method parameter — it does **not** read `SecurityContextHolder` directly, and ArchUnit rule R4 now enforces that it stays that way.
 
 2. **Admin chain** (all other `/api/v1/**`, order=2) — `JwtAuthenticationFilter` validates Bearer tokens. `UserPrincipal` (containing UUID userId) is set as principal.
 

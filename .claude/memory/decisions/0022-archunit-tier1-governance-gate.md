@@ -68,6 +68,37 @@ reverted:
   neither of which an import-based lint (Checkstyle import-control) would see. That's the concrete
   argument for bytecode analysis over import scanning.
 
+## Review pass: the failure mode of an arch gate is a VACUOUS rule, not a wrong one
+
+A rule that matches zero classes passes forever and looks identical to a rule that works. Reviewing
+specifically for this found two, both fixed pre-merge, each confirmed by a probe that fails now and
+passed before:
+
+- **R6 was name-filtered** (`haveSimpleNameEndingWith("Repository")`), so a hand-rolled DAO in
+  `..repository..` named anything else was invisible — the exact thing the rule exists to catch.
+  Now asserts over **every** type in the package. Known consequence, documented in the javadoc: a
+  Spring Data custom fragment (`XRepositoryImpl`) will trip it. That's intended friction.
+- **R4's `EvaluationController` exemption was dead.** The SDK controller takes an injected
+  `Authentication` **method parameter** and never touches `SecurityContextHolder`. Dropped the
+  allowance → R4 got strictly tighter. **`CLAUDE.md` was wrong here** and was corrected: it claimed
+  the `Environment` "is available via `SecurityContextHolder` in `EvaluationController`". Prose in
+  the SSOT had drifted from the code; the arch rule copied from the prose inherited the drift.
+
+**`allowStoreCreation=true` is a vacuous-gate hazard — now set to `false`.** With it true, a
+*missing* store makes ArchUnit silently create a new baseline from current code and report GREEN
+(verified: store moved aside → `mvn test` exit 0, fresh baseline written, no warning). The gate
+passes exactly when it has lost its baseline. With it false you get a loud
+`StoreInitializationFailedException`. Re-freeze procedure (flip true → delete store → run → flip
+back → commit) is written into `archunit.properties`. Related: `.gitattributes` now pins
+`src/test/resources/archunit_store/** text eol=lf`, since the store is matched by line content and
+`core.autocrlf=true` was rewriting it to CRLF on Windows checkout (harmless in practice — ArchUnit
+reads via `readLine()` — but not worth leaving to chance).
+
+Also confirmed by review: `freeze.refreeze=false` is ArchUnit's own default (belt-and-braces, kept
+for intent), and the store path is resolved against Surefire's working directory, which defaults to
+the module basedir — reliable for CLI and CI, but an IDE run-config rooted elsewhere is the one way
+to break it.
+
 ## Scope honesty (do not overclaim)
 
 Tier 3 stays unenforced and is documented as such in the ADR + test javadoc: per-method

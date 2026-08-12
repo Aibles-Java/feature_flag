@@ -32,7 +32,6 @@ class ArchitectureTest {
   private static final String PERMISSION_SERVICE = ROOT + ".service.impl.PermissionService";
   private static final String MEMBER_ROLE = ROOT + ".domain.enums.MemberRole";
   private static final String USER_PRINCIPAL = ROOT + ".security.UserPrincipal";
-  private static final String EVALUATION_CONTROLLER = ROOT + ".controller.sdk.EvaluationController";
   private static final String SECURITY_CONTEXT_HOLDER =
       "org.springframework.security.core.context.SecurityContextHolder";
 
@@ -100,9 +99,16 @@ class ArchitectureTest {
    *
    * <p>Two authentication chains write different principal types into the same holder ({@code
    * UserPrincipal} for the admin chain, {@code Environment} for the SDK chain), so an ad-hoc read
-   * elsewhere is a cast-unsafe way to mix them. Only {@code PermissionService} (admin reads), the
-   * SDK {@code EvaluationController} (environment principal) and the {@code security} package
-   * itself — the filters whose job is to <em>populate</em> the holder — may touch it.
+   * elsewhere is a cast-unsafe way to mix them. Only {@code PermissionService} (the single admin
+   * reader) and the {@code security} package itself — the filters whose job is to <em>populate</em>
+   * the holder — may touch it. ArchUnit sees a static method call and cannot distinguish a read
+   * from a write, which is why the filters' package is exempted wholesale rather than per-method.
+   *
+   * <p>The spec's sketch also exempted the SDK {@code EvaluationController}. It is deliberately
+   * <em>not</em> exempted here: that controller receives its principal as an injected {@code
+   * Authentication} method parameter and never touches the holder, so the allowance would be dead
+   * weight that quietly licenses a future regression. Controllers wanting the principal should take
+   * the parameter, and this rule now enforces that.
    */
   @ArchTest
   static final ArchRule r4SecurityContextAccessIsCentralized =
@@ -110,15 +116,12 @@ class ArchitectureTest {
           .that()
           .doNotHaveFullyQualifiedName(PERMISSION_SERVICE)
           .and()
-          .doNotHaveFullyQualifiedName(EVALUATION_CONTROLLER)
-          .and()
           .resideOutsideOfPackage("..security..")
           .should()
           .accessClassesThat()
           .haveFullyQualifiedName(SECURITY_CONTEXT_HOLDER)
           .as(
-              "R4: only PermissionService, EvaluationController and security filters may access"
-                  + " SecurityContextHolder");
+              "R4: only PermissionService and the security filters may access SecurityContextHolder");
 
   /**
    * R5 — The two auth chains' principal types must not cross. {@code UserPrincipal} belongs to the
@@ -135,17 +138,27 @@ class ArchitectureTest {
           .haveFullyQualifiedName(USER_PRINCIPAL)
           .as("R5: the SDK chain must not depend on the admin chain's UserPrincipal");
 
-  /** R6 — Repositories are Spring Data interfaces, never hand-rolled classes. */
+  /**
+   * R6 — The repository layer is Spring Data interfaces, never hand-rolled classes.
+   *
+   * <p>Deliberately asserted over <em>every</em> type in {@code ..repository..}, not only those
+   * named {@code *Repository}: a hand-rolled DAO or JDBC wrapper dropped into the package under any
+   * other name is exactly the thing this rule exists to catch, and a name-filtered version would
+   * wave it through.
+   *
+   * <p>Consequence to know before "fixing" a failure: a Spring Data <em>custom fragment</em>
+   * implementation (the {@code XRepositoryImpl} pattern) is a class and will trip this rule. That
+   * is intended — adopting custom fragments is an architecture decision that should be made
+   * deliberately and recorded, not introduced by a file landing in the package.
+   */
   @ArchTest
   static final ArchRule r6RepositoriesAreInterfaces =
       classes()
           .that()
           .resideInAPackage("..repository..")
-          .and()
-          .haveSimpleNameEndingWith("Repository")
           .should()
           .beInterfaces()
-          .as("R6: repositories must be interfaces");
+          .as("R6: every type in the repository layer must be an interface");
 
   /**
    * R7 — No dependency cycles between the top-level package slices.

@@ -35,9 +35,9 @@ Seven rules ship:
 | R1 | Layering: Controller → Service → Repository; controllers accessed by nobody |
 | R2 | Controllers must not depend on `repository/` |
 | R3 | No authz logic in controllers (no `PermissionService` / `MemberRole` dependency) |
-| R4 | `SecurityContextHolder` access centralized |
+| R4 | `SecurityContextHolder` access centralized (`PermissionService` + the `security` filters only) |
 | R5 | `UserPrincipal` (admin chain) stays out of `controller.sdk` |
-| R6 | Repositories are interfaces |
+| R6 | Every type in the repository layer is an interface |
 | R7 | No cycles between top-level package slices |
 
 **No build-plugin change.** ArchUnit rules are ordinary JUnit 5 tests, so Surefire already runs them
@@ -58,13 +58,21 @@ were needed against the code as it actually stands:
    rule that actually matters (R2, controllers) is asserted separately and unconditionally.
 
 2. **R4 is inverted into a `noClasses(...).should().accessClassesThat(...)` form**, and the
-   `security` package is allowed alongside `PermissionService` and `EvaluationController`. The
-   spec's `classes().that().accessClassesThat()` form does not compile against ArchUnit 1.4.2 —
+   `security` package is allowed alongside `PermissionService`. The spec's
+   `classes().that().accessClassesThat()` form does not compile against ArchUnit 1.4.2 —
    `accessClassesThat()` is not on the `ClassesThat` interface. The `security` allowance is
    necessary because the filters' *job* is to populate the holder; ArchUnit sees a static method
    call and cannot distinguish a write from a read. The invariant that survives — and the one worth
    having — is that no service, no other controller, and no support package performs an ad-hoc,
    cast-unsafe principal read.
+
+   **The spec's third exemption, `EvaluationController`, is deliberately dropped.** Review found it
+   was never exercised: the SDK controller takes its principal as an injected `Authentication`
+   method parameter and does not touch `SecurityContextHolder` at all. An unexercised allowance is
+   not free — it pre-authorises a regression nobody would notice. Removing it makes R4 strictly
+   tighter (verified: adding such a read to `EvaluationController` now fails the build) and pins the
+   better pattern. `CLAUDE.md`'s SDK-chain description, which asserted the controller reads the
+   holder, was corrected in the same change — the prose had drifted from the code.
 
 3. **R7 is wrapped in `FreezingArchRule`** against a committed baseline
    (`src/test/resources/archunit_store`, configured in `src/test/resources/archunit.properties`).
@@ -74,6 +82,17 @@ were needed against the code as it actually stands:
    smuggle into a governance PR. Freezing gates *new* cycles from today instead of deferring the
    whole rule. `freeze.refreeze=false` is set explicitly so a new violation fails the build rather
    than silently widening the baseline.
+
+   **`allowStoreCreation` is set to `false`, which matters more than it looks.** With store creation
+   enabled — the natural setting, and the one needed to generate the baseline in the first place — a
+   *missing* store makes ArchUnit build a fresh baseline from whatever the code looks like right now
+   and report green. The gate would pass precisely when it had lost the thing it gates against, and
+   a bad `.gitignore`, a sparse checkout, an accidental `git rm`, or an IDE run-config rooted
+   outside the module would all trigger it. This was confirmed empirically before being fixed:
+   with the store moved aside and creation allowed, `mvn test` exited 0 and silently wrote a new
+   baseline. With creation disabled the run now fails loudly with
+   `StoreInitializationFailedException`. Re-freezing after a legitimate refactor is a deliberate
+   four-step procedure documented in `archunit.properties`.
 
 ### What is deliberately *not* claimed
 
@@ -100,6 +119,12 @@ request's key) is deferred to a follow-up per spec §8 — Tier 1 stabilises fir
   dependency made `./mvnw verify` fail on R1 and R2 (255 other tests still passing); introducing a
   new package cycle made the *frozen* R7 fail without mutating the baseline store. Both were then
   reverted. This is the evidence the gate is live rather than vacuously green.
+- **Good:** A review pass specifically hunting for *vacuous* rules — ones that pass because they
+  match nothing — found two and both were closed before merge. R6 originally filtered on
+  `haveSimpleNameEndingWith("Repository")`, so a hand-rolled DAO in the repository package under any
+  other name sailed through; it now asserts over every type in the package. R4's
+  `EvaluationController` exemption was dead. Each fix was confirmed with a probe that fails now and
+  passed before. "The arch tests are green" is only meaningful if the rules can actually fire.
 - **Bad:** A frozen rule is a rule with an asterisk. R7 gates new cycles but tolerates the recorded
   one; the baseline must be read as debt, not as a clean bill of health.
 - **Bad:** Rules encode package names, so a package rename requires editing the test. Acceptable —
