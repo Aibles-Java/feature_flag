@@ -107,8 +107,23 @@ ArchUnit reasons over bytecode dependency and access edges. It is exact for stru
   a class-dependency one.
 - *Taint analysis* (raw header values reaching a sink unvalidated). Needs a code property graph.
 
-Tier 2 (immutable `FeatureFlag.key` via a field-set condition; `update()` must not read the
-request's key) is deferred to a follow-up per spec §8 — Tier 1 stabilises first.
+Tier 2 (immutable `FeatureFlag.key`) shipped separately as R8/R9 under issue #49. Worth recording
+because the spec's Tier-2 sketch does not survive contact with the code either: **both of its
+proposed conditions are vacuous here**, confirmed in bytecode.
+
+- *"No method sets the `FeatureFlag.key` field except the construction/builder path."* `key` is
+  private and Lombok's `@Setter` generates `setKey` **inside** the entity, so `javap` shows the only
+  two `putfield key` sites are `FeatureFlag.setKey` and the all-args constructor. No other class
+  *can* write the field — Java access control already guarantees it — so a field-set rule can never
+  fail. The mistake that is actually reachable is calling the generated setter, which is a method
+  call, not a field access.
+- *"`update()` must not call `UpdateFeatureFlagRequest.getKey()`."* That DTO declares no `key` field,
+  so `getKey()` does not exist; a rule forbidding a call to a non-existent method cannot fire.
+
+R8 therefore uses a custom `ArchCondition` catching **both** a direct field write and a call to
+`FeatureFlag.setKey` from outside the entity (the method-call half is the one that fires), and R9
+forbids `UpdateFeatureFlagRequest` from declaring a `key` field at all — the first step of the
+mistake, and the only step a static rule can see. Both proven by negative test.
 
 ## Consequences
 

@@ -2,13 +2,20 @@ package org.aibles.feature_flag.architecture;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noFields;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
+import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaFieldAccess;
+import com.tngtech.archunit.core.domain.JavaMethodCall;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
+import com.tngtech.archunit.lang.ConditionEvents;
+import com.tngtech.archunit.lang.SimpleConditionEvent;
 import com.tngtech.archunit.library.freeze.FreezingArchRule;
 
 /**
@@ -32,6 +39,7 @@ class ArchitectureTest {
   private static final String PERMISSION_SERVICE = ROOT + ".service.impl.PermissionService";
   private static final String MEMBER_ROLE = ROOT + ".domain.enums.MemberRole";
   private static final String USER_PRINCIPAL = ROOT + ".security.UserPrincipal";
+  private static final String FEATURE_FLAG = ROOT + ".domain.entity.FeatureFlag";
   private static final String SECURITY_CONTEXT_HOLDER =
       "org.springframework.security.core.context.SecurityContextHolder";
 
@@ -178,4 +186,85 @@ class ArchitectureTest {
               .should()
               .beFreeOfCycles()
               .as("R7: top-level package slices must be free of cycles"));
+
+  // ---------------------------------------------------------------------------------------------
+  // Tier 2 (issue #49) — the immutable-flag-key invariant, via custom conditions.
+  //
+  // Read this before editing R8/R9: the spec's Tier-2 sketch (§A.4) proposes "assert no method sets
+  // the FeatureFlag.key field" and "assert update() does not call UpdateFeatureFlagRequest
+  // .getKey()". Both are VACUOUS against this codebase, verified in bytecode:
+  //
+  //   * `key` is a private field, and Lombok's @Setter generates setKey INSIDE FeatureFlag. javap
+  //     shows the only two `putfield key` sites are FeatureFlag.setKey and FeatureFlag's all-args
+  //     constructor. No other class can write the field — Java access control already guarantees
+  //     it — so a field-set rule could never fail. The mistake that IS possible is calling the
+  //     generated setter, which is a method call, not a field access.
+  //   * UpdateFeatureFlagRequest declares no `key` field at all, so `getKey()` does not exist. A
+  //     rule forbidding a call to a non-existent method can never fire, and cannot even be written
+  //     against a typed reference.
+  //
+  // R8/R9 below enforce the same *intent* at the points where it can actually be broken.
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Detects any mutation of {@code FeatureFlag.key} from outside the entity — both a direct field
+   * write and a call to the Lombok-generated {@code setKey}. The method-call half is the one that
+   * fires in practice; the field-access half is a backstop for a future hand-written mutator or a
+   * nested class.
+   */
+  private static final ArchCondition<JavaClass> MUTATE_FEATURE_FLAG_KEY =
+      new ArchCondition<>("mutate FeatureFlag.key") {
+        @Override
+        public void check(JavaClass item, ConditionEvents events) {
+          for (JavaFieldAccess access : item.getFieldAccessesFromSelf()) {
+            if (access.getAccessType() == JavaFieldAccess.AccessType.SET
+                && FEATURE_FLAG.equals(access.getTargetOwner().getFullName())
+                && "key".equals(access.getTarget().getName())) {
+              events.add(SimpleConditionEvent.satisfied(item, "writes FeatureFlag.key: " + access));
+            }
+          }
+          for (JavaMethodCall call : item.getMethodCallsFromSelf()) {
+            if (FEATURE_FLAG.equals(call.getTargetOwner().getFullName())
+                && "setKey".equals(call.getTarget().getName())) {
+              events.add(SimpleConditionEvent.satisfied(item, "calls FeatureFlag.setKey: " + call));
+            }
+          }
+        }
+      };
+
+  /**
+   * R8 — {@code FeatureFlag.key} is immutable after creation. Only the entity itself may write it
+   * (its constructor, which is what the Lombok builder ultimately calls). The database already
+   * enforces this via {@code @Column(updatable = false)}; this rule moves the boundary into the
+   * code, so an accidental {@code flag.setKey(...)} fails the build instead of being silently
+   * dropped at flush time — a failure mode that is otherwise invisible until an SDK notices the key
+   * it caches no longer matches.
+   */
+  @ArchTest
+  static final ArchRule r8FlagKeyIsNeverMutated =
+      noClasses()
+          .that()
+          .doNotHaveFullyQualifiedName(FEATURE_FLAG)
+          .should(MUTATE_FEATURE_FLAG_KEY)
+          .as("R8: FeatureFlag.key must never be mutated outside the entity itself");
+
+  /**
+   * R9 — The update request must not carry a key at all.
+   *
+   * <p>This is the sound form of "update() must ignore the key". Reintroducing a {@code key} field
+   * on {@code UpdateFeatureFlagRequest} is the first step of the mistake and the only one a static
+   * rule can catch: Lombok's {@code @Data} would immediately generate {@code getKey()}, the field
+   * would bind from request JSON, and a plausible-looking {@code if (request.getKey() != null)}
+   * line becomes one edit away. Blocking the field blocks the whole path, and does so at the point
+   * where a reviewer can still see the intent.
+   */
+  @ArchTest
+  static final ArchRule r9UpdateRequestCarriesNoKey =
+      noFields()
+          .that()
+          .areDeclaredInClassesThat()
+          .haveFullyQualifiedName(ROOT + ".dto.request.UpdateFeatureFlagRequest")
+          .should()
+          .haveName("key")
+          .as("R9: UpdateFeatureFlagRequest must not declare a key field (the key is immutable)");
 }
