@@ -197,6 +197,13 @@ Give Claude Code a **graph query interface** over this repo so it can answer *ca
 
 **Known limitation (state honestly):** Java call resolution is **tree-sitter heuristic** — approximate through Spring `@Autowired`/interface→impl/proxied beans. Good enough for *navigation*; **not** authoritative for "provably nothing calls X". That's fine because Track A (bytecode-exact ArchUnit) owns the provable-governance job; Track B is a *navigation aid* for the agent. If approximate Java edges prove too lossy in practice, the upgrade is **FalkorDB code-graph** (LSP-accurate resolution, ships `impact_analysis`/`find_path` + a Claude Code skill; cost = running a FalkorDB/Redis container).
 
+> **⚠️ Executed 2026-08-15 (issue #50) — B.3/B.4 below are the original proposal and are partly
+> wrong in practice. See [ADR-0005](../adr/ADR-0005-codegraph-mcp-track-b.md) for what actually
+> works.** In short: the Python 3.13 warning is **stale** (3.13.10 installs fine, 8/8 tree-sitter
+> parsers OK incl. Java); **FalkorDB Lite does not exist on Windows at any Python version**
+> (`redislite` is unsupported on win32) so the backend must be `kuzudb`; and `cgc mcp setup` has no
+> Claude Code CLI target — register with `claude mcp add` instead.
+
 ### B.3 Prerequisites
 
 - **Python 3.10–3.12** (⚠️ tree-sitter bindings break on 3.13; 3.14 also OK per project notes — pin to 3.12 to be safe). This is a **dev-machine tool**, not a project runtime dependency — it does not touch `pom.xml` or the JVM build.
