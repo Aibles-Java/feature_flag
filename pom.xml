@@ -24,9 +24,9 @@
         <jacoco.version>0.8.13</jacoco.version>
         <spotless.version>2.43.0</spotless.version>
         <google-java-format.version>1.24.0</google-java-format.version>
-        <!-- Coverage ratchet floor: locked at current (84.8%) minus a 2% churn margin.
+        <!-- Coverage ratchet floor: locked at current (89%) minus a 2% churn margin (issue #34).
              Only ever raise this; use .claude/scripts/coverage-floor.sh to re-measure. -->
-        <jacoco.line.coverage>0.83</jacoco.line.coverage>
+        <jacoco.line.coverage>0.87</jacoco.line.coverage>
     </properties>
 
     <dependencies>
