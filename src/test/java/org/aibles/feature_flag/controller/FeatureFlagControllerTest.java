@@ -182,6 +182,58 @@ class FeatureFlagControllerTest {
   }
 
   @Test
+  void updateState_acceptsRolloutPercentAtBothBounds() throws Exception {
+    for (int percent : new int[] {0, 100}) {
+      UUID flagId = UUID.randomUUID();
+      UUID envId = UUID.randomUUID();
+      when(featureFlagService.updateState(eq(flagId), eq(envId), any()))
+          .thenReturn(
+              FlagStateResponse.builder()
+                  .flagId(flagId)
+                  .environmentId(envId)
+                  .enabled(true)
+                  .rolloutPercent(percent)
+                  .build());
+
+      UpdateFlagStateRequest req = new UpdateFlagStateRequest();
+      req.setEnabled(true);
+      req.setRolloutPercent(percent);
+
+      mockMvc
+          .perform(
+              put("/api/v1/flags/{flagId}/environments/{envId}", flagId, envId)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(req)))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.rolloutPercent").value(percent));
+    }
+  }
+
+  /**
+   * `@Min(0) @Max(100)` on UpdateFlagStateRequest.rolloutPercent must reject out-of-range values.
+   */
+  @Test
+  void updateState_returns400_whenRolloutPercentOutOfRange() throws Exception {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+
+    for (int invalid : new int[] {-1, 101}) {
+      UpdateFlagStateRequest req = new UpdateFlagStateRequest();
+      req.setEnabled(true);
+      req.setRolloutPercent(invalid);
+
+      mockMvc
+          .perform(
+              put("/api/v1/flags/{flagId}/environments/{envId}", flagId, envId)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(req)))
+          .andExpect(status().isBadRequest());
+    }
+
+    verify(featureFlagService, never()).updateState(any(), any(), any());
+  }
+
+  @Test
   void get_returns200_withFlag() throws Exception {
     UUID flagId = UUID.randomUUID();
     FeatureFlagResponse response =
