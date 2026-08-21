@@ -4,6 +4,8 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.AuditAction;
+import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
@@ -31,6 +33,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   private final ProjectRepository projectRepository;
   private final PermissionService permissionService;
   private final ApplicationEventPublisher eventPublisher;
+  private final AuditService auditService;
 
   @Override
   @Transactional
@@ -53,7 +56,16 @@ public class EnvironmentServiceImpl implements EnvironmentService {
             .description(request.getDescription())
             .apiKeyHash(ApiKeyHasher.hash(plaintextKey))
             .build();
-    return toSecretResponse(environmentRepository.save(env), plaintextKey);
+    Environment saved = environmentRepository.save(env);
+    // Audit the non-secret view only — never the plaintext key.
+    auditService.record(
+        AuditEntityType.ENVIRONMENT,
+        saved.getId(),
+        AuditAction.CREATE,
+        project.getOrganization().getId(),
+        null,
+        toResponse(saved));
+    return toSecretResponse(saved, plaintextKey);
   }
 
   @Override
@@ -76,16 +88,24 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   public EnvironmentResponse update(UUID id, UpdateEnvironmentRequest request) {
     permissionService.requireRoleForEnvironment(id, MemberRole.OWNER, MemberRole.ADMIN);
     Environment env = findById(id);
+    UUID orgId = env.getProject().getOrganization().getId();
+    EnvironmentResponse before = toResponse(env);
     if (request.getName() != null) env.setName(request.getName());
     if (request.getDescription() != null) env.setDescription(request.getDescription());
-    return toResponse(environmentRepository.save(env));
+    EnvironmentResponse after = toResponse(environmentRepository.save(env));
+    auditService.record(AuditEntityType.ENVIRONMENT, id, AuditAction.UPDATE, orgId, before, after);
+    return after;
   }
 
   @Override
   @Transactional
   public void delete(UUID id) {
     permissionService.requireRoleForEnvironment(id, MemberRole.OWNER);
+    Environment env = findById(id);
+    UUID orgId = env.getProject().getOrganization().getId();
+    EnvironmentResponse before = toResponse(env);
     environmentRepository.deleteById(id);
+    auditService.record(AuditEntityType.ENVIRONMENT, id, AuditAction.DELETE, orgId, before, null);
   }
 
   @Override
@@ -102,6 +122,14 @@ public class EnvironmentServiceImpl implements EnvironmentService {
             saved.getName(),
             saved.getProject().getName(),
             permissionService.currentUserEmail()));
+    // Record the rotation event only — never the key (before/after intentionally null).
+    auditService.record(
+        AuditEntityType.API_KEY,
+        id,
+        AuditAction.ROTATE_API_KEY,
+        saved.getProject().getOrganization().getId(),
+        null,
+        null);
     return toSecretResponse(saved, plaintextKey);
   }
 

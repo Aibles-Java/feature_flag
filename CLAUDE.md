@@ -29,8 +29,8 @@ docker compose up -d
 ```
 
 After startup:
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
-- OpenAPI JSON: `http://localhost:8080/api-docs`
+- Swagger UI: `http://localhost:8081/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:8081/api-docs`
 
 ## Architecture
 
