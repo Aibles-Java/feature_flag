@@ -29,8 +29,8 @@ docker compose up -d
 ```
 
 After startup:
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
-- OpenAPI JSON: `http://localhost:8080/api-docs`
+- Swagger UI: `http://localhost:8081/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:8081/api-docs`
 
 ## Architecture
 
@@ -44,9 +44,11 @@ Organization → Project → Environment (has API key)
 
 `FlagEnvironmentState` is auto-created for every existing environment when a new `FeatureFlag` is created. This means a flag always has exactly one state row per environment — never query flags without joining on this table.
 
-### Two security chains (order matters)
+### Three security chains (order matters)
 
-`SecurityConfig` defines two separate `SecurityFilterChain` beans:
+`SecurityConfig` defines three separate `SecurityFilterChain` beans:
+
+0. **Management chain** (`/actuator/**`, `@Order(0)`) — added in issue #29. `/actuator/health` + `/actuator/health/**` are public; everything else (notably `prometheus`, `info`) requires HTTP Basic with role `METRICS` via a local in-memory scraper user. When `app.metrics.password` is blank the account is built `.disabled(true)` to avoid an empty-secret auth bypass.
 
 1. **SDK chain** (`/api/v1/sdk/**`, order=1) — `ApiKeyAuthenticationFilter` reads `X-Environment-Key` header, resolves the `Environment` entity, and sets `ApiKeyAuthenticationToken` as the principal. The resolved `Environment` object is available via `SecurityContextHolder` in `EvaluationController`.
 
@@ -72,14 +74,22 @@ No identity/segment logic in v1. The `Environment` comes directly from the secur
 ## Key configuration
 
 ```properties
-# application.properties
+# application.properties — local-dev defaults only (NOT secrets)
 spring.datasource.url=jdbc:postgresql://localhost:5432/feature_flag_db
 spring.datasource.username=ff_user
 spring.datasource.password=ff_password
 spring.jpa.hibernate.ddl-auto=validate   # Liquibase owns the schema
-app.jwt.secret=<min 512-bit secret>
-app.jwt.expiration-ms=86400000
+app.jwt.secret=local-dev-only-...        # dev-only signing key
+app.jwt.access-expiration-ms=900000       # 15 min
+app.jwt.refresh-expiration-ms=1209600000  # 14 days
 ```
+
+Secrets are externalized via env vars (`APP_JWT_SECRET`, `SPRING_DATASOURCE_URL/USERNAME/PASSWORD`
+— see README.md). The prod profile (`application-prod.properties`) references them with **no
+defaults**, so prod can never fall back to dev values. `config/JwtProperties` (typed
+`@ConfigurationProperties` + Bean Validation) aborts startup in any profile when the JWT secret
+is missing, an unresolved `${...}` placeholder, shorter than 512 bits (64 UTF-8 bytes), or
+contains the `change-me` placeholder marker.
 
 DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`). Never modify a changeset that has already run; always add a new one.
 
@@ -130,7 +140,7 @@ DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`)
 
 ## Key conventions
 
-**Code style:** No formatter/linter configured — follow existing code style by convention
+**Code style:** google-java-format enforced via Spotless. `./mvnw verify` runs `spotless:check` (CI-gating); `./mvnw spotless:apply` reformats. A Stop hook auto-formats changed files each session.
 **Branch strategy:** Gitflow — `feature/<slug>` → `develop`, `release/<version>` → `main` + back to `develop`, `hotfix/<slug>` → `main` + `develop`. Never commit directly to `main`.
 **Commit format:** Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, `ci:`)
 **Test coverage target:** 80%
@@ -155,7 +165,8 @@ DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`)
 
 - **Plan first:** For any task > 30 min, create a plan and get approval before writing code.
 - **Code review:** Run the code-reviewer agent after every significant change. Address all CRITICAL and HIGH findings.
-- **Security review:** Before committing to `security/`, JWT config, `db/changelog/migrations/`, or `ApiKeyGenerator`, run a security review.
+- **Security review:** Before committing to `security/`, JWT config, `db/changelog/migrations/`, or `ApiKeyGenerator`, run a security review. A Stop hook (`security-review-gate.sh`) nudges when these paths change.
+- **Migrations are immutable:** A PreToolUse hook (`liquibase-immutable-guard.sh`) blocks edits to existing files under `db/changelog/migrations/` — add a new changeset instead.
 
 **Working a GitHub issue:** follow the `issue-workflow` skill — `.claude/scripts/issue-board.sh start <issue#>` assigns it and moves the Digital banking board card to *In progress*; after opening the PR, `issue-board.sh ready <issue#>` moves it to *Ready For Testing*. A push is **blocked** by the memory gate (`.claude/hooks/pre-push-memory-gate.sh`) if its commits touch code but not `.claude/memory/` — run `/save-memory` first so memory ships with the work (override: `SKIP_MEMORY_CHECK=1 git push`). Enable the git-level backstop once per clone with `git config core.hooksPath .githooks`.
 

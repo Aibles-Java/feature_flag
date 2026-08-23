@@ -19,9 +19,14 @@
         <mapstruct.version>1.6.3</mapstruct.version>
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.8.9</springdoc.version>
+        <bucket4j.version>8.19.0</bucket4j.version>
+        <logstash-logback-encoder.version>8.0</logstash-logback-encoder.version>
         <jacoco.version>0.8.13</jacoco.version>
-        <!-- Coverage gate: raise toward the 80% target in CLAUDE.md as real tests land (see #3). -->
-        <jacoco.line.coverage>0.00</jacoco.line.coverage>
+        <spotless.version>2.43.0</spotless.version>
+        <google-java-format.version>1.24.0</google-java-format.version>
+        <!-- Coverage ratchet floor: locked at current (89%) minus a 2% churn margin (issue #34).
+             Only ever raise this; use .claude/scripts/coverage-floor.sh to re-measure. -->
+        <jacoco.line.coverage>0.87</jacoco.line.coverage>
     </properties>
 
     <dependencies>
@@ -41,6 +46,10 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
         <!-- Database -->
@@ -94,6 +103,36 @@
             <version>${springdoc.version}</version>
         </dependency>
 
+        <!-- Observability: Prometheus scrape registry (issue #29). Actuator itself is declared
+             once above (added by #25 for health probes); this adds the Prometheus meter registry
+             so /actuator/prometheus is served. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Structured JSON logging (issue #28): the prod Logback profile encodes each event as a
+             single JSON line with MDC fields (requestId/userId/envId) for request correlation. -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>${logstash-logback-encoder.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Rate limiting (token-bucket, in-memory) -->
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j_jdk17-core</artifactId>
+            <version>${bucket4j.version}</version>
+        </dependency>
+        <!-- Bounded/expiring store for rate-limit buckets (version managed by the Spring Boot BOM). -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -142,6 +181,35 @@
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
+            </plugin>
+            <!-- Code style: google-java-format via Spotless. `spotless:check` is bound
+                 to verify (fails CI on unformatted code); `spotless:apply` reformats.
+                 ONE-TIME rollout: run `./mvnw spotless:apply` and commit before this
+                 gate goes green. The .claude PostToolUse hook keeps edited files formatted. -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${spotless.version}</version>
+                <configuration>
+                    <java>
+                        <googleJavaFormat>
+                            <version>${google-java-format.version}</version>
+                            <style>GOOGLE</style>
+                        </googleJavaFormat>
+                        <removeUnusedImports/>
+                        <trimTrailingWhitespace/>
+                        <endWithNewline/>
+                    </java>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>spotless-check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.jacoco</groupId>

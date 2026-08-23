@@ -1,5 +1,15 @@
 package org.aibles.feature_flag.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.Optional;
+import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.CustomRole;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.PermissionGrant;
@@ -22,17 +32,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.Optional;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 /**
  * Guards on the grant-management endpoints: the subset ceiling (no escalation) and the
  * org-membership requirement (tenant isolation), for both built-in and custom-role grants.
@@ -40,121 +39,139 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ProjectGrantServiceImplTest {
 
-    @Mock private PermissionGrantRepository grantRepository;
-    @Mock private ProjectRepository projectRepository;
-    @Mock private OrganizationMemberRepository memberRepository;
-    @Mock private CustomRoleRepository customRoleRepository;
-    @Mock private UserRepository userRepository;
-    @Mock private PermissionService permissionService;
+  @Mock private PermissionGrantRepository grantRepository;
+  @Mock private ProjectRepository projectRepository;
+  @Mock private OrganizationMemberRepository memberRepository;
+  @Mock private CustomRoleRepository customRoleRepository;
+  @Mock private UserRepository userRepository;
+  @Mock private PermissionService permissionService;
 
-    private ProjectGrantServiceImpl service;
+  private ProjectGrantServiceImpl service;
 
-    private final UUID projectId = UUID.randomUUID();
-    private final UUID orgId = UUID.randomUUID();
-    private final UUID granterId = UUID.randomUUID();
-    private final UUID targetUserId = UUID.randomUUID();
+  private final UUID projectId = UUID.randomUUID();
+  private final UUID orgId = UUID.randomUUID();
+  private final UUID granterId = UUID.randomUUID();
+  private final UUID targetUserId = UUID.randomUUID();
 
-    @BeforeEach
-    void setUp() {
-        service = new ProjectGrantServiceImpl(
-                grantRepository, projectRepository, memberRepository, customRoleRepository,
-                userRepository, permissionService);
-        lenient().when(permissionService.currentUserId()).thenReturn(granterId);
-        lenient().when(projectRepository.findById(projectId)).thenReturn(Optional.of(
-                Project.builder().id(projectId).organization(Organization.builder().id(orgId).build()).build()));
-    }
+  @BeforeEach
+  void setUp() {
+    service =
+        new ProjectGrantServiceImpl(
+            grantRepository,
+            projectRepository,
+            memberRepository,
+            customRoleRepository,
+            userRepository,
+            permissionService);
+    lenient().when(permissionService.currentUserId()).thenReturn(granterId);
+    lenient()
+        .when(projectRepository.findById(projectId))
+        .thenReturn(
+            Optional.of(
+                Project.builder()
+                    .id(projectId)
+                    .organization(Organization.builder().id(orgId).build())
+                    .build()));
+  }
 
-    private CreateProjectGrantRequest builtInRequest(MemberRole role) {
-        CreateProjectGrantRequest r = new CreateProjectGrantRequest();
-        r.setUserId(targetUserId);
-        r.setRole(role);
-        return r;
-    }
+  private CreateProjectGrantRequest builtInRequest(MemberRole role) {
+    CreateProjectGrantRequest r = new CreateProjectGrantRequest();
+    r.setUserId(targetUserId);
+    r.setRole(role);
+    return r;
+  }
 
-    private void granterHas(MemberRole role) {
-        when(permissionService.effectiveActionsForProject(granterId, projectId))
-                .thenReturn(new java.util.HashSet<>(PermissionService.actionsForRole(role)));
-    }
+  private void granterHas(MemberRole role) {
+    when(permissionService.effectiveActionsForProject(granterId, projectId))
+        .thenReturn(new java.util.HashSet<>(PermissionService.actionsForRole(role)));
+  }
 
-    @Test
-    void upsertBlocksGrantingBeyondOwnPermissions() {
-        // Granter is only ADMIN; granting OWNER (which adds FLAG_DELETE etc.) is beyond their set.
-        granterHas(MemberRole.ADMIN);
+  @Test
+  void upsertBlocksGrantingBeyondOwnPermissions() {
+    // Granter is only ADMIN; granting OWNER (which adds FLAG_DELETE etc.) is beyond their set.
+    granterHas(MemberRole.ADMIN);
 
-        assertThatThrownBy(() -> service.upsertGrant(projectId, builtInRequest(MemberRole.OWNER)))
-                .isInstanceOf(UnauthorizedException.class)
-                .hasMessageContaining("beyond your own");
+    assertThatThrownBy(() -> service.upsertGrant(projectId, builtInRequest(MemberRole.OWNER)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("beyond your own");
 
-        verify(grantRepository, never()).save(any());
-    }
+    verify(grantRepository, never()).save(any());
+  }
 
-    @Test
-    void upsertRejectsWhenNeitherRoleNorCustomRoleProvided() {
-        CreateProjectGrantRequest r = new CreateProjectGrantRequest();
-        r.setUserId(targetUserId);
+  @Test
+  void upsertRejectsWhenNeitherRoleNorCustomRoleProvided() {
+    CreateProjectGrantRequest r = new CreateProjectGrantRequest();
+    r.setUserId(targetUserId);
 
-        assertThatThrownBy(() -> service.upsertGrant(projectId, r))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("exactly one");
-    }
+    assertThatThrownBy(() -> service.upsertGrant(projectId, r))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exactly one");
+  }
 
-    @Test
-    void upsertRequiresTargetToBeOrgMember() {
-        granterHas(MemberRole.OWNER);
-        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(User.builder().id(targetUserId).build()));
-        when(memberRepository.existsByOrganizationIdAndUserId(orgId, targetUserId)).thenReturn(false);
+  @Test
+  void upsertRequiresTargetToBeOrgMember() {
+    granterHas(MemberRole.OWNER);
+    when(userRepository.findById(targetUserId))
+        .thenReturn(Optional.of(User.builder().id(targetUserId).build()));
+    when(memberRepository.existsByOrganizationIdAndUserId(orgId, targetUserId)).thenReturn(false);
 
-        assertThatThrownBy(() -> service.upsertGrant(projectId, builtInRequest(MemberRole.ADMIN)))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessageContaining("not a member");
+    assertThatThrownBy(() -> service.upsertGrant(projectId, builtInRequest(MemberRole.ADMIN)))
+        .isInstanceOf(ResourceNotFoundException.class)
+        .hasMessageContaining("not a member");
 
-        verify(grantRepository, never()).save(any());
-    }
+    verify(grantRepository, never()).save(any());
+  }
 
-    @Test
-    void upsertCreatesBuiltInGrantForOrgMemberWithinCeiling() {
-        granterHas(MemberRole.OWNER);
-        User target = User.builder().id(targetUserId).email("t@example.com").build();
-        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(target));
-        when(memberRepository.existsByOrganizationIdAndUserId(orgId, targetUserId)).thenReturn(true);
-        when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(targetUserId, ScopeType.PROJECT, projectId))
-                .thenReturn(Optional.empty());
-        when(grantRepository.save(any(PermissionGrant.class))).thenAnswer(inv -> inv.getArgument(0));
+  @Test
+  void upsertCreatesBuiltInGrantForOrgMemberWithinCeiling() {
+    granterHas(MemberRole.OWNER);
+    User target = User.builder().id(targetUserId).email("t@example.com").build();
+    when(userRepository.findById(targetUserId)).thenReturn(Optional.of(target));
+    when(memberRepository.existsByOrganizationIdAndUserId(orgId, targetUserId)).thenReturn(true);
+    when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(
+            targetUserId, ScopeType.PROJECT, projectId))
+        .thenReturn(Optional.empty());
+    when(grantRepository.save(any(PermissionGrant.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        ProjectGrantResponse response = service.upsertGrant(projectId, builtInRequest(MemberRole.ADMIN));
+    ProjectGrantResponse response =
+        service.upsertGrant(projectId, builtInRequest(MemberRole.ADMIN));
 
-        assertThat(response.getUserId()).isEqualTo(targetUserId);
-        assertThat(response.getRole()).isEqualTo(MemberRole.ADMIN);
-        verify(grantRepository).save(any(PermissionGrant.class));
-    }
+    assertThat(response.getUserId()).isEqualTo(targetUserId);
+    assertThat(response.getRole()).isEqualTo(MemberRole.ADMIN);
+    verify(grantRepository).save(any(PermissionGrant.class));
+  }
 
-    @Test
-    void upsertRejectsCustomRoleFromAnotherOrg() {
-        // The foreign-org check fires before the ceiling, so no granter stub is needed.
-        UUID customRoleId = UUID.randomUUID();
-        CreateProjectGrantRequest r = new CreateProjectGrantRequest();
-        r.setUserId(targetUserId);
-        r.setCustomRoleId(customRoleId);
-        CustomRole foreign = CustomRole.builder()
-                .id(customRoleId).organization(Organization.builder().id(UUID.randomUUID()).build()).build();
-        when(customRoleRepository.findById(customRoleId)).thenReturn(Optional.of(foreign));
+  @Test
+  void upsertRejectsCustomRoleFromAnotherOrg() {
+    // The foreign-org check fires before the ceiling, so no granter stub is needed.
+    UUID customRoleId = UUID.randomUUID();
+    CreateProjectGrantRequest r = new CreateProjectGrantRequest();
+    r.setUserId(targetUserId);
+    r.setCustomRoleId(customRoleId);
+    CustomRole foreign =
+        CustomRole.builder()
+            .id(customRoleId)
+            .organization(Organization.builder().id(UUID.randomUUID()).build())
+            .build();
+    when(customRoleRepository.findById(customRoleId)).thenReturn(Optional.of(foreign));
 
-        assertThatThrownBy(() -> service.upsertGrant(projectId, r))
-                .isInstanceOf(ResourceNotFoundException.class);
+    assertThatThrownBy(() -> service.upsertGrant(projectId, r))
+        .isInstanceOf(ResourceNotFoundException.class);
 
-        verify(grantRepository, never()).save(any());
-    }
+    verify(grantRepository, never()).save(any());
+  }
 
-    @Test
-    void revokeBlocksRemovingGrantBeyondOwnPermissions() {
-        when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(targetUserId, ScopeType.PROJECT, projectId))
-                .thenReturn(Optional.of(PermissionGrant.builder().role(MemberRole.OWNER).build()));
-        granterHas(MemberRole.ADMIN);
+  @Test
+  void revokeBlocksRemovingGrantBeyondOwnPermissions() {
+    when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(
+            targetUserId, ScopeType.PROJECT, projectId))
+        .thenReturn(Optional.of(PermissionGrant.builder().role(MemberRole.OWNER).build()));
+    granterHas(MemberRole.ADMIN);
 
-        assertThatThrownBy(() -> service.revokeGrant(projectId, targetUserId))
-                .isInstanceOf(UnauthorizedException.class)
-                .hasMessageContaining("beyond your own");
+    assertThatThrownBy(() -> service.revokeGrant(projectId, targetUserId))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("beyond your own");
 
-        verify(grantRepository, never()).delete(any());
-    }
+    verify(grantRepository, never()).delete(any());
+  }
 }

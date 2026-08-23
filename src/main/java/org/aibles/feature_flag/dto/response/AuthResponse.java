@@ -1,16 +1,16 @@
 package org.aibles.feature_flag.dto.response;
 
+import java.util.UUID;
 import lombok.Builder;
 import lombok.Data;
-
-import java.util.UUID;
 
 @Data
 @Builder
 public class AuthResponse {
-    private String token;
-    @Builder.Default
-    private String type = "Bearer";
-    private UUID userId;
-    private String email;
+  private String accessToken;
+  private String refreshToken;
+  @Builder.Default private String tokenType = "Bearer";
+  private long expiresIn; // access-token lifetime in seconds
+  private UUID userId;
+  private String email;
 }

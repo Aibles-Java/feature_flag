@@ -4,56 +4,58 @@
 
 ## Current WIP
 
-**Issue #4** (security test coverage) on branch `feature/issue-4-security-tests`
-(→ `develop`). Tests are written and **all 35 pass** (`./mvnw test` → BUILD SUCCESS).
-Board card for #4 assigned to @trinhvandat and at **In progress**. Commit / push / PR are
-happening this session.
+SonarQube CI on a self-hosted runner.
 
-New test files (all under `src/test/java/org/aibles/feature_flag/`):
-- `security/JwtTokenProviderTest` (5) — valid / expired / malformed / tampered /
-  wrong-secret; claim round-trip.
-- `security/JwtAuthenticationFilterTest` (4) — sets auth on valid Bearer; no auth on
-  missing / non-Bearer / invalid.
-- `security/ApiKeyAuthenticationFilterTest` (3) — 401 problem-detail on missing / unknown
-  key; sets `Environment` principal + proceeds on valid key.
-- `security/CustomUserDetailsServiceTest` (2) — maps `User`→`UserPrincipal`; throws
-  `UsernameNotFoundException` when absent.
-- `security/SecurityChainIntegrationTest` (6, `@SpringBootTest`) — both chains reject
-  unauth; API key can't hit admin routes, JWT can't hit SDK routes.
-- `service/impl/PermissionServiceTest` (12) — OWNER/ADMIN/VIEWER gate on
-  org/project/environment + membership + not-found paths.
-- `util/ApiKeyGeneratorTest` (2) — 64-char lowercase hex + uniqueness.
-
-Coverage: the six issue-named classes (JwtTokenProvider, JwtAuthenticationFilter,
-ApiKeyAuthenticationFilter, CustomUserDetailsService, PermissionService, ApiKeyGenerator)
-are all at **100% instruction coverage**. 40 tests total after folding in a `java-reviewer`
-pass (strengthened cross-chain proof with real valid JWTs; tightened admin status asserts to
-403; added `currentUserId` null/wrong-type + JWT edge cases).
-
-**Spun off issue #10** (assigned to `oanhhkim`, board=Todo): the review + a new integration
-test proved a real production defect — a valid JWT for a deleted user throws
-`UsernameNotFoundException` out of `JwtAuthenticationFilter` (it runs *before*
-`ExceptionTranslationFilter`, so it's never translated) → HTTP 500 instead of 401/403. Per
-the user's call this PR stays **test-only**: `SecurityChainIntegrationTest`
-.adminValidTokenForDeletedUser_currentlyLeaksException pins the current behaviour; flip it to
-`isForbidden()` when #10 is fixed.
+- `.github/workflows/sonar.yml` — refactored + committed as `4f2b690` on branch
+  **`feature/sona-ci`** (local `develop` reset back to `origin/develop`, clean).
+- A self-hosted GitHub Actions runner is **registered and online (Idle)**, currently
+  running via `./run.sh` in a foreground terminal (NOT yet installed as a service).
+- Not yet pushed — was blocked by the pre-push memory gate; this `/save-memory` run
+  unblocks it.
 
 ## Context to Load
 
-- `conventions/springboot4-security-testing.md` — the two Boot-4 test gotchas hit this
-  session (MockMvc setup + deterministic JWT tamper). Read before writing more security
-  tests.
-- `decisions/0005-issue-workflow-board-and-memory-gate.md` — board script + memory gate.
-- `decisions/0004-jacoco-coverage-ratchet-and-ci.md` — the coverage ratchet these tests
-  feed; consider bumping `jacoco.line.coverage` above 0.00 in a follow-up now that real
-  coverage exists.
+- [[0018-sonarqube-ci-self-hosted-runner]] — the workflow design + runner ops notes.
 
 ## Next steps
 
-- After PR opens: `.claude/scripts/issue-board.sh ready 4`.
-- Follow-up worth doing: raise `jacoco.line.coverage` off 0.00 now that the security
-  package has real tests (was intentionally 0.00 until coverage landed — see #3).
-- Unrelated pre-existing WIP still uncommitted in the tree: `.gitignore` (adds `.omc/`) and
-  `docs/ARCHITECTURE.md` (regenerated) — deliberately kept out of the #4 commit; land or
-  discard separately.
-- Still open from prior sessions: PRs #8, #7, #2, #1 — all → `develop`, unmerged.
+1. Commit this memory + push `feature/sona-ci` (memory gate now satisfied).
+2. Open a PR `feature/sona-ci` → `develop`; the `pull_request` trigger runs the
+   SonarQube job. Watch: `run.sh` terminal should print `Running job: sonar`; Actions
+   tab should go green.
+3. If green: `Ctrl+C` the `run.sh` terminal → install runner as a service
+   (`sudo ./svc.sh install gh-runner && sudo ./svc.sh start`) so it survives reboot.
+4. Confirm the two repo secrets exist: `SONAR_TOKEN`, `SONAR_HOST_URL`.
+5. Follow-up (separate): verify `pom.xml` emits JaCoCo `jacoco.xml` so Sonar scores
+   coverage — not done in this session.
+
+## Cross-branch / open PRs (all three conflict-resolved this session — MERGEABLE + CI green)
+
+- **#43** (issue #27, docker port/non-root) — merged `develop` in; kept #25's readiness HEALTHCHECK
+  layered under `USER spring`; compose now passes `APP_JWT_SECRET` (the image bakes the prod profile,
+  so it would have crash-looped). Decision **0019**.
+- **#58** (issue #31, audit log) — merged `develop` in; **migration renumbered 010 → 011** (#32 took
+  010 for refresh-tokens; git did NOT flag it — two different filenames both added); kept develop's
+  `@Transactional(readOnly=true)` on `listMembers` (the #52 fix). Decision **0020**.
+- **#60** (issue #34, GHCR publish + Trivy) — merged `develop` in; verified the raised
+  `jacoco.line.coverage=0.87` still holds after #32 landed (measured 0.8938).
+  Decision **0018**.
+- Decision numbers across open PRs: 0018 (#60) / 0019 (#43) / 0020 (#58) / **0021 (#35, this
+  branch)** — collision-free in any merge order.
+- **#53** (issue #30, evaluation cache) — open; its pre-rollout `FlagStateSnapshot` design is what
+  satisfies #35's caching bullet. ADR-0004 records the invariant any future cache layer must keep.
+- Unanswered review comment on **#58**: "check the warning please" — every CI warning is
+  pre-existing on `develop` (verified by diffing against run `30373689296`); the only one worth
+  fixing is `HHH90000025 H2Dialect ... specified explicitly` (drop `hibernate.dialect` from
+  `application-test.properties`). Awaiting the reviewer's preference.
+
+## Known landmines
+
+- **Windows docs case-collision** (`docs/ARCHITECTURE.md` vs `docs/architecture.md`): while both
+  paths are tracked the phantom one is *always* dirty and **`git merge` refuses to start** —
+  `git stash` only flips which name is dirty. Fix is `git rm --cached docs/ARCHITECTURE.md`.
+  `develop` renamed the uppercase file to `docs/architecture-design-v1.md`; PRs #43 and #58 each
+  carry the `git rm --cached` plus an updated `conventions/windows-docs-case-collision.md`. This
+  branch is off `develop` so it never had the phantom — do **not** re-update that convention file
+  here, it would conflict three ways.
+- `./mvnw test -Dtest='A+B'` is not valid surefire syntax — use `-Dtest='A,B'`.

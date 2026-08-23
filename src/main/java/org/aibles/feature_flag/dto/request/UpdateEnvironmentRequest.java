@@ -9,17 +9,23 @@ import org.aibles.feature_flag.domain.enums.EnvType;
 
 @Data
 public class UpdateEnvironmentRequest {
-    @Size(max = 100)
-    private String name;
-    private String description;
-    private EnvType type;
-    @Min(0) @Max(23)
-    private Integer changeWindowStartHour;
-    @Min(0) @Max(23)
-    private Integer changeWindowEndHour;
+  @Size(max = 100)
+  private String name;
 
-    @AssertTrue(message = "changeWindowStartHour and changeWindowEndHour must be provided together")
-    public boolean isChangeWindowComplete() {
-        return (changeWindowStartHour == null) == (changeWindowEndHour == null);
-    }
+  private String description;
+
+  private EnvType type;
+
+  @Min(0)
+  @Max(23)
+  private Integer changeWindowStartHour;
+
+  @Min(0)
+  @Max(23)
+  private Integer changeWindowEndHour;
+
+  @AssertTrue(message = "changeWindowStartHour and changeWindowEndHour must be provided together")
+  public boolean isChangeWindowComplete() {
+    return (changeWindowStartHour == null) == (changeWindowEndHour == null);
+  }
 }
