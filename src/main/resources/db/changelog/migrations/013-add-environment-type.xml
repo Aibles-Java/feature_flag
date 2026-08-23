@@ -4,7 +4,7 @@
                    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
 
-    <changeSet id="009-add-environment-type" author="dev">
+    <changeSet id="013-add-environment-type" author="dev">
         <addColumn tableName="environments">
             <column name="type" type="VARCHAR(20)" defaultValue="DEVELOPMENT">
                 <constraints nullable="false"/>

@@ -121,11 +121,11 @@ Notes:
 
 | # | File | Adds |
 |---|---|---|
-| 009 | `009-add-environment-type.xml` | `environments.type` (default `DEVELOPMENT`) |
-| 010 | `010-create-permission-grants.xml` | `permission_grant` table |
-| 011 | `011-create-custom-roles.xml` | `custom_role`, `custom_role_action` |
-| 012 | `012-permission-grant-custom-role.xml` | `permission_grant.custom_role_id`, `role` made nullable, XOR check |
-| 013 | `013-add-environment-change-window.xml` | `environments.change_window_start_hour` / `_end_hour` |
+| 013 | `013-add-environment-type.xml` | `environments.type` (default `DEVELOPMENT`) |
+| 014 | `014-create-permission-grants.xml` | `permission_grant` table |
+| 015 | `015-create-custom-roles.xml` | `custom_role`, `custom_role_action` |
+| 016 | `016-permission-grant-custom-role.xml` | `permission_grant.custom_role_id`, `role` made nullable, XOR check |
+| 017 | `017-add-environment-change-window.xml` | `environments.change_window_start_hour` / `_end_hour` |
 
 No previously-run changeset was modified; no data was migrated.
 
@@ -288,7 +288,7 @@ their own:
 
 ## 9. Operational notes
 
-- **⚠️ Production protection is not retroactive.** Migration 009 backfills every existing
+- **⚠️ Production protection is not retroactive.** Migration 013 backfills every existing
   environment's `type` to `DEVELOPMENT`. After deploying to an environment with existing data,
   **re-classify real production environments** (`PUT /environments/{id}` with
   `type=PRODUCTION`), otherwise rule B/D will not apply to them. This cannot be auto-detected.
@@ -316,4 +316,4 @@ their own:
   requirement, cross-org custom role rejection.
 - `service/impl/CustomRoleServiceImplTest` — custom-role ceiling on create/update/delete.
 - `security/SecurityChainIntegrationTest` — `@SpringBootTest`; boots the full context and runs
-  migrations 009–013 on H2.
+  migrations 013–017 on H2.

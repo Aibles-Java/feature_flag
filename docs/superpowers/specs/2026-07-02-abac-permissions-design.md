@@ -79,7 +79,7 @@ This design resolves at `PROJECT` and `ORG`. Production protection (B) is expres
 Two new Liquibase changesets. **No existing changeset is modified. No data is migrated.**
 Both are registered in `db.changelog-master.xml` after `008`.
 
-### 4.1 `009-add-environment-type.xml`
+### 4.1 `013-add-environment-type.xml`
 
 Add an environment attribute that B keys off of.
 
@@ -92,7 +92,7 @@ Add an environment attribute that B keys off of.
 - `CreateEnvironmentRequest` / `UpdateEnvironmentRequest` / `EnvironmentResponse` gain a
   `type` field (create defaults to `DEVELOPMENT` when omitted).
 
-### 4.2 `010-create-permission-grants.xml`
+### 4.2 `014-create-permission-grants.xml`
 
 ```
 permission_grant
@@ -246,7 +246,7 @@ Coverage feeds the existing JaCoCo ratchet; consider bumping `jacoco.line.covera
 - Additive only: two new changesets, one new column (defaulted), one new table. Existing
   data and behavior for org-level roles are preserved by the resolution fallback.
 - `ddl-auto=validate` stays valid because Liquibase owns the new schema.
-- **⚠️ Production-protection is NOT retroactive.** Migration `009` backfills every existing
+- **⚠️ Production-protection is NOT retroactive.** Migration `013` backfills every existing
   `environments.type` to `DEVELOPMENT`. On a deployment with existing data, real production
   environments will be typed `DEVELOPMENT` and the prod rule will **not** protect them until an
   admin re-classifies them (`PUT /environments/{id}` with `type=PRODUCTION`). Post-deploy
@@ -267,7 +267,7 @@ Coverage feeds the existing JaCoCo ratchet; consider bumping `jacoco.line.covera
 
 ## 12. Summary of changes
 
-- 2 Liquibase changesets (`009`, `010`) + master registration.
+- 2 Liquibase changesets (`013`, `014`) + master registration.
 - 1 new table (`permission_grant`), 1 new column (`environments.type`), 2 new enums
   (`EnvType`, `ScopeType`), 1 new entity + repository.
 - `PermissionService` evolved into a PDP: `Action` enum, `role → actions` map,
