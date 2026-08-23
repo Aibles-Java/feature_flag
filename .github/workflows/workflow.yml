@@ -24,10 +24,14 @@ on:
         description: 'GHCR image version to deploy, e.g. 1.2.3 (must already exist in GHCR)'
         required: true
 
-# A newer push to the same ref cancels an in-flight run for that ref.
+# Cancel a superseded run ONLY for pull_request events (redundant CI on a new
+# push to the PR). For push-to-develop / tag / dispatch we must NEVER cancel
+# mid-run — the deploy job runs there, and a cancelled `compose up` would leave a
+# half-applied stack. Rapid develop pushes therefore run to completion and their
+# deploy jobs serialize via the job-level `deploy-prod` concurrency group.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -159,13 +163,17 @@ jobs:
   # Continuous deployment to the server. Three entry points, each gated on
   # `publish` succeeding first (so the image deployed passed tests + a clean
   # Trivy scan and is already in GHCR):
-  #   - a push to `develop`      -> rolls out the moving `develop` image;
+  #   - a push to `develop`      -> rolls out the immutable `sha-<short>` tag of
+  #                                 the merged commit (NOT the moving `develop`
+  #                                 tag) so the deploy is traceable + rollbackable;
   #   - a `vX.Y.Z` tag push      -> rolls out that release version;
   #   - a manual `workflow_dispatch` -> redeploys an already-published version
   #     (publish is skipped on dispatch, hence `always()` + the per-event checks).
-  # Runs on the self-hosted runner because the server sits on the internal
-  # network; branch pushes/tags/dispatch are maintainer-only (never a fork PR),
-  # so no untrusted fork code runs here.
+  #     Accepts a `sha-<short>` value too — that is how you roll back by hand.
+  # A failed health check auto-rolls-back to the previously-running image (see the
+  # rollback step). Runs on the self-hosted runner because the server sits on the
+  # internal network; branch pushes/tags/dispatch are maintainer-only (never a
+  # fork PR), so no untrusted fork code runs here.
   deploy:
     name: Deploy to server (self-hosted)
     needs: publish
@@ -189,25 +197,30 @@ jobs:
         uses: actions/checkout@v4
 
       # Derive the GHCR image ref for the triggering event:
-      #   - develop push : GITHUB_REF_NAME is `develop` -> pulls the moving
-      #     `develop` tag from `type=ref,event=branch` above.
+      #   - develop push : `sha-<short>` of the merged commit (matches the
+      #     `type=sha` tag publish pushed) -> immutable + traceable, not the
+      #     moving `develop` tag. Short SHA is the first 7 hex chars, which is
+      #     metadata-action's default `type=sha` format.
       #   - tag push     : `v1.2.3` -> `1.2.3` (metadata-action's {{version}}).
-      #   - dispatch     : the `version` input verbatim.
-      # `#v` only strips a leading `v` from a release tag; on `develop` it's a
-      # no-op. GHCR requires a lowercase path. INPUT_VERSION is passed via env
-      # (never interpolated into the script) so the untrusted input can't inject.
+      #   - dispatch     : the `version` input verbatim (accepts `1.2.3` OR a
+      #     `sha-<short>` for a hand rollback).
+      # `#v` only strips a leading `v` from a release tag/input; a no-op on a
+      # `sha-` value. GHCR requires a lowercase path. INPUT_VERSION is passed via
+      # env (never interpolated into the script) so the untrusted input can't inject.
       - name: Resolve image tag
         id: img
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            version="${INPUT_VERSION#v}"
+            tag="${INPUT_VERSION#v}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
           else
-            version="${GITHUB_REF_NAME#v}"
+            tag="sha-${GITHUB_SHA:0:7}"
           fi
           repo="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-          echo "image=ghcr.io/${repo}:${version}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${repo}:${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -215,6 +228,19 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Record the image the running container was started with, so the rollback
+      # step below can restore it if the new release fails its health check.
+      # Empty on the very first deploy (no ff_app yet) -> rollback is skipped.
+      - name: Record currently-running image (for rollback)
+        run: |
+          prev="$(docker inspect -f '{{.Config.Image}}' ff_app 2>/dev/null || true)"
+          echo "PREV_IMAGE=${prev}" >> "$GITHUB_ENV"
+          if [ -n "${prev}" ]; then
+            echo "Currently running: ${prev}"
+          else
+            echo "No running ff_app container — first deploy, rollback will be skipped."
+          fi
 
       # Pull the released image and bring the stack up. Liquibase runs on app
       # startup (ddl-auto=validate), so migrations apply here — no separate
@@ -245,5 +271,46 @@ jobs:
             sleep 5
           done
           echo "App did not become healthy within the timeout."
+          docker compose -f docker-compose.prod.yml logs --tail=100 app
+          exit 1
+
+      # Auto-rollback: if any step above failed (health gate, or the deploy
+      # itself), restore the image the container was running before this run.
+      # Re-uses the local image (no pull) and re-verifies, then keeps the job
+      # RED so the failure is still surfaced. Skipped on the first deploy
+      # (PREV_IMAGE empty) or when the previous image equals the new one.
+      # NOTE: only rolls back the app IMAGE — a forward Liquibase migration that
+      # already applied is NOT reverted (old app + new schema). Acceptable for
+      # the test env; a schema rollback would need its own path.
+      - name: Roll back on failed deploy
+        if: failure()
+        env:
+          APP_IMAGE: ${{ env.PREV_IMAGE }}
+          NEW_IMAGE: ${{ steps.img.outputs.image }}
+          APP_JWT_SECRET: ${{ secrets.APP_JWT_SECRET }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          if [ -z "${APP_IMAGE}" ]; then
+            echo "No previous image recorded (first deploy) — nothing to roll back to."
+            exit 0
+          fi
+          if [ "${APP_IMAGE}" = "${NEW_IMAGE}" ]; then
+            echo "Previous image equals the just-deployed image — no rollback needed."
+            exit 0
+          fi
+          echo "Rolling back to ${APP_IMAGE}..."
+          docker compose -f docker-compose.prod.yml up -d
+          docker compose -f docker-compose.prod.yml ps
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8081/actuator/health/readiness >/dev/null; then
+              echo "Rolled back and healthy on ${APP_IMAGE}."
+              exit 0
+            fi
+            echo "Waiting for rollback to become ready... ($i/30)"
+            sleep 5
+          done
+          echo "Rollback did NOT become healthy — manual intervention required."
           docker compose -f docker-compose.prod.yml logs --tail=100 app
           exit 1

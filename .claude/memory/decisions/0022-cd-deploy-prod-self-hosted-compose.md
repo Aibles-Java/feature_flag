@@ -1,6 +1,6 @@
 ---
 name: 0022-cd-deploy-prod-self-hosted-compose
-description: CD deploy job — on v* tag, after publish, pull GHCR image and docker compose up on self-hosted
+description: CD deploy job — push to develop (or v* tag / dispatch) after publish, pull immutable sha-tagged GHCR image and docker compose up on self-hosted, with auto-rollback
 metadata:
   type: decision
 ---
@@ -25,18 +25,34 @@ here because the job runs **only on maintainer-pushed branches/tags/dispatch** �
 never a fork PR (the fork-on-self-hosted risk that keeps CI test/publish on
 `ubuntu-latest` stays intact; repo is **public**).
 
-**Image tags** (metadata-action): `type=ref,event=branch` → the **moving
-`develop` tag** the deploy job pulls for continuous deploy; `type=sha` →
-`sha-<short>` immutable tag for traceability/rollback; `type=semver` on a `v*`
-tag; `latest` only on `main`. Deploy resolves the ref in shell (env-injected
-`$GITHUB_REF_NAME`, never `${{ }}` interpolation): develop push → `:develop`
-(`#v` no-op), tag → `:1.2.3`, dispatch → the input verbatim. GHCR path lowercased
-(`tr '[:upper:]' '[:lower:]'`).
+**Image tags** (metadata-action): `type=ref,event=branch` → the moving
+`develop`/`main` tag (still published, for humans); `type=sha` → `sha-<short>`
+**immutable tag — this is what deploy actually pulls on a develop push**;
+`type=semver` on a `v*` tag; `latest` only on `main`. Deploy resolves the ref in
+shell (env-injected, never `${{ }}` interpolation): develop push →
+`:sha-${GITHUB_SHA:0:7}` (matches metadata-action's default 7-char `type=sha`),
+tag (`GITHUB_REF_TYPE == tag`) → `:1.2.3`, dispatch → the input verbatim (accepts
+`1.2.3` OR a `sha-<short>` for a hand rollback). GHCR path lowercased
+(`tr '[:upper:]' '[:lower:]'`). **Why sha not the moving `develop` tag:** you
+always know exactly which commit is on the server, and rollback is deterministic
+(dispatch with the old `sha-`).
 
-**Caveat:** top-level `concurrency` is `cancel-in-progress: true` keyed on
-`github.ref` — two rapid `develop` pushes cancel the earlier run, which can kill a
-deploy mid-`compose up`. Acceptable for a test server; tighten (per-ref queue or
-exempt deploy) if it ever deploys somewhere that can't tolerate a half-applied up.
+**Concurrency (fixed):** top-level is now
+`cancel-in-progress: ${{ github.event_name == 'pull_request' }}` — cancels only
+redundant PR CI; push-to-develop / tag / dispatch runs are NEVER cancelled
+mid-flight, so a deploy can't be killed mid-`compose up`. Rapid develop pushes
+both run to completion and their deploy jobs serialize via the job-level
+`deploy-prod` group (`cancel-in-progress: false`). (Previously top-level was
+`true`, which could cancel a run mid-deploy — the job-level `false` didn't help
+because the cancel came from the outer group.)
+
+**Auto-rollback:** a "Record currently-running image" step captures
+`docker inspect -f '{{.Config.Image}}' ff_app` into `$GITHUB_ENV` before
+`compose up`. A final `if: failure()` step restores that image (local, no pull),
+re-verifies `/readiness`, then keeps the job RED. Skipped on the first deploy
+(no `ff_app`) or when prev == new. **Limitation:** only the app IMAGE is rolled
+back — a forward Liquibase migration that already ran is NOT reverted (old app +
+new schema). Acceptable for the test env; a schema rollback needs its own path.
 
 **Manual test path (`workflow_dispatch`):** a second entry point deploys an
 **already-published** GHCR version without cutting a real tag (`version` input,
