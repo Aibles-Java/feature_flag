@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 # CI + CD in one file. Each job gates itself by event with `if:` (a workflow
 # has a single `on:` for all jobs):
@@ -7,8 +7,10 @@ name: CI
 #   - deploy  : push to `develop` (continuous deploy to the server, after publish),
 #               a `v*` tag (after publish), OR a manual `workflow_dispatch` run
 #               that redeploys an already-published GHCR version — pull + `compose up`
-# (Workflow name stays "CI" so the Slack app scope + branch-protection checks
-# that key on it keep working; the file is `workflow.yml` because it does both.)
+# (Named "CI/CD" — the file is `workflow.yml` because it does both. Branch
+# protection keys on the JOB check names below, not this workflow name, so it is
+# unaffected. The GitHub Slack app DOES scope on this name
+# (`workflows:{name:"CI/CD"}`), so keep docs/slack-notifications.md in sync.)
 on:
   pull_request:
     branches: [develop, main]

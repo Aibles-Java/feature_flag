@@ -14,6 +14,15 @@ Also deploys on a **`vX.Y.Z` tag** and via manual **`workflow_dispatch`**. Every
 path is gated on **`needs: publish` succeeding** so deploy only ever rolls out an
 image that passed tests + a clean Trivy scan and is in GHCR.
 
+**Workflow is named `CI/CD`** (was `CI`) since it does both. Renaming is safe re:
+branch protection — that keys on the **job** check names (`Build & test (Java 21)`,
+`Publish Docker image (GHCR)`, `Deploy to server (self-hosted)`), NOT the workflow
+name. The one real coupling is the **GitHub Slack app**: `docs/slack-notifications.md`
+subscribes with `workflows:{name:"CI/CD"}` (exact-match) — change both together or
+Slack silently stops notifying. (The only correct way to split into a real `cd.yml`
+would be `workflow_run`, rejected: no PR-checks visibility, CD file always taken
+from the default branch, awkward tag path.)
+
 **Why same workflow, not a separate cd.yml:** a separate trigger-based workflow
 would fire *concurrently* with `workflow.yml` on the same push — deploy could run
 before publish finished and pull a not-yet-pushed image. `needs:` only works

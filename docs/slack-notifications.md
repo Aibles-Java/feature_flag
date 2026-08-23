@@ -32,7 +32,7 @@ GitHub's native Slack app. The webhook URL is a secret — never commit it.
 
 ```
 # In #ff-ci — build failures + coverage check runs
-/github subscribe Aibles-Java/feature_flag workflows:{name:"CI"} checks
+/github subscribe Aibles-Java/feature_flag workflows:{name:"CI/CD"} checks
 
 # In #ff-dev — PR activity
 /github subscribe Aibles-Java/feature_flag pulls reviews
@@ -49,7 +49,7 @@ Trim the noise so only high-signal events remain:
 /github unsubscribe Aibles-Java/feature_flag issues pulls commits deployments
 ```
 
-`workflows:{name:"CI"}` scopes to the `CI` workflow in `.github/workflows/workflow.yml`.
+`workflows:{name:"CI/CD"}` scopes to the `CI/CD` workflow in `.github/workflows/workflow.yml`.
 GitHub's app reports both pass and fail; if you only want failures, use a channel
 that people mute-until-mentioned, or filter on the app's message settings.
 
