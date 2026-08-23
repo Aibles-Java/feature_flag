@@ -79,6 +79,12 @@ every secret is `${VAR:?...}`-required (no dev fallback — prod profile is bake
 into the image). Liquibase runs on app startup (ddl-auto=validate) so migrations
 apply during `up` — no separate migration step.
 
+**Gotcha (bit us on the first real `develop` publish):** `aquasecurity/trivy-action`
+tags are **`v`-prefixed** (`@v0.28.0`) — `@0.28.0` (no `v`) fails to resolve and
+kills the `publish` job at "Set up job" before it does anything. It stayed hidden
+because `publish` only runs on push to develop/main/tag, and the first such push
+was this CD work. `deploy` correctly skipped (`needs: publish`), so no half-deploy.
+
 **Deployment gate:** a health step polls `http://localhost:8081/actuator/health/readiness`
 for ~150s; on failure it dumps `app` logs and fails the job, so a bad release is
 visible immediately. Job-level `concurrency: {group: deploy-prod,
