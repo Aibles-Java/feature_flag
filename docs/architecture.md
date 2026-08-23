@@ -72,14 +72,16 @@ src/main/resources/
   application.properties
   db/changelog/
     db.changelog-master.xml
-    migrations/     001–007, Liquibase-owned schema (append-only)
+    migrations/     001–011, 013–017, Liquibase-owned schema (append-only)
 ```
 
 ## What to know before touching code
 
 - `FeatureFlag.key` is immutable — set at creation, never updated (`FeatureFlagServiceImpl.update()` intentionally ignores it).
 - Security filter chain order matters: SDK chain (`/api/v1/sdk/**`, order=1) before Admin chain (order=2).
-- `PermissionService` (not controllers) enforces `OrganizationMember.role` checks before mutations.
+- `PermissionService` (not controllers) is the Policy Decision Point: it resolves the caller's
+  effective `Action` set — org role ∪ any project-scoped `PermissionGrant` (built-in or custom
+  role) — and applies the production and change-window rules. See `ABAC.md`.
 - DB schema is Liquibase-owned (`ddl-auto=validate`) — never modify an already-run changeset, always add a new one under `db/changelog/migrations/`.
 - `ApiKeyGenerator` uses `SecureRandom` → 32 bytes → 64-char hex string; runs on environment creation and key rotation.
 

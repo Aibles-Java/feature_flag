@@ -33,6 +33,12 @@ implementation. It reads `UserPrincipal` from `SecurityContextHolder` and checks
 `OrganizationMember.role` (OWNER / ADMIN / VIEWER) before any mutating operation — controllers
 stay free of authorization logic.
 
+> **Superseded by [ADR-0006](ADR-0006-abac-authorization-model.md).** `PermissionService` is still
+> the single choke point and controllers still carry no authorization logic, but the org role no
+> longer decides on its own: it is one input to an effective *action set* that also includes
+> project-scoped grants and custom roles, with production and change-window rules on top.
+> `requireRole*` survives only as an adapter.
+
 **Flag key immutability:** `FeatureFlag.key` is set once at creation and never updated. SDKs
 depend on this key being stable across releases; `FeatureFlagServiceImpl.update()` intentionally
 ignores changes to it.

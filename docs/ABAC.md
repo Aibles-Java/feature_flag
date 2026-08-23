@@ -1,6 +1,7 @@
 # Authorization (ABAC) — Architecture & Flow
 
-Status: implemented on branch `feature/role`. Design spec:
+Status: implemented on branch `feature/role`, merged up to `develop` (audit log, hashed API
+keys, refresh tokens, pagination, metrics). Design spec:
 [`docs/superpowers/specs/2026-07-02-abac-permissions-design.md`](superpowers/specs/2026-07-02-abac-permissions-design.md).
 
 This document describes the Admin-API authorization model: how a request is authorized, the
@@ -54,6 +55,22 @@ flowchart LR
   operation. This is the single choke point (the PDP).
 - A denied `check` throws `UnauthorizedException`, mapped by `GlobalExceptionHandler` to
   **HTTP 403**. Missing resources throw `ResourceNotFoundException` → **404**.
+
+### The pre-ABAC adapters are still there
+
+`requireRole(orgId, ...)`, `requireRoleForProject(projectId, ...)` and
+`requireRoleForEnvironment(envId, ...)` were **not** removed — they are kept so call sites migrate
+to `check` incrementally (design spec §6.5). After the merge with `develop`, `AuditService` is the
+one remaining caller.
+
+- `requireRole` is org-scoped, so it reads the org role only — grants never apply at org scope.
+- The project and environment adapters resolve through `effectiveRoleForProject`, which returns the
+  **more permissive** of the caller's org role and any built-in-role PROJECT grant. So a grant
+  elevates an adapter call just as it elevates a `check`.
+- A grant carrying a **custom role** has no built-in `MemberRole` to compare against, so it does
+  **not** satisfy an adapter. Custom-role holders only get their capability through `check`.
+
+New code should call `check`.
 
 Key classes (`src/main/java/org/aibles/feature_flag/`):
 
@@ -311,9 +328,33 @@ their own:
 
 - `service/impl/PermissionServiceTest` — action matrix, effective-action resolution (org ∪
   grant, built-in & custom), production capability (B/C), change window (D, incl. wrap and
-  zero-width).
+  zero-width), **plus** the retained `requireRole*` adapter cases including grant elevation.
 - `service/impl/ProjectGrantServiceImplTest` — grant subset ceiling, tenant-membership
   requirement, cross-org custom role rejection.
 - `service/impl/CustomRoleServiceImplTest` — custom-role ceiling on create/update/delete.
+- `service/impl/EnvironmentServiceImplTest` — `ENV_MANAGE_PROTECTION` guard on `type` and change
+  window, alongside develop's hashing/audit coverage.
+- `service/impl/OrganizationServiceImplTest` — invite ceiling and grant revocation on member
+  removal, alongside develop's coverage.
 - `security/SecurityChainIntegrationTest` — `@SpringBootTest`; boots the full context and runs
-  migrations 013–017 on H2.
+  migrations 001–011 and 013–017 on H2.
+
+---
+
+## 12. Known gaps after the merge with `develop`
+
+`develop` grew features while this branch was open. These are mapped only partially:
+
+- **Audit reads are outside the action vocabulary.** `AuditService` still gates on
+  `requireRole(orgId, OWNER, ADMIN, VIEWER)`; there is no `AUDIT_READ` action, so no custom role can
+  confer audit access and project grants have no effect on it.
+- **Permission changes are not audited.** `ProjectGrantServiceImpl` and `CustomRoleServiceImpl` do
+  not call `AuditService`, and `AuditEntityType` has no `PERMISSION_GRANT` / `CUSTOM_ROLE` value —
+  so granting or revoking access leaves no audit trail.
+- **The management list endpoints are unpaginated.** They return `List<>`, while every other admin
+  list endpoint returns `PageResponse<>` with a `Pageable` (ADR-0003).
+- **URL spelling is inconsistent.** `CustomRoleController` maps `/api/v1/organizations/{orgId}/roles`
+  whereas the rest of the API uses `organisations`.
+- **`EnvironmentSecretResponse`** (create / rotate-key response) does not carry `type` or the change
+  window, so those values are invisible in the response that sets them.
+- **The Postman collection** has no requests for project grants or custom roles.
