@@ -3,9 +3,10 @@ name: CI
 # CI + CD in one file. Each job gates itself by event with `if:` (a workflow
 # has a single `on:` for all jobs):
 #   - test    : every PR into develop/main + direct pushes + `v*` tags
-#   - publish : push to `main` or a `v*` tag — build, Trivy-scan, push to GHCR (issue #34)
-#   - deploy  : `v*` tag (after publish) OR a manual `workflow_dispatch` run
-#               that deploys an already-published GHCR version — pull + `compose up`
+#   - publish : push to `develop`/`main` or a `v*` tag — build, Trivy-scan, push GHCR
+#   - deploy  : push to `develop` (continuous deploy to the server, after publish),
+#               a `v*` tag (after publish), OR a manual `workflow_dispatch` run
+#               that redeploys an already-published GHCR version — pull + `compose up`
 # (Workflow name stays "CI" so the Slack app scope + branch-protection checks
 # that key on it keep working; the file is `workflow.yml` because it does both.)
 on:
@@ -55,19 +56,22 @@ jobs:
           path: target/site/jacoco/
           if-no-files-found: warn
 
-  # Publishes a versioned image to GHCR (issue #34). Only on a push (never a
-  # PR — forks can't be trusted with registry credentials) to `main` or a
+  # Publishes an image to GHCR (issue #34). Only on a push (never a PR — forks
+  # can't be trusted with registry credentials) to `develop`/`main` or a
   # `vX.Y.Z` tag, and only once `test` is green: a red build never ships an
-  # image. The image is built once with `load: true` (no push) so Trivy can
-  # scan the exact bits about to ship; only a clean scan gets logged in and
-  # pushed, reusing the same GHA layer cache so the second build is fast, not
-  # a full rebuild.
+  # image. `develop` pushes ship a `develop` image that the deploy job below
+  # rolls out continuously to the server. The image is built once with
+  # `load: true` (no push) so Trivy can scan the exact bits about to ship;
+  # only a clean scan gets logged in and pushed, reusing the same GHA layer
+  # cache so the second build is fast, not a full rebuild.
   publish:
     name: Publish Docker image (GHCR)
     needs: test
     if: >-
       github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      (github.ref == 'refs/heads/develop' ||
+       github.ref == 'refs/heads/main' ||
+       startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -79,23 +83,27 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Computes tags/labels from the triggering ref: semver (patch, minor,
-      # major) on a `vX.Y.Z` tag push, `latest` only on a push to `main`.
-      # Deliberately NOT metadata-action's `{{is_default_branch}}` — that
-      # compares against this repo's actual configured GitHub default branch,
-      # which is `develop` (Gitflow), not `main`. Since this job never runs
-      # on a `develop` push (see the job `if:` above), `is_default_branch`
-      # would always be false here, silently dropping the `latest` tag and,
-      # on a bare `main` push with no tag in the same push, leaving `tags`
-      # empty — which makes the push step below fail outright. Gate on the
-      # actual ref instead. metadata-action lowercases `github.repository`
-      # for us (GHCR requires a lowercase image path).
+      # Computes tags/labels from the triggering ref:
+      #   - `type=ref,event=branch`  -> the branch name (`develop`, `main`) on a
+      #     branch push. This is the moving tag the deploy job pulls for
+      #     continuous deploy off `develop`.
+      #   - `type=sha`               -> `sha-<short>` on every publish, an
+      #     immutable tag for traceability / rollback.
+      #   - `type=semver,...`        -> patch/minor/major on a `vX.Y.Z` tag push.
+      #   - `latest`                 -> only on a push to `main`.
+      # Deliberately NOT metadata-action's `{{is_default_branch}}` — it compares
+      # against this repo's configured default branch (`develop`, Gitflow), so it
+      # would attach `latest` to develop; gate `latest` on the actual `main` ref
+      # instead. metadata-action lowercases `github.repository` (GHCR needs a
+      # lowercase image path).
       - name: Compute image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
+            type=ref,event=branch
+            type=sha
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
@@ -148,20 +156,24 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
 
-  # Continuous deployment to prod. Two entry points:
-  #   - a `vX.Y.Z` tag push, gated on `publish` succeeding first, so the image
-  #     deployed passed tests + a clean Trivy scan and is already in GHCR;
-  #   - a manual `workflow_dispatch` run deploying an already-published version
-  #     (publish is skipped, hence `always()` + the per-event checks below).
-  # Runs on the self-hosted runner because the prod host sits on the internal
-  # network; tags/dispatch are maintainer-only, so no untrusted fork code runs.
+  # Continuous deployment to the server. Three entry points, each gated on
+  # `publish` succeeding first (so the image deployed passed tests + a clean
+  # Trivy scan and is already in GHCR):
+  #   - a push to `develop`      -> rolls out the moving `develop` image;
+  #   - a `vX.Y.Z` tag push      -> rolls out that release version;
+  #   - a manual `workflow_dispatch` -> redeploys an already-published version
+  #     (publish is skipped on dispatch, hence `always()` + the per-event checks).
+  # Runs on the self-hosted runner because the server sits on the internal
+  # network; branch pushes/tags/dispatch are maintainer-only (never a fork PR),
+  # so no untrusted fork code runs here.
   deploy:
-    name: Deploy to prod (self-hosted)
+    name: Deploy to server (self-hosted)
     needs: publish
     if: >-
       ${{ always() &&
       (github.event_name == 'workflow_dispatch' ||
-       (startsWith(github.ref, 'refs/tags/v') && needs.publish.result == 'success')) }}
+       ((github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v'))
+        && needs.publish.result == 'success')) }}
     runs-on: self-hosted
     # Serialize deploys and never cancel one mid-flight (a half-applied
     # `compose up` is worse than a queued deploy).
@@ -176,11 +188,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Derive the GHCR image ref. On a tag push: `v1.2.3` -> the `1.2.3` tag the
-      # publish job produced via metadata-action's {{version}}. On a manual
-      # dispatch: the `version` input verbatim. GHCR requires a lowercase path.
-      # INPUT_VERSION is passed via env (never interpolated into the script) so
-      # the untrusted dispatch input can't inject shell.
+      # Derive the GHCR image ref for the triggering event:
+      #   - develop push : GITHUB_REF_NAME is `develop` -> pulls the moving
+      #     `develop` tag from `type=ref,event=branch` above.
+      #   - tag push     : `v1.2.3` -> `1.2.3` (metadata-action's {{version}}).
+      #   - dispatch     : the `version` input verbatim.
+      # `#v` only strips a leading `v` from a release tag; on `develop` it's a
+      # no-op. GHCR requires a lowercase path. INPUT_VERSION is passed via env
+      # (never interpolated into the script) so the untrusted input can't inject.
       - name: Resolve image tag
         id: img
         env:
