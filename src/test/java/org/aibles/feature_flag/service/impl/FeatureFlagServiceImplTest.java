@@ -13,6 +13,7 @@ import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
+import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
@@ -53,6 +54,7 @@ class FeatureFlagServiceImplTest {
   @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
+  @Mock AuditService auditService;
 
   FeatureFlagServiceImpl service;
 
@@ -69,8 +71,10 @@ class FeatureFlagServiceImplTest {
             flagStateRepository,
             permissionService,
             eventPublisher,
-            new FeatureFlagMetrics(new SimpleMeterRegistry()));
-    project = Project.builder().id(projectId).name("proj").build();
+            new FeatureFlagMetrics(new SimpleMeterRegistry()),
+            auditService);
+    Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
+    project = Project.builder().id(projectId).organization(org).name("proj").build();
     doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
   }
 
