@@ -1,13 +1,16 @@
-name: CI
+name: CI/CD
 
 # CI + CD in one file. Each job gates itself by event with `if:` (a workflow
 # has a single `on:` for all jobs):
 #   - test    : every PR into develop/main + direct pushes + `v*` tags
-#   - publish : push to `main` or a `v*` tag — build, Trivy-scan, push to GHCR (issue #34)
-#   - deploy  : `v*` tag (after publish) OR a manual `workflow_dispatch` run
-#               that deploys an already-published GHCR version — pull + `compose up`
-# (Workflow name stays "CI" so the Slack app scope + branch-protection checks
-# that key on it keep working; the file is `workflow.yml` because it does both.)
+#   - publish : push to `develop`/`main` or a `v*` tag — build, Trivy-scan, push GHCR
+#   - deploy  : push to `develop` (continuous deploy to the server, after publish),
+#               a `v*` tag (after publish), OR a manual `workflow_dispatch` run
+#               that redeploys an already-published GHCR version — pull + `compose up`
+# (Named "CI/CD" — the file is `workflow.yml` because it does both. Branch
+# protection keys on the JOB check names below, not this workflow name, so it is
+# unaffected. The GitHub Slack app DOES scope on this name
+# (`workflows:{name:"CI/CD"}`), so keep docs/slack-notifications.md in sync.)
 on:
   pull_request:
     branches: [develop, main]
@@ -23,10 +26,14 @@ on:
         description: 'GHCR image version to deploy, e.g. 1.2.3 (must already exist in GHCR)'
         required: true
 
-# A newer push to the same ref cancels an in-flight run for that ref.
+# Cancel a superseded run ONLY for pull_request events (redundant CI on a new
+# push to the PR). For push-to-develop / tag / dispatch we must NEVER cancel
+# mid-run — the deploy job runs there, and a cancelled `compose up` would leave a
+# half-applied stack. Rapid develop pushes therefore run to completion and their
+# deploy jobs serialize via the job-level `deploy-prod` concurrency group.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -55,19 +62,22 @@ jobs:
           path: target/site/jacoco/
           if-no-files-found: warn
 
-  # Publishes a versioned image to GHCR (issue #34). Only on a push (never a
-  # PR — forks can't be trusted with registry credentials) to `main` or a
+  # Publishes an image to GHCR (issue #34). Only on a push (never a PR — forks
+  # can't be trusted with registry credentials) to `develop`/`main` or a
   # `vX.Y.Z` tag, and only once `test` is green: a red build never ships an
-  # image. The image is built once with `load: true` (no push) so Trivy can
-  # scan the exact bits about to ship; only a clean scan gets logged in and
-  # pushed, reusing the same GHA layer cache so the second build is fast, not
-  # a full rebuild.
+  # image. `develop` pushes ship a `develop` image that the deploy job below
+  # rolls out continuously to the server. The image is built once with
+  # `load: true` (no push) so Trivy can scan the exact bits about to ship;
+  # only a clean scan gets logged in and pushed, reusing the same GHA layer
+  # cache so the second build is fast, not a full rebuild.
   publish:
     name: Publish Docker image (GHCR)
     needs: test
     if: >-
       github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      (github.ref == 'refs/heads/develop' ||
+       github.ref == 'refs/heads/main' ||
+       startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -79,23 +89,27 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Computes tags/labels from the triggering ref: semver (patch, minor,
-      # major) on a `vX.Y.Z` tag push, `latest` only on a push to `main`.
-      # Deliberately NOT metadata-action's `{{is_default_branch}}` — that
-      # compares against this repo's actual configured GitHub default branch,
-      # which is `develop` (Gitflow), not `main`. Since this job never runs
-      # on a `develop` push (see the job `if:` above), `is_default_branch`
-      # would always be false here, silently dropping the `latest` tag and,
-      # on a bare `main` push with no tag in the same push, leaving `tags`
-      # empty — which makes the push step below fail outright. Gate on the
-      # actual ref instead. metadata-action lowercases `github.repository`
-      # for us (GHCR requires a lowercase image path).
+      # Computes tags/labels from the triggering ref:
+      #   - `type=ref,event=branch`  -> the branch name (`develop`, `main`) on a
+      #     branch push. This is the moving tag the deploy job pulls for
+      #     continuous deploy off `develop`.
+      #   - `type=sha`               -> `sha-<short>` on every publish, an
+      #     immutable tag for traceability / rollback.
+      #   - `type=semver,...`        -> patch/minor/major on a `vX.Y.Z` tag push.
+      #   - `latest`                 -> only on a push to `main`.
+      # Deliberately NOT metadata-action's `{{is_default_branch}}` — it compares
+      # against this repo's configured default branch (`develop`, Gitflow), so it
+      # would attach `latest` to develop; gate `latest` on the actual `main` ref
+      # instead. metadata-action lowercases `github.repository` (GHCR needs a
+      # lowercase image path).
       - name: Compute image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
+            type=ref,event=branch
+            type=sha
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
@@ -148,20 +162,28 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
 
-  # Continuous deployment to prod. Two entry points:
-  #   - a `vX.Y.Z` tag push, gated on `publish` succeeding first, so the image
-  #     deployed passed tests + a clean Trivy scan and is already in GHCR;
-  #   - a manual `workflow_dispatch` run deploying an already-published version
-  #     (publish is skipped, hence `always()` + the per-event checks below).
-  # Runs on the self-hosted runner because the prod host sits on the internal
-  # network; tags/dispatch are maintainer-only, so no untrusted fork code runs.
+  # Continuous deployment to the server. Three entry points, each gated on
+  # `publish` succeeding first (so the image deployed passed tests + a clean
+  # Trivy scan and is already in GHCR):
+  #   - a push to `develop`      -> rolls out the immutable `sha-<short>` tag of
+  #                                 the merged commit (NOT the moving `develop`
+  #                                 tag) so the deploy is traceable + rollbackable;
+  #   - a `vX.Y.Z` tag push      -> rolls out that release version;
+  #   - a manual `workflow_dispatch` -> redeploys an already-published version
+  #     (publish is skipped on dispatch, hence `always()` + the per-event checks).
+  #     Accepts a `sha-<short>` value too — that is how you roll back by hand.
+  # A failed health check auto-rolls-back to the previously-running image (see the
+  # rollback step). Runs on the self-hosted runner because the server sits on the
+  # internal network; branch pushes/tags/dispatch are maintainer-only (never a
+  # fork PR), so no untrusted fork code runs here.
   deploy:
-    name: Deploy to prod (self-hosted)
+    name: Deploy to server (self-hosted)
     needs: publish
     if: >-
       ${{ always() &&
       (github.event_name == 'workflow_dispatch' ||
-       (startsWith(github.ref, 'refs/tags/v') && needs.publish.result == 'success')) }}
+       ((github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v'))
+        && needs.publish.result == 'success')) }}
     runs-on: self-hosted
     # Serialize deploys and never cancel one mid-flight (a half-applied
     # `compose up` is worse than a queued deploy).
@@ -176,23 +198,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Derive the GHCR image ref. On a tag push: `v1.2.3` -> the `1.2.3` tag the
-      # publish job produced via metadata-action's {{version}}. On a manual
-      # dispatch: the `version` input verbatim. GHCR requires a lowercase path.
-      # INPUT_VERSION is passed via env (never interpolated into the script) so
-      # the untrusted dispatch input can't inject shell.
+      # Derive the GHCR image ref for the triggering event:
+      #   - develop push : `sha-<short>` of the merged commit (matches the
+      #     `type=sha` tag publish pushed) -> immutable + traceable, not the
+      #     moving `develop` tag. Short SHA is the first 7 hex chars, which is
+      #     metadata-action's default `type=sha` format.
+      #   - tag push     : `v1.2.3` -> `1.2.3` (metadata-action's {{version}}).
+      #   - dispatch     : the `version` input verbatim (accepts `1.2.3` OR a
+      #     `sha-<short>` for a hand rollback).
+      # `#v` only strips a leading `v` from a release tag/input; a no-op on a
+      # `sha-` value. GHCR requires a lowercase path. INPUT_VERSION is passed via
+      # env (never interpolated into the script) so the untrusted input can't inject.
       - name: Resolve image tag
         id: img
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            version="${INPUT_VERSION#v}"
+            tag="${INPUT_VERSION#v}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
           else
-            version="${GITHUB_REF_NAME#v}"
+            tag="sha-${GITHUB_SHA:0:7}"
           fi
           repo="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-          echo "image=ghcr.io/${repo}:${version}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${repo}:${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -200,6 +230,19 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Record the image the running container was started with, so the rollback
+      # step below can restore it if the new release fails its health check.
+      # Empty on the very first deploy (no ff_app yet) -> rollback is skipped.
+      - name: Record currently-running image (for rollback)
+        run: |
+          prev="$(docker inspect -f '{{.Config.Image}}' ff_app 2>/dev/null || true)"
+          echo "PREV_IMAGE=${prev}" >> "$GITHUB_ENV"
+          if [ -n "${prev}" ]; then
+            echo "Currently running: ${prev}"
+          else
+            echo "No running ff_app container — first deploy, rollback will be skipped."
+          fi
 
       # Pull the released image and bring the stack up. Liquibase runs on app
       # startup (ddl-auto=validate), so migrations apply here — no separate
@@ -230,5 +273,46 @@ jobs:
             sleep 5
           done
           echo "App did not become healthy within the timeout."
+          docker compose -f docker-compose.prod.yml logs --tail=100 app
+          exit 1
+
+      # Auto-rollback: if any step above failed (health gate, or the deploy
+      # itself), restore the image the container was running before this run.
+      # Re-uses the local image (no pull) and re-verifies, then keeps the job
+      # RED so the failure is still surfaced. Skipped on the first deploy
+      # (PREV_IMAGE empty) or when the previous image equals the new one.
+      # NOTE: only rolls back the app IMAGE — a forward Liquibase migration that
+      # already applied is NOT reverted (old app + new schema). Acceptable for
+      # the test env; a schema rollback would need its own path.
+      - name: Roll back on failed deploy
+        if: failure()
+        env:
+          APP_IMAGE: ${{ env.PREV_IMAGE }}
+          NEW_IMAGE: ${{ steps.img.outputs.image }}
+          APP_JWT_SECRET: ${{ secrets.APP_JWT_SECRET }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          if [ -z "${APP_IMAGE}" ]; then
+            echo "No previous image recorded (first deploy) — nothing to roll back to."
+            exit 0
+          fi
+          if [ "${APP_IMAGE}" = "${NEW_IMAGE}" ]; then
+            echo "Previous image equals the just-deployed image — no rollback needed."
+            exit 0
+          fi
+          echo "Rolling back to ${APP_IMAGE}..."
+          docker compose -f docker-compose.prod.yml up -d
+          docker compose -f docker-compose.prod.yml ps
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8081/actuator/health/readiness >/dev/null; then
+              echo "Rolled back and healthy on ${APP_IMAGE}."
+              exit 0
+            fi
+            echo "Waiting for rollback to become ready... ($i/30)"
+            sleep 5
+          done
+          echo "Rollback did NOT become healthy — manual intervention required."
           docker compose -f docker-compose.prod.yml logs --tail=100 app
           exit 1
