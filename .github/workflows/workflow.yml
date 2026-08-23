@@ -4,7 +4,8 @@ name: CI
 # has a single `on:` for all jobs):
 #   - test    : every PR into develop/main + direct pushes + `v*` tags
 #   - publish : push to `main` or a `v*` tag — build, Trivy-scan, push to GHCR (issue #34)
-#   - deploy  : `v*` tag only, after publish — pull the image and `compose up` on prod
+#   - deploy  : `v*` tag (after publish) OR a manual `workflow_dispatch` run
+#               that deploys an already-published GHCR version — pull + `compose up`
 # (Workflow name stays "CI" so the Slack app scope + branch-protection checks
 # that key on it keep working; the file is `workflow.yml` because it does both.)
 on:
@@ -13,6 +14,14 @@ on:
   push:
     branches: [develop, main]
     tags: ['v*']
+  # Manual deploy of an image already in GHCR (e.g. to test the CD path without
+  # cutting a real release tag). `publish` is skipped on dispatch, so the given
+  # version MUST already have been published by a prior tag run.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'GHCR image version to deploy, e.g. 1.2.3 (must already exist in GHCR)'
+        required: true
 
 # A newer push to the same ref cancels an in-flight run for that ref.
 concurrency:
@@ -139,15 +148,20 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
 
-  # Continuous deployment to prod. Runs ONLY on a `vX.Y.Z` tag push and ONLY
-  # after `publish` succeeds, so the exact image being deployed is one that
-  # passed tests + a clean Trivy scan and is already in GHCR. Runs on the
-  # self-hosted runner because the prod host sits on the internal network;
-  # tags are pushed by maintainers only, so no untrusted fork code runs here.
+  # Continuous deployment to prod. Two entry points:
+  #   - a `vX.Y.Z` tag push, gated on `publish` succeeding first, so the image
+  #     deployed passed tests + a clean Trivy scan and is already in GHCR;
+  #   - a manual `workflow_dispatch` run deploying an already-published version
+  #     (publish is skipped, hence `always()` + the per-event checks below).
+  # Runs on the self-hosted runner because the prod host sits on the internal
+  # network; tags/dispatch are maintainer-only, so no untrusted fork code runs.
   deploy:
     name: Deploy to prod (self-hosted)
     needs: publish
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      ${{ always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       (startsWith(github.ref, 'refs/tags/v') && needs.publish.result == 'success')) }}
     runs-on: self-hosted
     # Serialize deploys and never cancel one mid-flight (a half-applied
     # `compose up` is worse than a queued deploy).
@@ -162,13 +176,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Derive the GHCR image ref from the release tag: `v1.2.3` -> the
-      # `1.2.3` tag the publish job produced via metadata-action's
-      # {{version}} pattern. GHCR requires a lowercase image path.
+      # Derive the GHCR image ref. On a tag push: `v1.2.3` -> the `1.2.3` tag the
+      # publish job produced via metadata-action's {{version}}. On a manual
+      # dispatch: the `version` input verbatim. GHCR requires a lowercase path.
+      # INPUT_VERSION is passed via env (never interpolated into the script) so
+      # the untrusted dispatch input can't inject shell.
       - name: Resolve image tag
         id: img
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            version="${INPUT_VERSION#v}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
           repo="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           echo "image=ghcr.io/${repo}:${version}" >> "$GITHUB_OUTPUT"
 

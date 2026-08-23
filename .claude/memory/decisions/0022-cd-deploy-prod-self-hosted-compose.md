@@ -28,6 +28,15 @@ via `$GITHUB_REF_NAME`/`$GITHUB_REPOSITORY` env — the safe pattern): `v1.2.3` 
 `ghcr.io/<repo-lowercased>:1.2.3`, matching metadata-action's `{{version}}` tag
 from the publish job. GHCR path must be lowercased (`tr '[:upper:]' '[:lower:]'`).
 
+**Manual test path (`workflow_dispatch`):** a second entry point deploys an
+**already-published** GHCR version without cutting a real tag (`version` input,
+e.g. `1.2.3`). On dispatch `publish` is skipped, so deploy's `if:` is
+`always() && (event==workflow_dispatch || (tag && needs.publish.result=='success'))`
+— `always()` is required or a skipped `publish` would skip deploy too. The input
+is untrusted → passed via `env: INPUT_VERSION`, never interpolated into `run:`.
+Quirk: the "Run workflow" button only appears once this file is on the **default
+branch** (`develop`). Normal pushes to develop/main still skip deploy (tag-only).
+
 **`docker-compose.prod.yml`** (new, distinct from dev `docker-compose.yml` which
 `build: .`): app uses `image: ${APP_IMAGE}` (pull, no build); Postgres port is
 **NOT** published to the host (only the app on the compose network needs it);
