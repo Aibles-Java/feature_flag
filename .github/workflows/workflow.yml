@@ -1,14 +1,27 @@
 name: CI
 
-# Run the test suite (with JaCoCo coverage) on every PR into develop/main,
-# on direct pushes to those branches, and on version tags (`v*`) — tag pushes
-# additionally trigger the GHCR image publish job below (issue #34).
+# CI + CD in one file. Each job gates itself by event with `if:` (a workflow
+# has a single `on:` for all jobs):
+#   - test    : every PR into develop/main + direct pushes + `v*` tags
+#   - publish : push to `main` or a `v*` tag — build, Trivy-scan, push to GHCR (issue #34)
+#   - deploy  : `v*` tag (after publish) OR a manual `workflow_dispatch` run
+#               that deploys an already-published GHCR version — pull + `compose up`
+# (Workflow name stays "CI" so the Slack app scope + branch-protection checks
+# that key on it keep working; the file is `workflow.yml` because it does both.)
 on:
   pull_request:
     branches: [develop, main]
   push:
     branches: [develop, main]
     tags: ['v*']
+  # Manual deploy of an image already in GHCR (e.g. to test the CD path without
+  # cutting a real release tag). `publish` is skipped on dispatch, so the given
+  # version MUST already have been published by a prior tag run.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'GHCR image version to deploy, e.g. 1.2.3 (must already exist in GHCR)'
+        required: true
 
 # A newer push to the same ref cancels an in-flight run for that ref.
 concurrency:
@@ -134,3 +147,88 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
+
+  # Continuous deployment to prod. Two entry points:
+  #   - a `vX.Y.Z` tag push, gated on `publish` succeeding first, so the image
+  #     deployed passed tests + a clean Trivy scan and is already in GHCR;
+  #   - a manual `workflow_dispatch` run deploying an already-published version
+  #     (publish is skipped, hence `always()` + the per-event checks below).
+  # Runs on the self-hosted runner because the prod host sits on the internal
+  # network; tags/dispatch are maintainer-only, so no untrusted fork code runs.
+  deploy:
+    name: Deploy to prod (self-hosted)
+    needs: publish
+    if: >-
+      ${{ always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       (startsWith(github.ref, 'refs/tags/v') && needs.publish.result == 'success')) }}
+    runs-on: self-hosted
+    # Serialize deploys and never cancel one mid-flight (a half-applied
+    # `compose up` is worse than a queued deploy).
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Derive the GHCR image ref. On a tag push: `v1.2.3` -> the `1.2.3` tag the
+      # publish job produced via metadata-action's {{version}}. On a manual
+      # dispatch: the `version` input verbatim. GHCR requires a lowercase path.
+      # INPUT_VERSION is passed via env (never interpolated into the script) so
+      # the untrusted dispatch input can't inject shell.
+      - name: Resolve image tag
+        id: img
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            version="${INPUT_VERSION#v}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          repo="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${repo}:${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pull the released image and bring the stack up. Liquibase runs on app
+      # startup (ddl-auto=validate), so migrations apply here — no separate
+      # step. Every value comes from repo/environment secrets; the prod
+      # profile has no dev fallbacks (JwtProperties aborts without the secret).
+      - name: Deploy with Docker Compose
+        env:
+          APP_IMAGE: ${{ steps.img.outputs.image }}
+          APP_JWT_SECRET: ${{ secrets.APP_JWT_SECRET }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d
+          docker compose -f docker-compose.prod.yml ps
+
+      # Deployment gate: fail the job (and surface app logs) if the new
+      # container never reports ready, so a bad release is visible immediately.
+      - name: Verify deployment health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8081/actuator/health/readiness >/dev/null; then
+              echo "App is healthy."
+              exit 0
+            fi
+            echo "Waiting for app to become ready... ($i/30)"
+            sleep 5
+          done
+          echo "App did not become healthy within the timeout."
+          docker compose -f docker-compose.prod.yml logs --tail=100 app
+          exit 1

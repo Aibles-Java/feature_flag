@@ -49,7 +49,7 @@ Trim the noise so only high-signal events remain:
 /github unsubscribe Aibles-Java/feature_flag issues pulls commits deployments
 ```
 
-`workflows:{name:"CI"}` scopes to the `CI` workflow in `.github/workflows/ci.yml`.
+`workflows:{name:"CI"}` scopes to the `CI` workflow in `.github/workflows/workflow.yml`.
 GitHub's app reports both pass and fail; if you only want failures, use a channel
 that people mute-until-mentioned, or filter on the app's message settings.
 

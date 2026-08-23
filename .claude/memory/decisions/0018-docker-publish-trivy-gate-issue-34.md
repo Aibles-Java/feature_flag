@@ -2,7 +2,7 @@
 
 **Issue #34** (branch `feature/issue-34-docker-publish-scanning`). CI only ran tests —
 no released artifact, no image/dependency scanning, no automated dependency updates.
-Added a `publish` job to the existing `.github/workflows/ci.yml` rather than a new
+Added a `publish` job to the existing `.github/workflows/workflow.yml` rather than a new
 workflow file, so there's one source of truth for "what runs when."
 
 ## Decision 1: build → scan (local, unpushed) → push, never scan-after-push

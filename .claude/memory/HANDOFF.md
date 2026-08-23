@@ -4,42 +4,30 @@
 
 ## Current WIP
 
-**Issue #35** (identifier-based percentage rollout) on branch
-`feature/issue-35-percentage-rollout` (→ `develop`, cut fresh off `develop` @ `04ac6bf`).
-Implemented + `./mvnw clean verify` green (**274 tests, 0 failures**, Spotless clean, coverage met).
-**Not yet pushed / no PR** — the memory commit lands first (the gate needs `.claude/memory/`).
+SonarQube CI on a self-hosted runner.
 
-The issue's four *code* scope bullets were **already on `develop`** (landed via
-`feat/rollout-percent`, issue never closed). What this branch actually adds:
-
-- `util/RolloutEvaluator.java` — **fixed a real bug**: `Math.abs(hash) % 100` → `(hash &
-  Integer.MAX_VALUE) % BUCKETS`. Extracted package-private `toBucket(int)` + `bucketFor(id, key)`
-  seams (the bug is unreachable through the public API). Full contract Javadoc.
-- `util/RolloutEvaluatorTest.java` (new, 24 tests) — the acceptance criteria: determinism,
-  monotonicity, chi-square uniformity over 10,000 identifiers, per-flagKey independence, the
-  `toBucket` sign regression, documented edge cases. All identifiers generated, never random.
-- `docs/adr/ADR-0004-percentage-rollout-contract.md` (new) — fail-open contract, cache invariant,
-  sign-bug rationale, alternatives rejected. Also added the **missing ADR-0003 row** to
-  `docs/adr/README.md` (the pagination PR never indexed it).
-- `controller/sdk/EvaluationController.java` — `@Parameter(description = …)` on both `identifier`
-  params. NOTE: this is the **first method-level springdoc annotation in the codebase** (only
-  `OpenApiConfig` used swagger models before) — call it out in review.
-- `EvaluationServiceImplTest` (+5 tests) — fail-open contract at the API boundary.
-- `FeatureFlagControllerTest` (+2 tests) — first tests for the `@Min(0)/@Max(100)` admin validation
-  (wired but previously unproven).
+- `.github/workflows/sonar.yml` — refactored + committed as `4f2b690` on branch
+  **`feature/sona-ci`** (local `develop` reset back to `origin/develop`, clean).
+- A self-hosted GitHub Actions runner is **registered and online (Idle)**, currently
+  running via `./run.sh` in a foreground terminal (NOT yet installed as a service).
+- Not yet pushed — was blocked by the pre-push memory gate; this `/save-memory` run
+  unblocks it.
 
 ## Context to Load
 
-- `decisions/0021-percentage-rollout-contract-issue-35.md` — the contract, the bug, the tests.
-- `conventions/stale-issue-scope-verify-before-implementing.md` — why to grep before implementing.
+- [[0018-sonarqube-ci-self-hosted-runner]] — the workflow design + runner ops notes.
 
 ## Next steps
 
-1. Commit + push `feature/issue-35-percentage-rollout`.
-2. Open PR with `create-pr` (`Closes #35`); then `.claude/scripts/issue-board.sh ready 35`.
-3. In the PR, flag for the reviewer: (a) SDK `enabled` now means *effective per identifier* — a
-   meaning change, though not a shape change; (b) fail-open makes a partial rollout bypassable —
-   deliberate, see ADR-0004; (c) the new springdoc annotation style.
+1. Commit this memory + push `feature/sona-ci` (memory gate now satisfied).
+2. Open a PR `feature/sona-ci` → `develop`; the `pull_request` trigger runs the
+   SonarQube job. Watch: `run.sh` terminal should print `Running job: sonar`; Actions
+   tab should go green.
+3. If green: `Ctrl+C` the `run.sh` terminal → install runner as a service
+   (`sudo ./svc.sh install gh-runner && sudo ./svc.sh start`) so it survives reboot.
+4. Confirm the two repo secrets exist: `SONAR_TOKEN`, `SONAR_HOST_URL`.
+5. Follow-up (separate): verify `pom.xml` emits JaCoCo `jacoco.xml` so Sonar scores
+   coverage — not done in this session.
 
 ## Cross-branch / open PRs (all three conflict-resolved this session — MERGEABLE + CI green)
 
