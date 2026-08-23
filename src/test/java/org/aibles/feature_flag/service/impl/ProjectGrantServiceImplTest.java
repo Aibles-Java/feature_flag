@@ -3,6 +3,8 @@ package org.aibles.feature_flag.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,6 +17,8 @@ import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.PermissionGrant;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.entity.User;
+import org.aibles.feature_flag.domain.enums.AuditAction;
+import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.domain.enums.ScopeType;
 import org.aibles.feature_flag.dto.request.CreateProjectGrantRequest;
@@ -45,6 +49,7 @@ class ProjectGrantServiceImplTest {
   @Mock private CustomRoleRepository customRoleRepository;
   @Mock private UserRepository userRepository;
   @Mock private PermissionService permissionService;
+  @Mock private AuditService auditService;
 
   private ProjectGrantServiceImpl service;
 
@@ -62,7 +67,8 @@ class ProjectGrantServiceImplTest {
             memberRepository,
             customRoleRepository,
             userRepository,
-            permissionService);
+            permissionService,
+            auditService);
     lenient().when(permissionService.currentUserId()).thenReturn(granterId);
     lenient()
         .when(projectRepository.findById(projectId))
@@ -173,5 +179,67 @@ class ProjectGrantServiceImplTest {
         .hasMessageContaining("beyond your own");
 
     verify(grantRepository, never()).delete(any());
+  }
+
+  // --- Audit trail on permission changes ---
+
+  @Test
+  void grantIsAudited() {
+    granterHas(MemberRole.OWNER);
+    when(userRepository.findById(targetUserId))
+        .thenReturn(Optional.of(User.builder().id(targetUserId).email("t@example.com").build()));
+    when(memberRepository.existsByOrganizationIdAndUserId(orgId, targetUserId)).thenReturn(true);
+    when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(
+            targetUserId, ScopeType.PROJECT, projectId))
+        .thenReturn(Optional.empty());
+    UUID grantId = UUID.randomUUID();
+    when(grantRepository.save(any(PermissionGrant.class)))
+        .thenAnswer(
+            inv -> {
+              PermissionGrant g = inv.getArgument(0);
+              g.setId(grantId);
+              return g;
+            });
+
+    ProjectGrantResponse resp = service.upsertGrant(projectId, builtInRequest(MemberRole.ADMIN));
+
+    // A brand-new grant has no before-state.
+    verify(auditService)
+        .record(
+            eq(AuditEntityType.PERMISSION_GRANT),
+            eq(grantId),
+            eq(AuditAction.GRANT_PERMISSION),
+            eq(orgId),
+            isNull(),
+            eq(resp));
+  }
+
+  @Test
+  void revokeIsAuditedWithTheRevokedGrantAsBeforeState() {
+    granterHas(MemberRole.OWNER);
+    UUID grantId = UUID.randomUUID();
+    PermissionGrant grant =
+        PermissionGrant.builder()
+            .id(grantId)
+            .user(User.builder().id(targetUserId).email("t@example.com").build())
+            .scopeType(ScopeType.PROJECT)
+            .scopeId(projectId)
+            .role(MemberRole.ADMIN)
+            .build();
+    when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(
+            targetUserId, ScopeType.PROJECT, projectId))
+        .thenReturn(Optional.of(grant));
+
+    service.revokeGrant(projectId, targetUserId);
+
+    verify(grantRepository).delete(grant);
+    verify(auditService)
+        .record(
+            eq(AuditEntityType.PERMISSION_GRANT),
+            eq(grantId),
+            eq(AuditAction.REVOKE_PERMISSION),
+            eq(orgId),
+            any(ProjectGrantResponse.class),
+            isNull());
   }
 }

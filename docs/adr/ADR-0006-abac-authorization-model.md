@@ -97,8 +97,10 @@ works through `check`.
 - **Authorization now costs more queries.** A project-scoped `check` resolves the project, the org
   membership and any grant. There is no caching yet; a per-request cache is the obvious next step if
   it shows up in the metrics.
-- **Gaps remain** (tracked in `docs/ABAC.md` §12): audit reads are still gated by an adapter with no
-  `AUDIT_READ` action, and grant/custom-role changes are not written to the audit log.
+- **The audit trail covers permission changes.** `AUDIT_READ` is part of the vocabulary (VIEWER and
+  above), so audit access can be conferred by a custom role like any other capability; grants and
+  custom-role edits write `PERMISSION_GRANT` / `CUSTOM_ROLE` rows in the same transaction as the
+  change. Remaining drift from repo conventions is tracked in `docs/ABAC.md` §12.
 
 ## Alternatives Considered
 

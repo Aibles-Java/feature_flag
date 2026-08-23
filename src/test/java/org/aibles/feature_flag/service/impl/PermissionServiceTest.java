@@ -123,7 +123,8 @@ class PermissionServiceTest {
   @Test
   void actionMatrixEncodesRoleCapabilities() {
     assertThat(PermissionService.actionsForRole(MemberRole.VIEWER))
-        .containsExactlyInAnyOrder(Action.FLAG_READ, Action.ENV_READ, Action.PROJECT_READ);
+        .containsExactlyInAnyOrder(
+            Action.FLAG_READ, Action.ENV_READ, Action.PROJECT_READ, Action.AUDIT_READ);
 
     assertThat(PermissionService.actionsForRole(MemberRole.ADMIN))
         .contains(Action.FLAG_STATE_UPDATE, Action.GRANT_MANAGE, Action.ROLE_MANAGE)

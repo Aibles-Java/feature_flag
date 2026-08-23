@@ -9,6 +9,8 @@ import org.aibles.feature_flag.domain.entity.PermissionGrant;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.entity.User;
 import org.aibles.feature_flag.domain.enums.Action;
+import org.aibles.feature_flag.domain.enums.AuditAction;
+import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.ScopeType;
 import org.aibles.feature_flag.dto.request.CreateProjectGrantRequest;
 import org.aibles.feature_flag.dto.response.ProjectGrantResponse;
@@ -33,6 +35,7 @@ public class ProjectGrantServiceImpl implements ProjectGrantService {
   private final CustomRoleRepository customRoleRepository;
   private final UserRepository userRepository;
   private final PermissionService permissionService;
+  private final AuditService auditService;
 
   @Override
   @Transactional(readOnly = true)
@@ -97,10 +100,21 @@ public class ProjectGrantServiceImpl implements ProjectGrantService {
                         .scopeType(ScopeType.PROJECT)
                         .scopeId(projectId)
                         .build());
+    // Snapshot before mutating: on an upsert over an existing grant this is what was replaced.
+    ProjectGrantResponse before = grant.getId() == null ? null : toResponse(grant);
     grant.setRole(request.getRole());
     grant.setCustomRole(customRole);
 
-    return toResponse(grantRepository.save(grant));
+    PermissionGrant saved = grantRepository.save(grant);
+    ProjectGrantResponse after = toResponse(saved);
+    auditService.record(
+        AuditEntityType.PERMISSION_GRANT,
+        saved.getId(),
+        AuditAction.GRANT_PERMISSION,
+        project.getOrganization().getId(),
+        before,
+        after);
+    return after;
   }
 
   @Override
@@ -116,7 +130,20 @@ public class ProjectGrantServiceImpl implements ProjectGrantService {
 
     requireGranterCanConfer(projectId, PermissionService.grantActions(grant));
 
+    Project project =
+        projectRepository
+            .findById(projectId)
+            .orElseThrow(() -> new ResourceNotFoundException("Project", projectId));
+    ProjectGrantResponse before = toResponse(grant);
+    UUID grantId = grant.getId();
     grantRepository.delete(grant);
+    auditService.record(
+        AuditEntityType.PERMISSION_GRANT,
+        grantId,
+        AuditAction.REVOKE_PERMISSION,
+        project.getOrganization().getId(),
+        before,
+        null);
   }
 
   /** A caller may only grant or revoke permissions they themselves hold on the project. */

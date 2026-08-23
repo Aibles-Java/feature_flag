@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.CustomRole;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.enums.Action;
+import org.aibles.feature_flag.domain.enums.AuditAction;
+import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.dto.request.CreateCustomRoleRequest;
 import org.aibles.feature_flag.dto.response.CustomRoleResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
@@ -26,6 +28,7 @@ public class CustomRoleServiceImpl implements CustomRoleService {
   private final CustomRoleRepository customRoleRepository;
   private final OrganizationRepository organizationRepository;
   private final PermissionService permissionService;
+  private final AuditService auditService;
 
   @Override
   @Transactional(readOnly = true)
@@ -54,7 +57,10 @@ public class CustomRoleServiceImpl implements CustomRoleService {
             .name(request.getName())
             .actions(new HashSet<>(request.getActions()))
             .build();
-    return toResponse(customRoleRepository.save(role));
+    CustomRoleResponse after = toResponse(customRoleRepository.save(role));
+    auditService.record(
+        AuditEntityType.CUSTOM_ROLE, after.getId(), AuditAction.CREATE, orgId, null, after);
+    return after;
   }
 
   @Override
@@ -64,9 +70,13 @@ public class CustomRoleServiceImpl implements CustomRoleService {
     CustomRole role = findInOrg(orgId, roleId);
     requireCanConfer(orgId, request.getActions());
     requireCanConfer(orgId, role.getActions());
+    CustomRoleResponse before = toResponse(role);
     role.setName(request.getName());
     role.setActions(new HashSet<>(request.getActions()));
-    return toResponse(customRoleRepository.save(role));
+    CustomRoleResponse after = toResponse(customRoleRepository.save(role));
+    auditService.record(
+        AuditEntityType.CUSTOM_ROLE, roleId, AuditAction.UPDATE, orgId, before, after);
+    return after;
   }
 
   @Override
@@ -76,7 +86,10 @@ public class CustomRoleServiceImpl implements CustomRoleService {
     CustomRole role = findInOrg(orgId, roleId);
     // Deletion cascades to grants, so bound it by the same ceiling as granting.
     requireCanConfer(orgId, role.getActions());
+    CustomRoleResponse before = toResponse(role);
     customRoleRepository.delete(role);
+    auditService.record(
+        AuditEntityType.CUSTOM_ROLE, roleId, AuditAction.DELETE, orgId, before, null);
   }
 
   /** A custom role may only contain actions the acting user holds at org scope. */

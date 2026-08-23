@@ -8,5 +8,7 @@ public enum AuditEntityType {
   FEATURE_FLAG,
   FLAG_STATE,
   MEMBER,
-  API_KEY
+  API_KEY,
+  PERMISSION_GRANT,
+  CUSTOM_ROLE
 }

@@ -7,9 +7,9 @@ import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.AuditLog;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.response.AuditLogResponse;
 import org.aibles.feature_flag.repository.AuditLogRepository;
 import org.springframework.data.domain.Page;
@@ -67,9 +67,9 @@ public class AuditService {
             .build());
   }
 
-  /** Paginated audit history for an organisation. Requires VIEWER or above on that org. */
+  /** Paginated audit history for an organisation. Requires {@code AUDIT_READ} on that org. */
   public Page<AuditLogResponse> list(UUID orgId, Pageable pageable) {
-    permissionService.requireRole(orgId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(Action.AUDIT_READ, PermissionService.ResourceRef.org(orgId));
     return auditLogRepository.findByOrgId(orgId, pageable).map(this::toResponse);
   }
 

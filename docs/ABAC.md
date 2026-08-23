@@ -212,7 +212,7 @@ window) means **no restriction** — never a permanent lock-out. Time comes from
 
 | Action | VIEWER | ADMIN | OWNER |
 |---|:---:|:---:|:---:|
-| `*_READ` (FLAG/ENV/PROJECT) | ✅ | ✅ | ✅ |
+| `*_READ` (FLAG/ENV/PROJECT) + `AUDIT_READ` | ✅ | ✅ | ✅ |
 | `FLAG_CREATE` `FLAG_UPDATE` `FLAG_ARCHIVE` `FLAG_STATE_UPDATE` | | ✅ | ✅ |
 | `ENV_CREATE` `ENV_UPDATE` `ENV_ROTATE_KEY` | | ✅ | ✅ |
 | `PROJECT_CREATE` `PROJECT_UPDATE` | | ✅ | ✅ |
@@ -242,6 +242,10 @@ Guarded by `GRANT_MANAGE` on the project (org OWNER/ADMIN, or a project OWNER/AD
 
 Provide **exactly one** of `role` or `customRoleId`.
 
+Every grant and revoke writes an audit row (`PERMISSION_GRANT` / `GRANT_PERMISSION` and
+`REVOKE_PERMISSION`), in the same transaction as the change. On an upsert over an existing grant the
+`before` state is what was replaced; a fresh grant has none.
+
 ### Custom roles — `/api/v1/organizations/{orgId}/roles`
 
 Guarded by `ROLE_MANAGE` on the organization.
@@ -252,6 +256,9 @@ Guarded by `ROLE_MANAGE` on the organization.
 | POST | `/roles` | `{ name, actions[] }` | create |
 | PUT | `/roles/{roleId}` | `{ name, actions[] }` | replace |
 | DELETE | `/roles/{roleId}` | — | delete (cascades to its grants) |
+
+Create / update / delete each write a `CUSTOM_ROLE` audit row, so a role's action set can be traced
+back through its edits.
 
 ### Environment attributes — existing environment endpoints
 
@@ -343,14 +350,16 @@ their own:
 
 ## 12. Known gaps after the merge with `develop`
 
-`develop` grew features while this branch was open. These are mapped only partially:
+`develop` grew features while this branch was open. The two places where the two models genuinely
+disagreed are now reconciled:
 
-- **Audit reads are outside the action vocabulary.** `AuditService` still gates on
-  `requireRole(orgId, OWNER, ADMIN, VIEWER)`; there is no `AUDIT_READ` action, so no custom role can
-  confer audit access and project grants have no effect on it.
-- **Permission changes are not audited.** `ProjectGrantServiceImpl` and `CustomRoleServiceImpl` do
-  not call `AuditService`, and `AuditEntityType` has no `PERMISSION_GRANT` / `CUSTOM_ROLE` value —
-  so granting or revoking access leaves no audit trail.
+- ~~Audit reads outside the action vocabulary~~ — `AUDIT_READ` is an `Action` held by VIEWER and
+  above, and `AuditService.list` gates on it, so a custom role can confer audit access.
+- ~~Permission changes not audited~~ — grants and custom-role edits write audit rows
+  (`PERMISSION_GRANT`, `CUSTOM_ROLE`) in the same transaction as the change.
+
+What is left is convention drift rather than a design mismatch:
+
 - **The management list endpoints are unpaginated.** They return `List<>`, while every other admin
   list endpoint returns `PageResponse<>` with a `Pageable` (ADR-0003).
 - **URL spelling is inconsistent.** `CustomRoleController` maps `/api/v1/organizations/{orgId}/roles`
