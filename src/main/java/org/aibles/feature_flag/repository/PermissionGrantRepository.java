@@ -6,6 +6,8 @@ import java.util.Optional;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.PermissionGrant;
 import org.aibles.feature_flag.domain.enums.ScopeType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface PermissionGrantRepository extends JpaRepository<PermissionGrant, UUID> {
@@ -14,6 +16,9 @@ public interface PermissionGrantRepository extends JpaRepository<PermissionGrant
       UUID userId, ScopeType scopeType, UUID scopeId);
 
   List<PermissionGrant> findAllByScopeTypeAndScopeId(ScopeType scopeType, UUID scopeId);
+
+  Page<PermissionGrant> findAllByScopeTypeAndScopeId(
+      ScopeType scopeType, UUID scopeId, Pageable pageable);
 
   boolean existsByUser_IdAndScopeTypeAndScopeId(UUID userId, ScopeType scopeType, UUID scopeId);
 

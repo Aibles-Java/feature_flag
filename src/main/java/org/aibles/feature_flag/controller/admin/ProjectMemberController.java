@@ -1,12 +1,16 @@
 package org.aibles.feature_flag.controller.admin;
 
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.dto.request.CreateProjectGrantRequest;
+import org.aibles.feature_flag.dto.response.PageResponse;
 import org.aibles.feature_flag.dto.response.ProjectGrantResponse;
 import org.aibles.feature_flag.service.ProjectGrantService;
+import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,8 +23,15 @@ public class ProjectMemberController {
   private final ProjectGrantService projectGrantService;
 
   @GetMapping
-  public List<ProjectGrantResponse> list(@PathVariable UUID projectId) {
-    return projectGrantService.listGrants(projectId);
+  public PageResponse<ProjectGrantResponse> list(
+      @PathVariable UUID projectId,
+      @ParameterObject
+          @PageableDefault(
+              size = 20,
+              sort = {"createdAt", "id"},
+              direction = Sort.Direction.ASC)
+          Pageable pageable) {
+    return PageResponse.from(projectGrantService.listGrants(projectId, pageable));
   }
 
   @PostMapping

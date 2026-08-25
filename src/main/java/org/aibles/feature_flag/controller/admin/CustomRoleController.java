@@ -1,26 +1,37 @@
 package org.aibles.feature_flag.controller.admin;
 
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.dto.request.CreateCustomRoleRequest;
 import org.aibles.feature_flag.dto.response.CustomRoleResponse;
+import org.aibles.feature_flag.dto.response.PageResponse;
 import org.aibles.feature_flag.service.CustomRoleService;
+import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 /** Manages organization-scoped custom roles. */
 @RestController
-@RequestMapping("/api/v1/organizations/{orgId}/roles")
+@RequestMapping("/api/v1/organisations/{orgId}/roles")
 @RequiredArgsConstructor
 public class CustomRoleController {
 
   private final CustomRoleService customRoleService;
 
   @GetMapping
-  public List<CustomRoleResponse> list(@PathVariable UUID orgId) {
-    return customRoleService.list(orgId);
+  public PageResponse<CustomRoleResponse> list(
+      @PathVariable UUID orgId,
+      @ParameterObject
+          @PageableDefault(
+              size = 20,
+              sort = {"createdAt", "id"},
+              direction = Sort.Direction.ASC)
+          Pageable pageable) {
+    return PageResponse.from(customRoleService.list(orgId, pageable));
   }
 
   @PostMapping

@@ -203,6 +203,118 @@ Windows may wrap past midnight (`start > end`, e.g. `22–06`). `start == end` (
 window) means **no restriction** — never a permanent lock-out. Time comes from an injectable
 `Clock` bean, so it is unit-testable.
 
+### End-to-end sequences
+
+The two flows worth following in full: the one where every rule fires (toggling a production
+flag), and the one where authority is delegated (granting a project role).
+
+#### Toggling a flag on a production environment
+
+`PUT /api/v1/flags/{flagId}/environments/{envId}` — the only path that reaches rules B and D.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Admin user
+    participant C as FeatureFlagController
+    participant S as FeatureFlagServiceImpl
+    participant ER as EnvironmentRepository
+    participant P as PermissionService (PDP)
+    participant GR as PermissionGrantRepository
+    participant SR as FlagEnvironmentStateRepository
+    participant A as AuditService
+    participant EV as ApplicationEventPublisher
+
+    U->>C: PUT /flags/{flagId}/environments/{envId}
+    C->>S: updateState(flagId, envId, request)
+    S->>ER: findById(envId)
+    ER-->>S: Environment(type=PRODUCTION, window 9–17)
+    S->>P: check(FLAG_STATE_UPDATE, environment(projectId, env))
+
+    rect rgb(240, 240, 240)
+        note over P,GR: resolve effective actions
+        P->>P: orgRole(user, project.org) → actionsForRole(...)
+        P->>GR: findByUser_IdAndScopeTypeAndScopeId(user, PROJECT, projectId)
+        GR-->>P: grant (built-in or custom role) or empty
+        P->>P: effectiveActions = org actions ∪ grant actions
+    end
+
+    P->>P: env.type = PRODUCTION ⇒ required = FLAG_STATE_UPDATE_PRODUCTION
+    alt required not in effectiveActions
+        P--)S: UnauthorizedException → 403 "requires elevated permission"
+    else outside the change window (Clock hour ∉ [9,17))
+        P--)S: UnauthorizedException → 403 "outside the change window"
+    else permitted
+        P-->>S: void
+        S->>SR: find state, save(enabled/value/rolloutPercent)
+        S->>A: record(FLAG_STATE, CHANGE_STATE, orgId, before, after)
+        S->>EV: publish FlagStateChangedEvent
+        note right of EV: consumers run @Async AFTER_COMMIT
+        S-->>C: FlagStateResponse
+        C-->>U: 200
+    end
+```
+
+An org ADMIN reaches step 6 and is rejected there; an OWNER passes it and is still rejected by
+the window if the clock is outside it. A custom role holding `FLAG_STATE_UPDATE_PRODUCTION`
+behaves exactly like an OWNER here — that is the point of expressing B as an action.
+
+> Ordering note: the environment is loaded *before* the check, so a caller with no rights on the
+> project can tell an existing environment id from a missing one (404 vs 403). Harmless today,
+> but see [§12](#12-known-gaps-after-the-merge-with-develop).
+
+#### Granting a project role
+
+`POST /api/v1/projects/{projectId}/members` — delegation, so every guard in §7 applies.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor G as Granter
+    participant C as ProjectMemberController
+    participant S as ProjectGrantServiceImpl
+    participant P as PermissionService (PDP)
+    participant PR as ProjectRepository
+    participant CR as CustomRoleRepository
+    participant MR as OrganizationMemberRepository
+    participant GR as PermissionGrantRepository
+    participant A as AuditService
+
+    G->>C: POST /projects/{projectId}/members {userId, role | customRoleId}
+    C->>S: upsertGrant(projectId, request)
+    S->>P: check(GRANT_MANAGE, project(projectId))
+    P-->>S: permitted (org OWNER/ADMIN, or a grant carrying GRANT_MANAGE)
+    S->>PR: findById(projectId)
+    S->>S: exactly one of role / customRoleId? else 400
+
+    opt custom role
+        S->>CR: findById(customRoleId)
+        CR-->>S: CustomRole
+        S->>S: same organisation as the project? else 404
+    end
+
+    S->>P: effectiveActionsForProject(granter, projectId)
+    P-->>S: granter's own action set
+    alt granter's set does not contain every action being conferred
+        S--)G: 403 "cannot grant or revoke permissions beyond your own"
+    else within the ceiling
+        S->>MR: existsByOrganizationIdAndUserId(org, targetUserId)
+        alt target is not a member of the project's organisation
+            S--)G: 404 (tenant isolation — never confirms the user exists)
+        else
+            S->>GR: find existing grant → snapshot as before-state
+            S->>GR: save(grant with new role / custom role)
+            S->>A: record(PERMISSION_GRANT, GRANT_PERMISSION, orgId, before, after)
+            S-->>C: ProjectGrantResponse
+            C-->>G: 200
+        end
+    end
+```
+
+Revoking (`DELETE /projects/{projectId}/members/{userId}`) runs the same ceiling against the
+actions the *existing* grant confers, then deletes it and records `REVOKE_PERMISSION` — so an
+ADMIN can neither create nor destroy an OWNER-level grant.
+
 ---
 
 ## 5. The Action/role matrix
@@ -358,12 +470,42 @@ disagreed are now reconciled:
 - ~~Permission changes not audited~~ — grants and custom-role edits write audit rows
   (`PERMISSION_GRANT`, `CUSTOM_ROLE`) in the same transaction as the change.
 
-What is left is convention drift rather than a design mismatch:
+Two conventions the branch had drifted from are also back in line: the management list endpoints
+return `PageResponse<>` with a `Pageable` like every other admin list endpoint (ADR-0003), and the
+custom-role endpoints moved to `/api/v1/organisations/{orgId}/roles` to match the rest of the API.
 
-- **The management list endpoints are unpaginated.** They return `List<>`, while every other admin
-  list endpoint returns `PageResponse<>` with a `Pageable` (ADR-0003).
-- **URL spelling is inconsistent.** `CustomRoleController` maps `/api/v1/organizations/{orgId}/roles`
-  whereas the rest of the API uses `organisations`.
+### Still open
+
+Model-level — the same class of gap `AUDIT_READ` closed:
+
+- **Reading an organisation and listing its members sit outside the action vocabulary.**
+  `OrganizationServiceImpl.get` and `listMembers` gate on `permissionService.isMember(orgId)`; there
+  is no `ORG_READ` or `MEMBER_READ`, so a custom role can neither confer nor withhold either.
+- **An org member's role cannot be changed.** There is no `updateMemberRole` anywhere — only invite
+  and remove. Promoting a VIEWER means removing and re-inviting them, which now also wipes their
+  project grants, so the invite ceiling only governs half of a role's lifecycle.
+
+Data lifecycle:
+
+- **Deleting a project or an organisation orphans its grants.** `scope_id` is polymorphic and
+  therefore has no FK, and neither `ProjectServiceImpl.delete` nor `OrganizationServiceImpl.delete`
+  cleans up — unlike `removeMember`, which does. Not a security hole (ids are never reused) but the
+  rows are never collected.
+
+Tests — the spec's own §9 plan is only partly delivered:
+
+- No `ProjectMemberControllerTest` / `CustomRoleControllerTest`, though every other admin controller
+  has one; no repository test for `PermissionGrantRepository` / `CustomRoleRepository`; no
+  `@SpringBootTest` covering Scenario A (project-scoped access) or Scenario B (production
+  protection) end to end. `listGrants` and `list` currently have no test at all.
+
+Smaller:
+
 - **`EnvironmentSecretResponse`** (create / rotate-key response) does not carry `type` or the change
   window, so those values are invisible in the response that sets them.
+- **`updateState` resolves the environment before it checks permission**, so an unauthorised caller
+  gets `404` for a missing environment and `403` for an existing one — enough to probe which
+  environment ids exist. Gating on the base action at project scope first would close it, at the
+  cost of resolving the caller's actions twice.
+- **`PermissionGrantRepository.existsByUser_IdAndScopeTypeAndScopeId`** is declared but never called.
 - **The Postman collection** has no requests for project grants or custom roles.

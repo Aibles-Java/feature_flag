@@ -1,6 +1,5 @@
 package org.aibles.feature_flag.service.impl;
 
-import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +21,8 @@ import org.aibles.feature_flag.repository.PermissionGrantRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.aibles.feature_flag.service.ProjectGrantService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,11 +40,11 @@ public class ProjectGrantServiceImpl implements ProjectGrantService {
 
   @Override
   @Transactional(readOnly = true)
-  public List<ProjectGrantResponse> listGrants(UUID projectId) {
+  public Page<ProjectGrantResponse> listGrants(UUID projectId, Pageable pageable) {
     permissionService.check(Action.GRANT_MANAGE, PermissionService.ResourceRef.project(projectId));
-    return grantRepository.findAllByScopeTypeAndScopeId(ScopeType.PROJECT, projectId).stream()
-        .map(this::toResponse)
-        .toList();
+    return grantRepository
+        .findAllByScopeTypeAndScopeId(ScopeType.PROJECT, projectId, pageable)
+        .map(this::toResponse);
   }
 
   @Override

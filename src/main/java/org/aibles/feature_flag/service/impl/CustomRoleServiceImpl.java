@@ -1,7 +1,6 @@
 package org.aibles.feature_flag.service.impl;
 
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +17,8 @@ import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.CustomRoleRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.service.CustomRoleService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,11 +33,9 @@ public class CustomRoleServiceImpl implements CustomRoleService {
 
   @Override
   @Transactional(readOnly = true)
-  public List<CustomRoleResponse> list(UUID orgId) {
+  public Page<CustomRoleResponse> list(UUID orgId, Pageable pageable) {
     permissionService.check(Action.ROLE_MANAGE, PermissionService.ResourceRef.org(orgId));
-    return customRoleRepository.findAllByOrganizationId(orgId).stream()
-        .map(this::toResponse)
-        .toList();
+    return customRoleRepository.findAllByOrganizationId(orgId, pageable).map(this::toResponse);
   }
 
   @Override
