@@ -4,58 +4,52 @@
 
 ## Current WIP
 
-SonarQube CI on a self-hosted runner.
+Branch **`feature/role`** — the ABAC / project-grant authorization work, brought up to date with
+`develop` and being pushed + PR'd now. Four commits on top of the original `ffd356d`:
 
-- `.github/workflows/sonar.yml` — refactored + committed as `4f2b690` on branch
-  **`feature/sona-ci`** (local `develop` reset back to `origin/develop`, clean).
-- A self-hosted GitHub Actions runner is **registered and online (Idle)**, currently
-  running via `./run.sh` in a foreground terminal (NOT yet installed as a service).
-- Not yet pushed — was blocked by the pre-push memory gate; this `/save-memory` run
-  unblocks it.
+- `d3f57e9` renumber migrations `009–013` → `013–017`
+- `950de15` drop the case-colliding `docs/ARCHITECTURE.md` (mandatory — the merge could not start
+  otherwise; see [[windows-docs-case-collision]])
+- `8a15239` **merge `origin/develop`** — 13 Java conflicts resolved, `./mvnw test` green
+- `f576d9c` docs mapped onto the merged state (ADR-0006 written, ADR-0001 marked superseded,
+  CLAUDE.md + architecture.md permission sections rewritten)
+- `903ba7a` `AUDIT_READ` + audit rows for permission changes
+- `5b7b476` `organisations` spelling + pagination on the two management list endpoints, plus two
+  sequence diagrams in `docs/ABAC.md` §4
+
+`./mvnw test`: **316 tests, 0 failures.** Tree otherwise clean apart from three untracked files
+that belong to the user, not the branch: `.cgcignore`, `docs/demo/`, `docs/main-flows.md` — do not
+commit them (they rode along twice this session and had to be backed out with `git rm --cached`).
 
 ## Context to Load
 
-- [[0018-sonarqube-ci-self-hosted-runner]] — the workflow design + runner ops notes.
+- [[0023-abac-branch-merge-and-audit-mapping]] — why the adapters came back, how the conflicts were
+  resolved, and the two model gaps that were closed.
+- [[sequential-ids-collide-across-long-lived-branches]] — before adding any migration or ADR.
+- `docs/ABAC.md` §12 — the authoritative open-gaps list, kept in the repo rather than here.
 
 ## Next steps
 
-1. Commit this memory + push `feature/sona-ci` (memory gate now satisfied).
-2. Open a PR `feature/sona-ci` → `develop`; the `pull_request` trigger runs the
-   SonarQube job. Watch: `run.sh` terminal should print `Running job: sonar`; Actions
-   tab should go green.
-3. If green: `Ctrl+C` the `run.sh` terminal → install runner as a service
-   (`sudo ./svc.sh install gh-runner && sudo ./svc.sh start`) so it survives reboot.
-4. Confirm the two repo secrets exist: `SONAR_TOKEN`, `SONAR_HOST_URL`.
-5. Follow-up (separate): verify `pom.xml` emits JaCoCo `jacoco.xml` so Sonar scores
-   coverage — not done in this session.
+Nothing is blocking the PR; everything below is follow-up, roughly in value order.
 
-## Cross-branch / open PRs (all three conflict-resolved this session — MERGEABLE + CI green)
+1. **Tests are the real gap before merge.** The design spec's §9 plan is only half delivered: no
+   `ProjectMemberControllerTest` / `CustomRoleControllerTest` (every other admin controller has
+   one), no repository test for `PermissionGrantRepository` / `CustomRoleRepository`, no
+   `@SpringBootTest` for Scenario A (project-scoped access) or B (production protection).
+   `listGrants` / `list` have **no test at all** — they were changed to paginate with nothing
+   guarding them.
+2. **`ORG_READ` / `MEMBER_READ`** — `OrganizationServiceImpl.get` and `listMembers` still gate on
+   `isMember`, so custom roles cannot express them. Same fix shape as `AUDIT_READ` in `903ba7a`.
+3. **`updateMemberRole` does not exist** anywhere — a member's org role can only be set at invite
+   time, and remove-then-reinvite now also wipes their project grants.
+4. **Orphaned grants** — `ProjectServiceImpl.delete` and `OrganizationServiceImpl.delete` leave
+   `permission_grant` rows behind (`scope_id` is polymorphic, no FK). `removeMember` already does
+   this cleanup; copy it.
+5. Small: `EnvironmentSecretResponse` missing `type` / change window; `updateState` resolves the
+   environment before checking permission (404-vs-403 probe); `mostPermissive` ranks roles by
+   action-set size (works, but fragile — use an explicit rank);
+   `PermissionGrantRepository.existsByUser_IdAndScopeTypeAndScopeId` is dead code; Postman
+   collection has no grant / custom-role requests.
 
-- **#43** (issue #27, docker port/non-root) — merged `develop` in; kept #25's readiness HEALTHCHECK
-  layered under `USER spring`; compose now passes `APP_JWT_SECRET` (the image bakes the prod profile,
-  so it would have crash-looped). Decision **0019**.
-- **#58** (issue #31, audit log) — merged `develop` in; **migration renumbered 010 → 011** (#32 took
-  010 for refresh-tokens; git did NOT flag it — two different filenames both added); kept develop's
-  `@Transactional(readOnly=true)` on `listMembers` (the #52 fix). Decision **0020**.
-- **#60** (issue #34, GHCR publish + Trivy) — merged `develop` in; verified the raised
-  `jacoco.line.coverage=0.87` still holds after #32 landed (measured 0.8938).
-  Decision **0018**.
-- Decision numbers across open PRs: 0018 (#60) / 0019 (#43) / 0020 (#58) / **0021 (#35, this
-  branch)** — collision-free in any merge order.
-- **#53** (issue #30, evaluation cache) — open; its pre-rollout `FlagStateSnapshot` design is what
-  satisfies #35's caching bullet. ADR-0004 records the invariant any future cache layer must keep.
-- Unanswered review comment on **#58**: "check the warning please" — every CI warning is
-  pre-existing on `develop` (verified by diffing against run `30373689296`); the only one worth
-  fixing is `HHH90000025 H2Dialect ... specified explicitly` (drop `hibernate.dialect` from
-  `application-test.properties`). Awaiting the reviewer's preference.
-
-## Known landmines
-
-- **Windows docs case-collision** (`docs/ARCHITECTURE.md` vs `docs/architecture.md`): while both
-  paths are tracked the phantom one is *always* dirty and **`git merge` refuses to start** —
-  `git stash` only flips which name is dirty. Fix is `git rm --cached docs/ARCHITECTURE.md`.
-  `develop` renamed the uppercase file to `docs/architecture-design-v1.md`; PRs #43 and #58 each
-  carry the `git rm --cached` plus an updated `conventions/windows-docs-case-collision.md`. This
-  branch is off `develop` so it never had the phantom — do **not** re-update that convention file
-  here, it would conflict three ways.
-- `./mvnw test -Dtest='A+B'` is not valid surefire syntax — use `-Dtest='A,B'`.
+Note for whoever picks this up: **there is no GitHub issue for ABAC** — the PR is the first tracked
+artifact. If it should be tracked on the board, open one and link it.
