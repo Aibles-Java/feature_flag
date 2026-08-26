@@ -128,12 +128,22 @@ jobs:
   # cache so the second build is fast, not a full rebuild.
   publish:
     name: Publish Docker image (GHCR)
-    needs: test
+    # Gated on BOTH `test` and `sonar`: a red build OR a failed Sonar/Quality
+    # Gate now blocks the image from shipping. `sonar` is SKIPPED on tag pushes
+    # (its `if` excludes tags) and on fork PRs — a skipped dependency would
+    # normally skip `publish` too, which would break releases, so the `if` uses
+    # `!cancelled()` + explicit result checks to allow `sonar == skipped` while
+    # still blocking on `sonar == failure/cancelled`. `needs.test` must be an
+    # explicit `success` check because `!cancelled()` drops the implicit gate.
+    needs: [test, sonar]
     if: >-
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/develop' ||
-       github.ref == 'refs/heads/main' ||
-       startsWith(github.ref, 'refs/tags/v'))
+      ${{ !cancelled()
+        && needs.test.result == 'success'
+        && (needs.sonar.result == 'success' || needs.sonar.result == 'skipped')
+        && github.event_name == 'push'
+        && (github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/main'
+          || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
