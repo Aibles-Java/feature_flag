@@ -4,37 +4,43 @@
 
 ## Current WIP
 
-Making CI green on branch **`fix/trivy-action-version`**.
+Merged the standalone SonarQube workflow into CI/CD on branch
+**`feature/merge-sonar-into-ci`** (off `develop`).
 
-- Earlier commits (`485c476`, `16b72a9`) pinned/bumped `aquasecurity/trivy-action` to a
-  v-prefixed tag so the image-scan step actually runs.
-- Once it ran (run 32654490354), the Trivy gate failed on a **real** HIGH:
-  `org.postgresql:postgresql` 42.7.11 → CVE-2026-54291, fixed in 42.7.12.
-- Fix committed as `94d4f5b`: override `<postgresql.version>42.7.12</postgresql.version>`
-  in `pom.xml <properties>`. `./mvnw clean package` green on H2; `mvn help:evaluate`
-  confirms the property resolves to 42.7.12.
-- **Not yet pushed** — was blocked by the pre-push memory gate; this `/save-memory` run
-  unblocks it.
+- `.github/workflows/workflow.yml`: added a `sonar` job with `needs: test` (job name
+  `SonarQube analysis`, self-contained, self-hosted). `.github/workflows/sonar.yml`
+  deleted. Validated with `actionlint` (no errors).
+- Committed as `f523d07` (`ci: gate SonarQube analysis behind CI build`). The commit
+  was amended once — the first attempt captured only the `sonar.yml` deletion because
+  a `git add` aborted on a pathspec error; both files are now in the commit
+  (`2 files changed, 56 insertions(+), 52 deletions(-)`).
+- **About to push** — this `/save-memory` satisfies the pre-push memory gate.
 
 ## Context to Load
 
-- [[0023-trivy-action-pin-and-postgres-cve-bump]] — the trivy-action pin + the CVE-bump
-  pattern (override the Boot BOM property, never `.trivyignore` a fixed CVE).
-- [[0018-docker-publish-trivy-gate-issue-34]] — the Trivy gate this fix keeps green.
+- [[0024-merge-sonar-into-ci-gated]] — the merge decision, why the job stays
+  self-contained, trigger/branch-protection/concurrency implications.
+- [[0018-sonarqube-ci-self-hosted-runner]] — the original standalone Sonar setup this
+  supersedes.
 
 ## Next steps
 
-1. Commit this memory + `git push` (memory gate now satisfied).
-2. Watch the run on `fix/trivy-action-version`: the `publish` job's Trivy step should now be
-   green (no HIGH/CRITICAL).
-3. Open/refresh the PR for this branch → `develop` if not already open.
-4. If any *new* HIGH/CRITICAL appears later, apply the same pattern: find the Boot-managed
-   `<artifactId>.version` and bump it in `<properties>`.
+1. `git push -u origin feature/merge-sonar-into-ci` (memory gate now satisfied).
+2. Open a PR → `develop`. **Base is stale**: this branch is off a local `develop` that
+   was ~11 commits behind `origin/develop` — consider `git fetch` + rebase onto
+   `origin/develop` before/after opening the PR so CI runs against current state.
+3. On the PR, confirm the `SonarQube analysis` check still appears and runs **after**
+   `Build & test (Java 21)`, and that branch-protection required checks still match
+   (workflow name it reports under changed `SonarQube` → `CI/CD`).
+4. Decide whether Sonar should also gate `publish`/`deploy` (currently it does NOT —
+   they `needs: test` only). If yes, add `sonar` to `publish`'s `needs`.
 
 ## Known landmines
 
-- **Windows docs case-collision** (`docs/ARCHITECTURE.md` vs `docs/architecture.md`): the
-  phantom path is always dirty and `git merge` refuses to start. `develop` already renamed
-  the uppercase file to `docs/architecture-design-v1.md`; this branch is off `develop` so it
-  should be clean — do not re-touch `conventions/windows-docs-case-collision.md`.
+- **Unrelated stash still parked:** `stash@{0}` (`loopback-binding docker-compose.prod.yml`)
+  belongs on `fix/trivy-action-version`, NOT this branch. `git stash pop` it only after
+  checking out `fix/trivy-action-version`.
+- **Windows docs case-collision** (`docs/ARCHITECTURE.md` vs `docs/architecture.md`):
+  `develop` already renamed the uppercase file; this branch is off `develop` so it should
+  be clean — do not re-touch `conventions/windows-docs-case-collision.md`.
 - `./mvnw test -Dtest='A+B'` is not valid surefire syntax — use `-Dtest='A,B'`.
