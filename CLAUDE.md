@@ -116,6 +116,24 @@ Two rules that are easy to get wrong:
 Subscriptions are per-environment; project-scoped events (flag create/update/archive) fan out to
 every environment in the project. See `docs/adr/ADR-0005-webhook-delivery-and-secret-storage.md`.
 
+## Flag hygiene (issue #37)
+
+`flag_environment_states.last_evaluated_at` records SDK usage; `feature_flags.expires_at` is an
+optional planned-removal date. `GET /api/v1/flag-hygiene?projectId=…&status=ALL|STALE|EXPIRED`
+reports flag debt, one row per (flag, environment) pair.
+
+Three rules that are easy to break:
+
+1. **The usage write needs `REQUIRES_NEW`.** The SDK evaluation path is
+   `@Transactional(readOnly = true)`; joining it makes the touch an UPDATE inside a read-only
+   transaction — PostgreSQL rejects that, H2 allows it, so the bug would only appear in production.
+2. **The touch must stay a bulk JPQL UPDATE.** A bulk update skips `@UpdateTimestamp`; setting the
+   field on the managed entity instead would bump `updated_at` on every read.
+3. **Call the tracker outside any cache-load function.** Inside a cache-miss loader, a cache hit
+   (issue #30) would skip tracking and the busiest flags would be reported stale.
+
+Expiry is reported, **never** auto-enforced — see `decisions/0028`.
+
 ## v2 Roadmap (not yet implemented)
 
 - User Segments + SegmentRules (trait-based targeting)
