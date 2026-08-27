@@ -10,5 +10,9 @@ public enum AuditAction {
   INVITE_MEMBER,
   REMOVE_MEMBER,
   ROTATE_API_KEY,
-  CHANGE_STATE
+  CHANGE_STATE,
+  /** An environment was cloned from another one, flag states included (issue #38). */
+  CLONE,
+  /** A flag snapshot was applied to an environment (issue #38). */
+  IMPORT
 }

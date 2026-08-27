@@ -95,7 +95,7 @@ DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`)
 
 ## API Key generation
 
-`ApiKeyGenerator` uses `SecureRandom` → 32 bytes → `HexFormat.of().formatHex()` → 64-char hex string. This runs on environment creation and on `POST /api/v1/environments/{id}/api-key/rotate`.
+`ApiKeyGenerator` uses `SecureRandom` → 32 bytes → `HexFormat.of().formatHex()` → 64-char hex string. This runs on environment creation, on `POST /api/v1/environments/{id}/api-key/rotate`, and on `POST /api/v1/environments/{id}/clone` (a clone always mints its own key — the source's is never copied).
 
 ## Outbound webhooks (issue #36)
 

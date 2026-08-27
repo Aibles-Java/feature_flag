@@ -124,4 +124,17 @@ public interface FlagEnvironmentStateRepository extends JpaRepository<FlagEnviro
               + "AND s.featureFlag.expiresAt IS NOT NULL AND s.featureFlag.expiresAt < :now")
   Page<FlagEnvironmentState> findExpiredHygieneRows(
       @Param("projectId") UUID projectId, @Param("now") LocalDateTime now, Pageable pageable);
+
+  // --- issue #38: clone / export snapshot ---------------------------------------------------
+
+  /**
+   * Every state row of an environment, archived flags included, ordered by flag key — the basis for
+   * a clone and for an export snapshot (issue #38). Unlike {@link #findAllActiveByEnvironmentId} it
+   * hides nothing, so a snapshot describes the environment completely; the deterministic order
+   * makes two exports of the same state byte-identical and therefore diffable.
+   */
+  @Query(
+      "SELECT s FROM FlagEnvironmentState s JOIN FETCH s.featureFlag f WHERE s.environment.id = :envId ORDER BY f.key")
+  List<FlagEnvironmentState> findAllByEnvironmentIdOrderByFlagKey(
+      @Param("envId") UUID environmentId);
 }
