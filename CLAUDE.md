@@ -29,8 +29,8 @@ docker compose up -d
 ```
 
 After startup:
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
-- OpenAPI JSON: `http://localhost:8080/api-docs`
+- Swagger UI: `http://localhost:8081/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:8081/api-docs`
 
 ## Architecture
 
@@ -96,6 +96,43 @@ DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`)
 ## API Key generation
 
 `ApiKeyGenerator` uses `SecureRandom` → 32 bytes → `HexFormat.of().formatHex()` → 64-char hex string. This runs on environment creation, on `POST /api/v1/environments/{id}/api-key/rotate`, and on `POST /api/v1/environments/{id}/clone` (a clone always mints its own key — the source's is never copied).
+
+## Outbound webhooks (issue #36)
+
+`webhook/` is a second consumer of the same `@Async @TransactionalEventListener(AFTER_COMMIT)`
+pipeline as `SlackEventListener` — `WebhookDispatcher` resolves subscriptions, `WebhookSender`
+signs and POSTs with retries. Off by default (`app.webhook.enabled=false`).
+
+Two rules that are easy to get wrong:
+
+1. **The webhook secret is encrypted, NOT hashed.** HMAC signing needs the plaintext on every
+   delivery, so the `ApiKeyHasher`/SHA-256 precedent used for SDK keys and refresh tokens
+   **cannot** be applied here — `SecretCipher` (AES-256-GCM) is reversible on purpose. Its key
+   (`APP_WEBHOOK_ENCRYPTION_KEY`) is **not rotatable in place**: changing it orphans every stored
+   secret.
+2. **`SsrfGuard` runs at subscribe time *and* on every delivery attempt.** DNS is mutable, so a
+   subscribe-time-only check is bypassable by rebinding. Don't "optimise" the second check away.
+
+Subscriptions are per-environment; project-scoped events (flag create/update/archive) fan out to
+every environment in the project. See `docs/adr/ADR-0005-webhook-delivery-and-secret-storage.md`.
+
+## Flag hygiene (issue #37)
+
+`flag_environment_states.last_evaluated_at` records SDK usage; `feature_flags.expires_at` is an
+optional planned-removal date. `GET /api/v1/flag-hygiene?projectId=…&status=ALL|STALE|EXPIRED`
+reports flag debt, one row per (flag, environment) pair.
+
+Three rules that are easy to break:
+
+1. **The usage write needs `REQUIRES_NEW`.** The SDK evaluation path is
+   `@Transactional(readOnly = true)`; joining it makes the touch an UPDATE inside a read-only
+   transaction — PostgreSQL rejects that, H2 allows it, so the bug would only appear in production.
+2. **The touch must stay a bulk JPQL UPDATE.** A bulk update skips `@UpdateTimestamp`; setting the
+   field on the managed entity instead would bump `updated_at` on every read.
+3. **Call the tracker outside any cache-load function.** Inside a cache-miss loader, a cache hit
+   (issue #30) would skip tracking and the busiest flags would be reported stale.
+
+Expiry is reported, **never** auto-enforced — see `decisions/0028`.
 
 ## v2 Roadmap (not yet implemented)
 

@@ -1,4 +1,4 @@
-# 0021 — Environment cloning + schema-versioned flag import/export
+# 0029 — Environment cloning + schema-versioned flag import/export
 
 **Issue #38** · branch `feature/issue-38-env-clone-import-export` → `develop` · 2026-08-12
 

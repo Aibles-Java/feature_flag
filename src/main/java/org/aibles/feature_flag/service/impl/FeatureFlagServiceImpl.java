@@ -19,7 +19,9 @@ import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
+import org.aibles.feature_flag.notification.event.FlagCreatedEvent;
 import org.aibles.feature_flag.notification.event.FlagStateChangedEvent;
+import org.aibles.feature_flag.notification.event.FlagUpdatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
@@ -67,6 +69,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             .key(request.getKey())
             .description(request.getDescription())
             .valueType(request.getValueType())
+            .expiresAt(request.getExpiresAt())
             .build();
     flag = featureFlagRepository.save(flag);
 
@@ -79,6 +82,13 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
       flagStateRepository.save(state);
     }
 
+    eventPublisher.publishEvent(
+        new FlagCreatedEvent(
+            project.getId(),
+            flag.getKey(),
+            flag.getName(),
+            flag.getValueType(),
+            permissionService.currentUserEmail()));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.CREATED);
     FeatureFlagResponse response = toResponse(flag);
     auditService.record(
@@ -119,7 +129,15 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     // key is intentionally not updated — it is immutable
     if (request.getName() != null) flag.setName(request.getName());
     if (request.getDescription() != null) flag.setDescription(request.getDescription());
+    if (request.getExpiresAt() != null) flag.setExpiresAt(request.getExpiresAt());
     FeatureFlagResponse response = toResponse(featureFlagRepository.save(flag));
+    eventPublisher.publishEvent(
+        new FlagUpdatedEvent(
+            flag.getProject().getId(),
+            flag.getKey(),
+            flag.getName(),
+            flag.getDescription(),
+            permissionService.currentUserEmail()));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.UPDATED);
     auditService.record(
         AuditEntityType.FEATURE_FLAG, id, AuditAction.UPDATE, orgId, before, response);
@@ -138,6 +156,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     FeatureFlagResponse after = toResponse(featureFlagRepository.save(flag));
     eventPublisher.publishEvent(
         new FlagArchivedEvent(
+            flag.getProject().getId(),
             flag.getKey(),
             flag.getProject().getName(),
             true,
@@ -159,6 +178,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     FeatureFlagResponse after = toResponse(featureFlagRepository.save(flag));
     eventPublisher.publishEvent(
         new FlagArchivedEvent(
+            flag.getProject().getId(),
             flag.getKey(),
             flag.getProject().getName(),
             false,
@@ -224,6 +244,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
 
     eventPublisher.publishEvent(
         new FlagStateChangedEvent(
+            state.getEnvironment().getId(),
             state.getFeatureFlag().getKey(),
             state.getEnvironment().getName(),
             state.getFeatureFlag().getProject().getName(),
@@ -250,6 +271,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         .description(flag.getDescription())
         .valueType(flag.getValueType())
         .archived(flag.isArchived())
+        .expiresAt(flag.getExpiresAt())
         .projectId(flag.getProject().getId())
         .createdAt(flag.getCreatedAt())
         .build();
@@ -262,6 +284,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         .enabled(state.isEnabled())
         .value(state.getValue())
         .rolloutPercent(state.getRolloutPercent())
+        .lastEvaluatedAt(state.getLastEvaluatedAt())
         .build();
   }
 }

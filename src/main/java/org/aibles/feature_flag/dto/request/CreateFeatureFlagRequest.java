@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.Data;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
@@ -26,4 +27,7 @@ public class CreateFeatureFlagRequest {
   private String description;
 
   @NotNull private FlagValueType valueType;
+
+  /** Optional planned removal date. Expired flags are reported, never auto-disabled (issue #37). */
+  private LocalDateTime expiresAt;
 }
