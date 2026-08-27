@@ -118,6 +118,51 @@ jobs:
           org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
           -Dsonar.projectKey=feature_flag
 
+  # Image vulnerability scan as a CI gate (issue #34 follow-up). Runs on PRs AND
+  # pushes, in parallel with `sonar` (both gated only on `test`), so a
+  # HIGH/CRITICAL base-image or dependency CVE is caught BEFORE merge — not only
+  # after merge in the publish job. Builds the image locally (never pushed) and
+  # Trivy-scans the exact bits with the same policy + `.trivyignore` as the
+  # publish gate, and populates the shared GHA layer cache so the later `publish`
+  # build is a cache hit rather than a full rebuild. Needs no secrets, so it runs
+  # on fork PRs too. Skipped on `workflow_dispatch` (a redeploy of an
+  # already-published image builds nothing to scan). `publish` KEEPS its own
+  # post-build Trivy scan as the final time-of-ship gate: a CVE disclosed between
+  # merge and release is still blocked from ever reaching GHCR.
+  scan:
+    name: Scan image (Trivy)
+    needs: test
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (local only, for scanning)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: feature_flag:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: feature_flag:scan
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
   # Publishes an image to GHCR (issue #34). Only on a push (never a PR — forks
   # can't be trusted with registry credentials) to `develop`/`main` or a
   # `vX.Y.Z` tag, and only once `test` is green: a red build never ships an
@@ -128,18 +173,22 @@ jobs:
   # cache so the second build is fast, not a full rebuild.
   publish:
     name: Publish Docker image (GHCR)
-    # Gated on BOTH `test` and `sonar`: a red build OR a failed Sonar/Quality
-    # Gate now blocks the image from shipping. `sonar` is SKIPPED on tag pushes
-    # (its `if` excludes tags) and on fork PRs — a skipped dependency would
-    # normally skip `publish` too, which would break releases, so the `if` uses
-    # `!cancelled()` + explicit result checks to allow `sonar == skipped` while
-    # still blocking on `sonar == failure/cancelled`. `needs.test` must be an
-    # explicit `success` check because `!cancelled()` drops the implicit gate.
-    needs: [test, sonar]
+    # Gated on `test`, `sonar` AND `scan`: a red build, a failed Sonar/Quality
+    # Gate, OR a HIGH/CRITICAL Trivy finding now blocks the image from shipping.
+    # `sonar` is SKIPPED on tag pushes (its `if` excludes tags) and on fork PRs —
+    # a skipped dependency would normally skip `publish` too, which would break
+    # releases, so the `if` uses `!cancelled()` + explicit result checks to allow
+    # `sonar == skipped` while still blocking on `sonar == failure/cancelled`.
+    # `scan` runs on every push (only skipped on workflow_dispatch, where publish
+    # is itself gated out), so it is required to be an explicit `success` here.
+    # `needs.test` must be an explicit `success` check because `!cancelled()`
+    # drops the implicit gate.
+    needs: [test, sonar, scan]
     if: >-
       ${{ !cancelled()
         && needs.test.result == 'success'
         && (needs.sonar.result == 'success' || needs.sonar.result == 'skipped')
+        && needs.scan.result == 'success'
         && github.event_name == 'push'
         && (github.ref == 'refs/heads/develop'
           || github.ref == 'refs/heads/main'
