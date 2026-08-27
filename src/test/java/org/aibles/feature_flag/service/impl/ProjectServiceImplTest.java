@@ -37,6 +37,7 @@ class ProjectServiceImplTest {
   @Mock ProjectRepository projectRepository;
   @Mock OrganizationRepository organizationRepository;
   @Mock PermissionService permissionService;
+  @Mock AuditService auditService;
 
   ProjectServiceImpl service;
 
@@ -47,7 +48,9 @@ class ProjectServiceImplTest {
 
   @BeforeEach
   void setUp() {
-    service = new ProjectServiceImpl(projectRepository, organizationRepository, permissionService);
+    service =
+        new ProjectServiceImpl(
+            projectRepository, organizationRepository, permissionService, auditService);
     org = Organization.builder().id(orgId).name("Acme").slug("acme").build();
     project = Project.builder().id(projectId).organization(org).name("Backend").build();
     doNothing().when(permissionService).requireRole(any(), any(MemberRole[].class));

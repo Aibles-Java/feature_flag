@@ -14,7 +14,8 @@
     <include file="db/changelog/migrations/008-add-rollout-percent.xml"/>
     <include file="db/changelog/migrations/009-hash-api-keys.xml"/>
     <include file="db/changelog/migrations/010-create-refresh-tokens.xml"/>
-    <!-- 011 reserved by issue #31 (PR #58), 012 by issue #36 (PR #62); hygiene takes 013. -->
+    <include file="db/changelog/migrations/011-create-audit-log.xml"/>
+    <include file="db/changelog/migrations/012-create-webhooks.xml"/>
     <include file="db/changelog/migrations/013-add-flag-hygiene-columns.xml"/>
 
 </databaseChangeLog>

@@ -1,0 +1,48 @@
+# Production deployment compose — used by the CD `deploy` job in
+# .github/workflows/workflow.yml on the self-hosted runner. Unlike docker-compose.yml
+# (local dev, which builds the app from source), this PULLS the exact GHCR image
+# tag published for the release and requires every secret to be supplied by the
+# environment — the prod profile has no dev fallbacks.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ff_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Deliberately NOT published to the host — only the app (on the internal
+    # compose network) needs Postgres. Keeps 5432 off the prod host's surface.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    # Set by the deploy job to ghcr.io/<repo>:<version> for the released tag.
+    image: ${APP_IMAGE:?set APP_IMAGE to the GHCR image tag to deploy}
+    container_name: ff_app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Inside the compose network the DB is reached by service name.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      # Required by the prod profile (JwtProperties aborts startup without it):
+      # >= 64 UTF-8 bytes, e.g. openssl rand -hex 64.
+      APP_JWT_SECRET: ${APP_JWT_SECRET:?set APP_JWT_SECRET}
+    ports:
+      # Matches server.port=8081 / Dockerfile EXPOSE.
+      - "8081:8081"
+    # The container healthcheck (/actuator/health/readiness) is inherited from
+    # the Dockerfile HEALTHCHECK.
+
+volumes:
+  postgres_data:

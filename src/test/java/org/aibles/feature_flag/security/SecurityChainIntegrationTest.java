@@ -3,6 +3,9 @@ package org.aibles.feature_flag.security;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup;
 
@@ -68,24 +71,62 @@ class SecurityChainIntegrationTest {
 
   // --- Admin chain (JWT) ---------------------------------------------------
 
+  /**
+   * 401, not 403. Spring Security's default entry point for a chain with no built-in auth mechanism
+   * is Http403ForbiddenEntryPoint, which conflates "who are you" with "you may not" and stops a
+   * client telling an expired session apart from a permission denial. The body and challenge header
+   * are asserted too because a token-refreshing client keys on exactly those.
+   */
   @Test
   void adminEndpointRejectsMissingBearerToken() throws Exception {
-    mockMvc.perform(get(ADMIN_ENDPOINT)).andExpect(status().isForbidden());
+    mockMvc
+        .perform(get(ADMIN_ENDPOINT))
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().string("WWW-Authenticate", "Bearer"))
+        .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+        .andExpect(jsonPath("$.status").value(401))
+        .andExpect(jsonPath("$.title").value("Unauthorized"))
+        .andExpect(jsonPath("$.instance").value(ADMIN_ENDPOINT));
   }
 
   @Test
   void adminEndpointRejectsInvalidBearerToken() throws Exception {
     mockMvc
         .perform(get(ADMIN_ENDPOINT).header("Authorization", "Bearer not-a-real-token"))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().string("WWW-Authenticate", "Bearer"));
+  }
+
+  /**
+   * The detail must not reveal *why* authentication failed: a caller able to distinguish "no such
+   * user" from "bad signature" from "expired" can probe token and account state.
+   */
+  @Test
+  void adminRejectionDoesNotLeakTheReason() throws Exception {
+    String bodyForBadToken =
+        mockMvc
+            .perform(get(ADMIN_ENDPOINT).header("Authorization", "Bearer not-a-real-token"))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    String bodyForUnknownUser =
+        mockMvc
+            .perform(
+                get(ADMIN_ENDPOINT).header("Authorization", "Bearer " + validJwtForUnknownUser()))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    assertThat(bodyForBadToken).isEqualTo(bodyForUnknownUser);
+    assertThat(bodyForBadToken).doesNotContain("signature", "expired", "user", "ghost");
   }
 
   @Test
-  void adminValidTokenForDeletedUser_returnsForbidden() throws Exception {
+  void adminValidTokenForDeletedUser_returnsUnauthorized() throws Exception {
     String token = validJwtForUnknownUser();
     mockMvc
         .perform(get(ADMIN_ENDPOINT).header("Authorization", "Bearer " + token))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isUnauthorized());
   }
 
   // --- SDK chain (API key) -------------------------------------------------
@@ -193,7 +234,7 @@ class SecurityChainIntegrationTest {
     // The admin chain ignores X-Environment-Key entirely; with no valid JWT this is rejected.
     mockMvc
         .perform(get(ADMIN_ENDPOINT).header("X-Environment-Key", "bogus-key"))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isUnauthorized());
   }
 
   @Test

@@ -1,11 +1,11 @@
 ---
-name: 0023-flag-hygiene-stale-detection-expiry
+name: 0028-flag-hygiene-stale-detection-expiry
 description: issue #37 — throttled last-evaluated tracking on the SDK read path (REQUIRES_NEW is mandatory, not stylistic), expiry that only reports, and a per-(flag,environment) hygiene report
 metadata:
   type: decision
 ---
 
-# 0023 — Flag hygiene: stale detection + expiry (issue #37)
+# 0028 — Flag hygiene: stale detection + expiry (issue #37)
 
 ## The trap: writing from a read-only transaction
 
@@ -78,6 +78,12 @@ because #53 is still open and will touch this method.
 
 ## Numbering
 
-Migration **013** (011 → PR #58, 012 → PR #62). Decision **0023** (0018 #60, 0019 #43, 0020 #58,
-0021 #61, 0022 #62). No ADR: the decisions here are localized, unlike ADR-0005's cross-cutting
-crypto/SSRF contract.
+Migration **013**: develop now tops out at 012 (webhooks, PR #62, merged), so 013 is the next
+free number. ⚠️ The in-flight ABAC branch (PR #87) also claims 013–017 and will have to shift to
+014–018 if this PR lands first — whichever merges second renumbers.
+
+Decision **0028**: originally written as 0023, but develop took 0023 (Trivy pin) while this branch
+was open, and 0024–0027 went to the Sonar/CD/401/webhooks work. Renumbered at the merge; see
+`conventions/sequential-ids-collide-across-long-lived-branches`.
+
+No ADR: the decisions here are localized, unlike ADR-0005's cross-cutting crypto/SSRF contract.

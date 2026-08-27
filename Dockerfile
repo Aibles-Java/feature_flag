@@ -9,6 +9,10 @@ RUN ./mvnw package -DskipTests -q
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
+# Run as a non-root user (defense in depth: a container breakout can't land as root).
+RUN addgroup -S spring && adduser -S spring -G spring \
+    && chown spring:spring /app/app.jar
+USER spring
 # The image is the production artifact: default to the prod profile so a container
 # started without APP_JWT_SECRET / SPRING_DATASOURCE_* fails fast instead of silently
 # running on the committed local-dev defaults. Override explicitly for local use.

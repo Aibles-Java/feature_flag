@@ -1,0 +1,384 @@
+name: CI/CD
+
+# CI + CD in one file. Each job gates itself by event with `if:` (a workflow
+# has a single `on:` for all jobs):
+#   - test    : every PR into develop/main + direct pushes + `v*` tags
+#   - publish : push to `develop`/`main` or a `v*` tag — build, Trivy-scan, push GHCR
+#   - deploy  : push to `develop` (continuous deploy to the server, after publish),
+#               a `v*` tag (after publish), OR a manual `workflow_dispatch` run
+#               that redeploys an already-published GHCR version — pull + `compose up`
+# (Named "CI/CD" — the file is `workflow.yml` because it does both. Branch
+# protection keys on the JOB check names below, not this workflow name, so it is
+# unaffected. The GitHub Slack app DOES scope on this name
+# (`workflows:{name:"CI/CD"}`), so keep docs/slack-notifications.md in sync.)
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+    tags: ['v*']
+  # Manual deploy of an image already in GHCR (e.g. to test the CD path without
+  # cutting a real release tag). `publish` is skipped on dispatch, so the given
+  # version MUST already have been published by a prior tag run.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'GHCR image version to deploy, e.g. 1.2.3 (must already exist in GHCR)'
+        required: true
+
+# Cancel a superseded run ONLY for pull_request events (redundant CI on a new
+# push to the PR). For push-to-develop / tag / dispatch we must NEVER cancel
+# mid-run — the deploy job runs there, and a cancelled `compose up` would leave a
+# half-applied stack. Rapid develop pushes therefore run to completion and their
+# deploy jobs serialize via the job-level `deploy-prod` concurrency group.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Build & test (Java 21)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Runs unit tests, then the JaCoCo report + coverage-ratchet check (bound to verify).
+      - name: Build, test & coverage
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+      - name: Upload JaCoCo coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: target/site/jacoco/
+          if-no-files-found: warn
+
+  # SonarQube analysis — merged in from the former standalone sonar.yml so it is
+  # gated behind `test` and only starts once the build + tests are green (a red
+  # build no longer triggers a redundant Sonar run). It is intentionally kept
+  # self-contained — its own full-history checkout (accurate new-code / blame),
+  # JDK, Sonar cache, and its own `./mvnw verify` — because it runs on the
+  # self-hosted runner and needs the compiled project + JaCoCo coverage, which
+  # live on the `test` job's ubuntu runner filesystem, not here. Same total build
+  # work as before the merge; it is now sequential-and-gated rather than
+  # parallel-and-ungated. Does NOT gate `publish`/`deploy` (unchanged: Sonar was
+  # never a deploy gate). The `if:` preserves sonar.yml's triggers exactly:
+  # push to develop/main + non-fork PRs into develop (never tags, never PRs to
+  # main). Fork PRs lack repo secrets (SONAR_TOKEN) so they are skipped.
+  sonar:
+    name: SonarQube analysis
+    needs: test
+    if: >-
+      (
+        (github.event_name == 'push' &&
+          (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'))
+        || (github.event_name == 'pull_request' && github.base_ref == 'develop')
+      )
+      && (github.event_name == 'push'
+        || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: self-hosted
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for accurate new-code / blame detection
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Cache SonarQube packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Build, test & SonarQube analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: >-
+          ./mvnw --batch-mode --no-transfer-progress verify
+          org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
+          -Dsonar.projectKey=feature_flag
+
+  # Publishes an image to GHCR (issue #34). Only on a push (never a PR — forks
+  # can't be trusted with registry credentials) to `develop`/`main` or a
+  # `vX.Y.Z` tag, and only once `test` is green: a red build never ships an
+  # image. `develop` pushes ship a `develop` image that the deploy job below
+  # rolls out continuously to the server. The image is built once with
+  # `load: true` (no push) so Trivy can scan the exact bits about to ship;
+  # only a clean scan gets logged in and pushed, reusing the same GHA layer
+  # cache so the second build is fast, not a full rebuild.
+  publish:
+    name: Publish Docker image (GHCR)
+    # Gated on BOTH `test` and `sonar`: a red build OR a failed Sonar/Quality
+    # Gate now blocks the image from shipping. `sonar` is SKIPPED on tag pushes
+    # (its `if` excludes tags) and on fork PRs — a skipped dependency would
+    # normally skip `publish` too, which would break releases, so the `if` uses
+    # `!cancelled()` + explicit result checks to allow `sonar == skipped` while
+    # still blocking on `sonar == failure/cancelled`. `needs.test` must be an
+    # explicit `success` check because `!cancelled()` drops the implicit gate.
+    needs: [test, sonar]
+    if: >-
+      ${{ !cancelled()
+        && needs.test.result == 'success'
+        && (needs.sonar.result == 'success' || needs.sonar.result == 'skipped')
+        && github.event_name == 'push'
+        && (github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/main'
+          || startsWith(github.ref, 'refs/tags/v')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Computes tags/labels from the triggering ref:
+      #   - `type=ref,event=branch`  -> the branch name (`develop`, `main`) on a
+      #     branch push. This is the moving tag the deploy job pulls for
+      #     continuous deploy off `develop`.
+      #   - `type=sha`               -> `sha-<short>` on every publish, an
+      #     immutable tag for traceability / rollback.
+      #   - `type=semver,...`        -> patch/minor/major on a `vX.Y.Z` tag push.
+      #   - `latest`                 -> only on a push to `main`.
+      # Deliberately NOT metadata-action's `{{is_default_branch}}` — it compares
+      # against this repo's configured default branch (`develop`, Gitflow), so it
+      # would attach `latest` to develop; gate `latest` on the actual `main` ref
+      # instead. metadata-action lowercases `github.repository` (GHCR needs a
+      # lowercase image path).
+      - name: Compute image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build image (local only, for scanning)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Fails the job on any HIGH/CRITICAL finding not covered by
+      # .trivyignore (issue #34). The image above is never pushed if this
+      # step fails — nothing HIGH/CRITICAL reaches GHCR, even transiently.
+      # Scans by the first computed tag (documented trivy-action pattern) —
+      # the local Docker daemon has that tag from the `load: true` build
+      # above — rather than the raw imageid, which isn't a pattern any
+      # first-party doc/example confirms as scannable.
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Re-uses the cache populated above — this is a cache-hit rebuild, not a
+      # fresh compile, since context and Dockerfile are unchanged.
+      - name: Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+
+  # Continuous deployment to the server. Three entry points, each gated on
+  # `publish` succeeding first (so the image deployed passed tests + a clean
+  # Trivy scan and is already in GHCR):
+  #   - a push to `develop`      -> rolls out the immutable `sha-<short>` tag of
+  #                                 the merged commit (NOT the moving `develop`
+  #                                 tag) so the deploy is traceable + rollbackable;
+  #   - a `vX.Y.Z` tag push      -> rolls out that release version;
+  #   - a manual `workflow_dispatch` -> redeploys an already-published version
+  #     (publish is skipped on dispatch, hence `always()` + the per-event checks).
+  #     Accepts a `sha-<short>` value too — that is how you roll back by hand.
+  # A failed health check auto-rolls-back to the previously-running image (see the
+  # rollback step). Runs on the self-hosted runner because the server sits on the
+  # internal network; branch pushes/tags/dispatch are maintainer-only (never a
+  # fork PR), so no untrusted fork code runs here.
+  deploy:
+    name: Deploy to server (self-hosted)
+    needs: publish
+    if: >-
+      ${{ always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       ((github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v'))
+        && needs.publish.result == 'success')) }}
+    runs-on: self-hosted
+    # Serialize deploys and never cancel one mid-flight (a half-applied
+    # `compose up` is worse than a queued deploy).
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Derive the GHCR image ref for the triggering event:
+      #   - develop push : `sha-<short>` of the merged commit (matches the
+      #     `type=sha` tag publish pushed) -> immutable + traceable, not the
+      #     moving `develop` tag. Short SHA is the first 7 hex chars, which is
+      #     metadata-action's default `type=sha` format.
+      #   - tag push     : `v1.2.3` -> `1.2.3` (metadata-action's {{version}}).
+      #   - dispatch     : the `version` input verbatim (accepts `1.2.3` OR a
+      #     `sha-<short>` for a hand rollback).
+      # `#v` only strips a leading `v` from a release tag/input; a no-op on a
+      # `sha-` value. GHCR requires a lowercase path. INPUT_VERSION is passed via
+      # env (never interpolated into the script) so the untrusted input can't inject.
+      - name: Resolve image tag
+        id: img
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${INPUT_VERSION#v}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+          else
+            tag="sha-${GITHUB_SHA:0:7}"
+          fi
+          repo="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${repo}:${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Record the image the running container was started with, so the rollback
+      # step below can restore it if the new release fails its health check.
+      # Empty on the very first deploy (no ff_app yet) -> rollback is skipped.
+      - name: Record currently-running image (for rollback)
+        run: |
+          prev="$(docker inspect -f '{{.Config.Image}}' ff_app 2>/dev/null || true)"
+          echo "PREV_IMAGE=${prev}" >> "$GITHUB_ENV"
+          if [ -n "${prev}" ]; then
+            echo "Currently running: ${prev}"
+          else
+            echo "No running ff_app container — first deploy, rollback will be skipped."
+          fi
+
+      # Pull the released image and bring the stack up. Liquibase runs on app
+      # startup (ddl-auto=validate), so migrations apply here — no separate
+      # step. Every value comes from repo/environment secrets; the prod
+      # profile has no dev fallbacks (JwtProperties aborts without the secret).
+      - name: Deploy with Docker Compose
+        env:
+          APP_IMAGE: ${{ steps.img.outputs.image }}
+          APP_JWT_SECRET: ${{ secrets.APP_JWT_SECRET }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d
+          docker compose -f docker-compose.prod.yml ps
+
+      # Deployment gate: fail the job (and surface app logs) if the new
+      # container never reports ready, so a bad release is visible immediately.
+      - name: Verify deployment health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8081/actuator/health/readiness >/dev/null; then
+              echo "App is healthy."
+              exit 0
+            fi
+            echo "Waiting for app to become ready... ($i/30)"
+            sleep 5
+          done
+          echo "App did not become healthy within the timeout."
+          docker compose -f docker-compose.prod.yml logs --tail=100 app
+          exit 1
+
+      # Auto-rollback: if any step above failed (health gate, or the deploy
+      # itself), restore the image the container was running before this run.
+      # Re-uses the local image (no pull) and re-verifies, then keeps the job
+      # RED so the failure is still surfaced. Skipped on the first deploy
+      # (PREV_IMAGE empty) or when the previous image equals the new one.
+      # NOTE: only rolls back the app IMAGE — a forward Liquibase migration that
+      # already applied is NOT reverted (old app + new schema). Acceptable for
+      # the test env; a schema rollback would need its own path.
+      - name: Roll back on failed deploy
+        if: failure()
+        env:
+          APP_IMAGE: ${{ env.PREV_IMAGE }}
+          NEW_IMAGE: ${{ steps.img.outputs.image }}
+          APP_JWT_SECRET: ${{ secrets.APP_JWT_SECRET }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          if [ -z "${APP_IMAGE}" ]; then
+            echo "No previous image recorded (first deploy) — nothing to roll back to."
+            exit 0
+          fi
+          if [ "${APP_IMAGE}" = "${NEW_IMAGE}" ]; then
+            echo "Previous image equals the just-deployed image — no rollback needed."
+            exit 0
+          fi
+          echo "Rolling back to ${APP_IMAGE}..."
+          docker compose -f docker-compose.prod.yml up -d
+          docker compose -f docker-compose.prod.yml ps
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8081/actuator/health/readiness >/dev/null; then
+              echo "Rolled back and healthy on ${APP_IMAGE}."
+              exit 0
+            fi
+            echo "Waiting for rollback to become ready... ($i/30)"
+            sleep 5
+          done
+          echo "Rollback did NOT become healthy — manual intervention required."
+          docker compose -f docker-compose.prod.yml logs --tail=100 app
+          exit 1
