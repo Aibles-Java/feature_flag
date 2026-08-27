@@ -1,4 +1,4 @@
-# 0025 — Unauthenticated admin requests return 401, not 403
+# 0026 — Unauthenticated admin requests return 401, not 403
 
 **Date:** 2026-08-15
 **Status:** Implemented on `feature/unauthenticated-returns-401` (from `develop`, independent of

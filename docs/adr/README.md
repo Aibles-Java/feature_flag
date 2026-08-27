@@ -20,3 +20,5 @@ considered, and the rationale behind the choice.
 |-----|-------|--------|------|
 | [ADR-0001](ADR-0001-initial-architecture.md) | Initial Architecture | Accepted | 2026-07-01 |
 | [ADR-0002](ADR-0002-release-process.md) | Release Process (develop → release → main) | Accepted | 2026-07-01 |
+| [ADR-0003](ADR-0003-pagination-strategy.md) | Pagination Strategy for Admin List Endpoints | Accepted | 2026-07-15 |
+| [ADR-0004](ADR-0004-percentage-rollout-contract.md) | Identifier-Based Percentage Rollout — Evaluation Contract | Accepted | 2026-08-05 |
