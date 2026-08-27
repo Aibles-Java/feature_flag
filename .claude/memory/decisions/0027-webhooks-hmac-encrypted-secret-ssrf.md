@@ -1,11 +1,11 @@
 ---
-name: 0022-webhooks-hmac-encrypted-secret-ssrf
+name: 0027-webhooks-hmac-encrypted-secret-ssrf
 description: issue #36 — the AC's "hashed" secret is impossible with HMAC signing, so AES-GCM encryption; SSRF guard must re-check at delivery time; project-scoped events fan out per environment
 metadata:
   type: decision
 ---
 
-# 0022 — Webhooks: encrypted (not hashed) secret, SSRF, fan-out (issue #36)
+# 0027 — Webhooks: encrypted (not hashed) secret, SSRF, fan-out (issue #36)
 
 Full rationale in `docs/adr/ADR-0005-webhook-delivery-and-secret-storage.md`. This records the parts
 that would otherwise be re-derived or "fixed" wrongly.
