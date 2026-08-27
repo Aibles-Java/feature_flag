@@ -15,5 +15,6 @@
     <include file="db/changelog/migrations/009-hash-api-keys.xml"/>
     <include file="db/changelog/migrations/010-create-refresh-tokens.xml"/>
     <include file="db/changelog/migrations/011-create-audit-log.xml"/>
+    <include file="db/changelog/migrations/012-create-webhooks.xml"/>
 
 </databaseChangeLog>

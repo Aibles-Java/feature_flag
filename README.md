@@ -40,6 +40,15 @@ otherwise slip through as a literal and fail later with an obscure driver error.
 | `APP_JWT_ACCESS_EXPIRATION_MS` | no | Access-token lifetime in ms (default `900000` = 15 min) |
 | `APP_JWT_REFRESH_EXPIRATION_MS` | no | Refresh-token lifetime in ms (default `1209600000` = 14 days) |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | no | docker-compose Postgres overrides (default local-dev values) |
+| `APP_WEBHOOK_ENCRYPTION_KEY` | yes | Encrypts webhook shared secrets at rest (AES-256-GCM). Same rules as `APP_JWT_SECRET`, enforced at startup. **Not rotatable in place** — see the note below. Generate: `openssl rand -hex 64` |
+
+> **Ops note (issue #36, webhooks):** outbound webhooks are **off by default**
+> (`app.webhook.enabled=false`); set it to `true` to start delivering. `APP_WEBHOOK_ENCRYPTION_KEY`
+> is required in the prod profile even when webhooks are disabled, because startup validation runs
+> regardless. **Changing that key makes every stored webhook secret undecryptable** — deliveries
+> then fail to sign and each subscription must be re-created to get a fresh secret. Back the key up
+> with your other secrets. Deliveries to private/loopback addresses are blocked by an SSRF guard;
+> `app.webhook.allow-private-addresses=true` opens that up for local development only.
 
 > **Ops migration (issue #32):** `APP_JWT_EXPIRATION_MS` is no longer read — replace it with
 > the two variables above. Access tokens now last 15 minutes instead of 24 hours;
