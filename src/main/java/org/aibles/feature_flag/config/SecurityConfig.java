@@ -51,6 +51,15 @@ public class SecurityConfig {
   private final RateLimitService rateLimitService;
   private final FeatureFlagMetrics metrics;
 
+  /**
+   * Allowed CORS origins for the browser SPA, supplied as a comma-separated list. Externalized so
+   * prod points at the deployed frontend domain(s) via {@code APP_CORS_ALLOWED_ORIGINS} rather than
+   * the committed localhost dev defaults. Must be explicit origins (never {@code *}) because the
+   * config sends {@code Access-Control-Allow-Credentials: true}.
+   */
+  @Value("${app.cors.allowed-origins}")
+  private List<String> allowedOrigins;
+
   /** Renders unauthenticated admin-chain requests as 401 problem+json (see the admin chain). */
   private final ProblemDetailAuthenticationEntryPoint authenticationEntryPoint =
       new ProblemDetailAuthenticationEntryPoint();
@@ -192,7 +201,7 @@ public class SecurityConfig {
   @Bean
   public CorsConfigurationSource corsConfigurationSource() {
     CorsConfiguration config = new CorsConfiguration();
-    config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174"));
+    config.setAllowedOrigins(allowedOrigins);
     config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
     config.setAllowedHeaders(List.of("*"));
     config.setAllowCredentials(true);
