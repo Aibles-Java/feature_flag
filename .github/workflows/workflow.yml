@@ -388,7 +388,10 @@ jobs:
             sleep 5
           done
           echo "App did not become healthy within the timeout."
-          docker compose -f docker-compose.prod.yml logs --tail=100 app
+          # Read the container directly (not `compose logs`): `docker compose` would
+          # re-interpolate the whole prod file, and this step has no env:, so every
+          # ${VAR:?...} guard would fail and mask the real app logs.
+          docker logs --tail=100 ff_app || true
           exit 1
 
       # Auto-rollback: if any step above failed (health gate, or the deploy
@@ -429,5 +432,6 @@ jobs:
             sleep 5
           done
           echo "Rollback did NOT become healthy — manual intervention required."
-          docker compose -f docker-compose.prod.yml logs --tail=100 app
+          # Read the container directly — see the note in "Verify deployment health".
+          docker logs --tail=100 ff_app || true
           exit 1
