@@ -200,6 +200,11 @@ elevated counterpart. `PermissionService.PRODUCTION_ELEVATED` is the whole table
 | `ENV_ROTATE_KEY` | `ENV_ROTATE_KEY_PRODUCTION` | invalidates the key every production SDK authenticates with |
 | `ENV_DELETE` | `ENV_DELETE_PRODUCTION` | removes the environment outright |
 
+`POST /environments/{id}/import` is not a separate action: it is authorized as the operations it
+performs — `FLAG_CREATE` plus `FLAG_STATE_UPDATE` against the target environment — so a real
+import inherits both rules. A dry run stays project-scoped (it writes nothing), so an import can
+still be planned outside the change window.
+
 Only OWNER holds the elevated actions by default; a **custom role can opt into any of them**
 deliberately. ADMIN can still archive, rotate and toggle in dev/staging. This is why B and C
 share one mechanism instead of a special-cased `role == OWNER` check.
@@ -218,6 +223,10 @@ action that alters production behaviour must be added to the table.
   project, so every `PRODUCTION` environment there is resolved and considered; **one closed
   window denies the action** (strictest wins). The lookup is skipped for any action outside the
   table, so the common path costs no extra query.
+  - ⚠️ Disjoint windows across two production environments (`9–12` and `13–17`) leave no hour at
+    which archiving is permitted. An OWNER can widen or clear a window (`ENV_UPDATE` is not
+    window-guarded) and then archive; a custom role without `ENV_MANAGE_PROTECTION` cannot.
+    See the ADR-0006 amendment for why this was preferred over skipping rule D here.
 
 ### Rule D — production change window
 
@@ -518,6 +527,15 @@ Model-level — the same class of gap `AUDIT_READ` closed:
 - **An org member's role cannot be changed.** There is no `updateMemberRole` anywhere — only invite
   and remove. Promoting a VIEWER means removing and re-inviting them, which now also wipes their
   project grants, so the invite ceiling only governs half of a role's lifecycle.
+
+Call sites still on the `requireRole*` adapters — `EnvironmentTransferServiceImpl.clone` and
+`.export`, `FlagHygieneServiceImpl.list`, and all eight in `WebhookSubscriptionServiceImpl` — are
+invisible to custom roles **and** to rules B/D. None of them writes production flag state today
+(export/list are reads, a clone is a new `DEVELOPMENT` environment), but `importSnapshot` sat in
+this same list until it was found to be a production bypass, so the remaining ones are worth
+converting rather than trusting. Subscribing a webhook to a production environment's events is
+the one that most deserves a second look: it streams production flag changes to an arbitrary URL
+on ADMIN authority alone.
 
 Data lifecycle:
 

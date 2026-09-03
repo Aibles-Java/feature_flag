@@ -134,9 +134,16 @@ consulting `Environment.type` or the change window:
 | `POST /flags/{id}/archive` | `FLAG_ARCHIVE` | ADMIN | archived flags are filtered out of every evaluation response — an off-switch by another name |
 | `POST /environments/{id}/api-key/rotate` | `ENV_ROTATE_KEY` | ADMIN | invalidates the key every production SDK authenticates with |
 | `DELETE /environments/{id}` | `ENV_DELETE` | OWNER | removes the environment; the change window never applied |
+| `POST /environments/{id}/import` | *(none — role adapter)* | ADMIN | writes flag state straight into the target environment |
 
 The first is the real hole: an ADMIN denied a production toggle could archive the flag instead and
-get the same outcome, so rule B was bypassable by an ordinary, documented endpoint.
+get the same outcome, so rule B was bypassable by an ordinary, documented endpoint. The
+fourth, found in review, is the same hole by a different route: `importSnapshot` (issue #38,
+merged from develop while this branch was open) was still on the pre-ABAC
+`requireRoleForEnvironment(OWNER, ADMIN)` adapter, so `OVERWRITE`-ing a snapshot flipped
+production state with no `Action` check at all. **Any call site left on a `requireRole*`
+adapter is invisible to rules B and D as well as to custom roles** — that is now the main
+reason to finish migrating the remaining ones.
 
 **Change.**
 
@@ -152,6 +159,13 @@ get the same outcome, so rule B was bypassable by an ordinary, documented endpoi
 - `EnvironmentServiceImpl.rotateApiKey` and `.delete` now pass `ResourceRef.environment(...)`;
   passing `ResourceRef.project(...)` for a table action silently disables both rules, so two
   regression tests pin it.
+- `EnvironmentTransferServiceImpl.importSnapshot` leaves the role adapter for the operations it
+  actually performs: `FLAG_CREATE` (project-scoped) plus `FLAG_STATE_UPDATE` against
+  `ResourceRef.environment(...)`, so a real import obeys rules B and D. A **dry run** writes
+  nothing and stays project-scoped, so planning an import is still possible outside the change
+  window. `clone` and `export` keep the adapter: export is read-only and a clone is always a new,
+  `DEVELOPMENT`-typed environment (`Environment.type` has a `@Builder.Default` and clone does not
+  copy the source's), so neither changes what an existing production SDK sees.
 
 **Consequences.**
 
@@ -166,3 +180,12 @@ get the same outcome, so rule B was bypassable by an ordinary, documented endpoi
   its SDKs evaluate.
 - No migration — the new actions are enum values, and `custom_role_action.action` is already
   `VARCHAR(40)`.
+- **Sharp edge of strictest-wins:** a project whose production environments carry *disjoint*
+  windows (say `9–12` and `13–17`) has no hour at which both are open, so archiving is blocked
+  around the clock. It is recoverable — `ENV_UPDATE` is not window-guarded, so an OWNER can widen
+  or clear a window and then archive — but a custom role holding `FLAG_ARCHIVE_PRODUCTION`
+  without `ENV_MANAGE_PROTECTION` cannot unblock itself. The alternative considered was to apply
+  rule D only when the call site names a single environment (capability-only for project-scoped
+  archive); strictest-wins was chosen because a change window is a change-management control and
+  silently ignoring it for the one action that can hide a flag from production would repeat the
+  mistake this amendment fixes.

@@ -13,6 +13,7 @@ import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.ImportConflictStrategy;
@@ -128,15 +129,27 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
   @Override
   @Transactional
   public ImportResultResponse importSnapshot(UUID environmentId, ImportEnvironmentRequest request) {
-    permissionService.requireRoleForEnvironment(environmentId, MemberRole.OWNER, MemberRole.ADMIN);
     Environment target = findEnvironment(environmentId);
     Project project = target.getProject();
+    boolean dryRun = request.isDryRun();
+
+    // Import creates flags and writes their state, so it is authorized as exactly that rather
+    // than through the pre-ABAC role adapter. Attaching the target environment is what subjects a
+    // real import to the production rules (ADR-0006 rule B/D): without it, an ADMIN denied
+    // PUT /flags/{id}/environments/{prodEnvId} could flip the same flag by importing a snapshot.
+    // A dry run writes nothing, so it stays project-scoped and no change window applies to it.
+    permissionService.check(
+        Action.FLAG_CREATE, PermissionService.ResourceRef.project(project.getId()));
+    permissionService.check(
+        Action.FLAG_STATE_UPDATE,
+        dryRun
+            ? PermissionService.ResourceRef.project(project.getId())
+            : PermissionService.ResourceRef.environment(project.getId(), target));
 
     ImportEnvironmentRequest.Snapshot snapshot = request.getSnapshot();
     validateSchemaVersion(snapshot.getSchemaVersion());
     validateNoDuplicateKeys(snapshot.getFlags());
 
-    boolean dryRun = request.isDryRun();
     ImportConflictStrategy strategy = request.getConflictStrategy();
     List<ImportResultResponse.ItemResult> items = new ArrayList<>();
 

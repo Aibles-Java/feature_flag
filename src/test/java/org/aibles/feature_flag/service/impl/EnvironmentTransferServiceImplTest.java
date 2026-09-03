@@ -19,6 +19,7 @@ import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
@@ -33,6 +34,7 @@ import org.aibles.feature_flag.dto.response.ImportResultResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.InvalidRequestException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
@@ -527,12 +529,15 @@ class EnvironmentTransferServiceImplTest {
   }
 
   @Test
-  void import_requiresOwnerOrAdmin() {
+  void import_isAuthorizedAsFlagCreationAndStateWriteNotByRole() {
     stubExistingFlags();
     service.importSnapshot(targetEnvId, importRequest(ImportConflictStrategy.SKIP));
 
-    verify(permissionService)
-        .requireRoleForEnvironment(targetEnvId, MemberRole.OWNER, MemberRole.ADMIN);
+    // The pre-ABAC adapter named roles, which left the production rules unreachable; import is now
+    // authorized as the operations it actually performs.
+    verify(permissionService).check(eq(Action.FLAG_CREATE), any());
+    verify(permissionService).check(eq(Action.FLAG_STATE_UPDATE), any());
+    verify(permissionService, never()).requireRoleForEnvironment(any(), any(MemberRole[].class));
   }
 
   // --------------------------------------------------------------- helpers
@@ -599,5 +604,59 @@ class EnvironmentTransferServiceImplTest {
     request.setConflictStrategy(strategy);
     request.setSnapshot(snapshot);
     return request;
+  }
+
+  // ------------------------------------------------- ABAC: import is a production write path
+
+  /**
+   * Import writes flag state, so it must go through the PDP with the target environment attached —
+   * otherwise an ADMIN denied {@code PUT /flags/{id}/environments/{prodEnvId}} could flip the same
+   * flag in production by importing a snapshot instead (ADR-0006 rule B/D).
+   */
+  @Test
+  void import_passesTheTargetEnvironmentToThePdpSoProductionRulesApply() {
+    ImportEnvironmentRequest req =
+        importRequest(ImportConflictStrategy.OVERWRITE, entry(boolFlag, true, "true", 100));
+
+    service.importSnapshot(targetEnvId, req);
+
+    ArgumentCaptor<PermissionService.ResourceRef> captor =
+        ArgumentCaptor.forClass(PermissionService.ResourceRef.class);
+    verify(permissionService).check(eq(Action.FLAG_STATE_UPDATE), captor.capture());
+    assertThat(captor.getValue().environment()).isSameAs(targetEnv);
+    verify(permissionService).check(eq(Action.FLAG_CREATE), any());
+  }
+
+  @Test
+  void import_deniedByThePdpWritesNothing() {
+    doThrow(new UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.FLAG_STATE_UPDATE), any());
+
+    ImportEnvironmentRequest req =
+        importRequest(ImportConflictStrategy.OVERWRITE, entry(boolFlag, true, "true", 100));
+
+    assertThatThrownBy(() -> service.importSnapshot(targetEnvId, req))
+        .isInstanceOf(UnauthorizedException.class);
+
+    verify(flagStateRepository, never()).save(any(FlagEnvironmentState.class));
+    verify(featureFlagRepository, never()).save(any(FeatureFlag.class));
+    verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
+  }
+
+  /** A dry run writes nothing, so it is scoped to the project and the change window cannot bite. */
+  @Test
+  void import_dryRun_doesNotAttachTheEnvironmentToThePdp() {
+    ImportEnvironmentRequest req =
+        importRequest(ImportConflictStrategy.OVERWRITE, entry(boolFlag, true, "true", 100));
+    req.setDryRun(true);
+
+    service.importSnapshot(targetEnvId, req);
+
+    ArgumentCaptor<PermissionService.ResourceRef> captor =
+        ArgumentCaptor.forClass(PermissionService.ResourceRef.class);
+    verify(permissionService).check(eq(Action.FLAG_STATE_UPDATE), captor.capture());
+    assertThat(captor.getValue().environment()).isNull();
+    assertThat(captor.getValue().projectId()).isEqualTo(projectId);
   }
 }
