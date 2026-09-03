@@ -34,6 +34,10 @@ services:
       # Required by the prod profile (JwtProperties aborts startup without it).
       # Copy .env.example to .env and fill this in: openssl rand -hex 64
       APP_JWT_SECRET: ${APP_JWT_SECRET:?set APP_JWT_SECRET in .env — >= 64 UTF-8 bytes, e.g. openssl rand -hex 64}
+      # Local-dev override for the webhook encryption key (issue #36). The prod profile no longer
+      # pins this — it falls back to the built-in dev key unless APP_WEBHOOK_ENCRYPTION_KEY is set —
+      # so it is only needed here if you enable webhooks locally. NOT rotatable in place: see ADR-0005.
+      APP_WEBHOOK_ENCRYPTION_KEY: ${APP_WEBHOOK_ENCRYPTION_KEY:?set APP_WEBHOOK_ENCRYPTION_KEY in .env — >= 64 UTF-8 bytes, e.g. openssl rand -hex 64}
     ports:
       # Matches server.port=8081 / Dockerfile EXPOSE.
       - "8081:8081"

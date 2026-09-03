@@ -1,5 +1,5 @@
 ---
-name: 0023-abac-branch-merge-and-audit-mapping
+name: 0034-abac-branch-merge-and-audit-mapping
 description: merging the 7-week-old feature/role ABAC branch onto develop — adapters restored, develop's service impls as the base, migrations renumbered, and the two model gaps (AUDIT_READ, audit-on-permission-change) closed
 metadata:
   type: decision
@@ -44,7 +44,7 @@ match, so nothing from develop was silently dropped.
 `EnvironmentResponse` also lost its `apiKey` field here: develop reveals the plaintext exactly once
 through `EnvironmentSecretResponse` (issue #24), and the ABAC branch predated that.
 
-### 3. Migrations renumbered `009–013` → `013–017`
+### 3. Migrations renumbered `009–013` → `014–018`
 
 See [[sequential-ids-collide-across-long-lived-branches]] for the general rule and why 012 was
 skipped. No changeset content changed; none had ever run outside a local dev DB.

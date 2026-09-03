@@ -38,6 +38,10 @@ services:
       # Required by the prod profile (JwtProperties aborts startup without it):
       # >= 64 UTF-8 bytes, e.g. openssl rand -hex 64.
       APP_JWT_SECRET: ${APP_JWT_SECRET:?set APP_JWT_SECRET}
+      # Browser SPA origin(s) allowed by CORS, comma-separated (e.g.
+      # http://onwardjava.duckdns.org). No dev fallback in the prod profile, so it
+      # must be supplied — application-prod.properties binds it to app.cors.allowed-origins.
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:?set APP_CORS_ALLOWED_ORIGINS}
     ports:
       # Matches server.port=8081 / Dockerfile EXPOSE.
       - "8081:8081"

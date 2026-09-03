@@ -4,7 +4,7 @@
                    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
 
-    <changeSet id="017-add-environment-change-window" author="dev">
+    <changeSet id="018-add-environment-change-window" author="dev">
         <!-- Optional production change window (hour-of-day, 0-23). When both are set on a
              PRODUCTION environment, flag-state changes are only permitted within the window.
              This is the concrete context-condition (rule D). -->

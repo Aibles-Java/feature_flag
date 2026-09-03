@@ -147,7 +147,10 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     Environment saved = environmentRepository.save(env);
     eventPublisher.publishEvent(
         new ApiKeyRotatedEvent(
-            saved.getName(), saved.getProject().getName(), permissionService.currentUserEmail()));
+            saved.getId(),
+            saved.getName(),
+            saved.getProject().getName(),
+            permissionService.currentUserEmail()));
     // Record the rotation event only — never the key (before/after intentionally null).
     auditService.record(
         AuditEntityType.API_KEY,

@@ -8,6 +8,13 @@ RUN ./mvnw package -DskipTests -q
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
+# Patch OS packages in the base image (e.g. openssl/libssl3/libcrypto3) to the
+# latest Alpine security fixes. The floating `:21-jre-alpine` tag lags behind
+# apk security updates, so a fixed HIGH/CRITICAL CVE can sit unpatched in the
+# base layer and fail the Trivy gate (ignore-unfixed=true) even though a fix
+# exists. `apk upgrade --no-cache` pulls those fixes at build time; run as root
+# before dropping privileges below.
+RUN apk upgrade --no-cache
 COPY --from=build /app/target/*.jar app.jar
 # Run as a non-root user (defense in depth: a container breakout can't land as root).
 RUN addgroup -S spring && adduser -S spring -G spring \

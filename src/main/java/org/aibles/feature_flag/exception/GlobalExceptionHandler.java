@@ -40,6 +40,32 @@ public class GlobalExceptionHandler {
     return withRequestId(problem);
   }
 
+  /**
+   * A webhook URL rejected by the SSRF guard is a client input problem, so 400 — not 500. The
+   * message names only the host the operator supplied, never what it resolved to.
+   */
+  @ExceptionHandler(WebhookUrlNotAllowedException.class)
+  public ProblemDetail handleWebhookUrlNotAllowed(
+      WebhookUrlNotAllowedException ex, HttpServletRequest request) {
+    ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+    problem.setType(URI.create("about:blank"));
+    problem.setTitle("Bad Request");
+    problem.setDetail(ex.getMessage());
+    problem.setInstance(URI.create(request.getRequestURI()));
+    return withRequestId(problem);
+  }
+
+  @ExceptionHandler(InvalidRequestException.class)
+  public ProblemDetail handleInvalidRequest(
+      InvalidRequestException ex, HttpServletRequest request) {
+    ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+    problem.setType(URI.create("about:blank"));
+    problem.setTitle("Bad Request");
+    problem.setDetail(ex.getMessage());
+    problem.setInstance(URI.create(request.getRequestURI()));
+    return withRequestId(problem);
+  }
+
   @ExceptionHandler(InvalidRefreshTokenException.class)
   public ProblemDetail handleInvalidRefreshToken(
       InvalidRefreshTokenException ex, HttpServletRequest request) {
