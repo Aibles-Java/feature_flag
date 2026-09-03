@@ -2,54 +2,58 @@
 
 *Ephemeral — overwritten by `/save-memory` at the end of each session. Read this first.*
 
+**Last updated:** 2026-09-03
+
 ## Current WIP
 
-Branch **`feature/role`** — the ABAC / project-grant authorization work, brought up to date with
-`develop` and being pushed + PR'd now. Four commits on top of the original `ffd356d`:
+Branch **`feature/role`** (PR #87), worked in a git worktree at
+`C:\Users\ACER\Desktop\aibless\feature_flag-role` so the main checkout could stay on
+`feature/issue-38-env-clone-import-export`. Three commits, tree clean, `./mvnw test`
+**470 tests / 0 failures**, `spotless:check` clean.
 
-- `d3f57e9` renumber migrations `009–013` → `013–017`
-- `950de15` drop the case-colliding `docs/ARCHITECTURE.md` (mandatory — the merge could not start
-  otherwise; see [[windows-docs-case-collision]])
-- `8a15239` **merge `origin/develop`** — 13 Java conflicts resolved, `./mvnw test` green
-- `f576d9c` docs mapped onto the merged state (ADR-0006 written, ADR-0001 marked superseded,
-  CLAUDE.md + architecture.md permission sections rewritten)
-- `903ba7a` `AUDIT_READ` + audit rows for permission changes
-- `5b7b476` `organisations` spelling + pagination on the two management list endpoints, plus two
-  sequence diagrams in `docs/ABAC.md` §4
+- `42ee946` **merge `origin/develop`** — the branch was 39 behind. Five conflicts, all unions
+  (`AuditAction`, `db.changelog-master.xml`, `docs/adr/README.md`, `MEMORY.md`, `HANDOFF.md`);
+  the four service impls auto-merged. Migrations renumbered `013–017` → **`014–018`** (filenames
+  *and* `changeSet id`s) because develop took `013` for flag hygiene; memory decision
+  `0023-abac-branch-merge` → **`0034`** because develop took `0023` for the Trivy pin.
+- `5080e4c` **production protection generalised** — `PRODUCTION_ELEVATED` table, three new
+  OWNER-only actions, rule D on all of them, `check()` resolves which prod envs an action touches.
+- `1c546ec` **import routed through the PDP** — the fourth bypass, found by the code-reviewer
+  agent after `5080e4c` was already committed.
 
-`./mvnw test`: **316 tests, 0 failures.** Tree otherwise clean apart from three untracked files
-that belong to the user, not the branch: `.cgcignore`, `docs/demo/`, `docs/main-flows.md` — do not
-commit them (they rode along twice this session and had to be backed out with `git rm --cached`).
+Docs updated in the same commits: ADR-0006 amendment (2026-09-03), `docs/ABAC.md`
+§4/§5/§10/§11/§12, `CLAUDE.md` permission section.
 
 ## Context to Load
 
-- [[0023-abac-branch-merge-and-audit-mapping]] — why the adapters came back, how the conflicts were
-  resolved, and the two model gaps that were closed.
-- [[sequential-ids-collide-across-long-lived-branches]] — before adding any migration or ADR.
+- [[0035-production-protection-covers-every-production-reaching-action]] — what was decided,
+  what was rejected, and the strictest-wins sharp edge.
+- [[abac-role-adapters-bypass-attribute-rules]] — read before touching any `check(...)` call
+  site or trusting that an attribute rule is enforced.
+- [[0034-abac-branch-merge-and-audit-mapping]] — the earlier merge of this branch.
 - `docs/ABAC.md` §12 — the authoritative open-gaps list, kept in the repo rather than here.
 
 ## Next steps
 
-Nothing is blocking the PR; everything below is follow-up, roughly in value order.
+1. **PR #87's body still describes the pre-merge state.** It needs a note about the two security
+   commits and the new 403s: an ADMIN archiving a flag in a project that has a `PRODUCTION`
+   environment, rotating a production key, or importing a snapshot into production.
+2. **Decide the strictest-wins sharp edge.** Disjoint change windows across two production
+   environments block archiving around the clock. Recoverable by an OWNER (`ENV_UPDATE` is not
+   window-guarded) but not by a custom role holding `FLAG_ARCHIVE_PRODUCTION` alone. The
+   alternative — apply rule D only when the call site names a single environment — is ~5 lines.
+3. **Convert the remaining `requireRole*` call sites**: `EnvironmentTransferServiceImpl.clone`
+   and `.export`, `FlagHygieneServiceImpl.list`, eight in `WebhookSubscriptionServiceImpl`. The
+   webhook ones deserve the first look — subscribing to a production environment streams every
+   production flag change to an arbitrary URL on ADMIN authority alone.
+4. **Tests are still the gap before merge** (unchanged from the previous handoff): no
+   `ProjectMemberControllerTest` / `CustomRoleControllerTest`, no repository test for
+   `PermissionGrantRepository` / `CustomRoleRepository`, no `@SpringBootTest` for Scenario A
+   (project-scoped access) or B (production protection). `listGrants` / `list` have no test.
+5. Still open from before: `ORG_READ` / `MEMBER_READ` (`OrganizationServiceImpl.get` and
+   `listMembers` gate on `isMember`), no `updateMemberRole`, grants orphaned when a project or
+   org is deleted.
 
-1. **Tests are the real gap before merge.** The design spec's §9 plan is only half delivered: no
-   `ProjectMemberControllerTest` / `CustomRoleControllerTest` (every other admin controller has
-   one), no repository test for `PermissionGrantRepository` / `CustomRoleRepository`, no
-   `@SpringBootTest` for Scenario A (project-scoped access) or B (production protection).
-   `listGrants` / `list` have **no test at all** — they were changed to paginate with nothing
-   guarding them.
-2. **`ORG_READ` / `MEMBER_READ`** — `OrganizationServiceImpl.get` and `listMembers` still gate on
-   `isMember`, so custom roles cannot express them. Same fix shape as `AUDIT_READ` in `903ba7a`.
-3. **`updateMemberRole` does not exist** anywhere — a member's org role can only be set at invite
-   time, and remove-then-reinvite now also wipes their project grants.
-4. **Orphaned grants** — `ProjectServiceImpl.delete` and `OrganizationServiceImpl.delete` leave
-   `permission_grant` rows behind (`scope_id` is polymorphic, no FK). `removeMember` already does
-   this cleanup; copy it.
-5. Small: `EnvironmentSecretResponse` missing `type` / change window; `updateState` resolves the
-   environment before checking permission (404-vs-403 probe); `mostPermissive` ranks roles by
-   action-set size (works, but fragile — use an explicit rank);
-   `PermissionGrantRepository.existsByUser_IdAndScopeTypeAndScopeId` is dead code; Postman
-   collection has no grant / custom-role requests.
-
-Note for whoever picks this up: **there is no GitHub issue for ABAC** — the PR is the first tracked
-artifact. If it should be tracked on the board, open one and link it.
+Housekeeping: three untracked files in the *main* checkout belong to the user, not any branch —
+`.cgcignore`, `docs/demo/`, `docs/main-flows.md`; do not commit them. The worktree can be removed
+with `git worktree remove ../feature_flag-role` once the branch is merged.
