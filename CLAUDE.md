@@ -120,7 +120,7 @@ defaults**, so prod can never fall back to dev values. `config/JwtProperties` (t
 is missing, an unresolved `${...}` placeholder, shorter than 512 bits (64 UTF-8 bytes), or
 contains the `change-me` placeholder marker.
 
-DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–011` and `013–017`; `012` is reserved by the in-flight webhooks branch). Never modify a changeset that has already run; always add a new one.
+DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–018`). Never modify a changeset that has already run; always add a new one — and pick its number by checking **every unmerged branch**, not just `develop`, or two branches claim the same one (this has happened twice; see `.claude/memory/conventions/sequential-ids-collide-across-long-lived-branches.md`).
 
 ## API Key generation
 

@@ -14,7 +14,19 @@ WORKDIR /app
 # base layer and fail the Trivy gate (ignore-unfixed=true) even though a fix
 # exists. `apk upgrade --no-cache` pulls those fixes at build time; run as root
 # before dropping privileges below.
-RUN apk upgrade --no-cache
+#
+# APK_EPOCH exists solely to give this layer a cache key that changes. Without
+# it, `cache-from: type=gha` reuses the layer for as long as the instruction
+# text is unchanged, freezing the OS packages at whatever was current when the
+# cache entry was written — which silently defeats the upgrade above. That is a
+# real miss, not a hypothetical: the scan on 2026-09-03 reported
+# libexpat 2.8.3-r0 while 2.8.4-r0 (the fix for CVE-2026-66046 / CVE-2026-76641)
+# was already in alpine/v3.24/main and `apk upgrade` pulled it on a cold build.
+# CI passes the workflow run id, so every run re-resolves packages while the
+# scan and publish jobs of the *same* run still share one layer — the image that
+# ships is byte-for-byte the image that was scanned.
+ARG APK_EPOCH=0
+RUN echo "apk epoch: $APK_EPOCH" && apk upgrade --no-cache
 COPY --from=build /app/target/*.jar app.jar
 # Run as a non-root user (defense in depth: a container breakout can't land as root).
 RUN addgroup -S spring && adduser -S spring -G spring \

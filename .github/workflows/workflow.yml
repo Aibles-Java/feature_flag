@@ -150,6 +150,9 @@ jobs:
           push: false
           load: true
           tags: feature_flag:scan
+          # Busts the `apk upgrade` layer per run so the scan sees today's OS
+          # packages, not whatever the cache froze. See the Dockerfile comment.
+          build-args: APK_EPOCH=${{ github.run_id }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -239,6 +242,7 @@ jobs:
           load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: APK_EPOCH=${{ github.run_id }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -275,6 +279,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Same value as the scanned build above, so this re-resolves to the
+          # cached layer instead of a fresh apk resolve: what ships is what was
+          # scanned.
+          build-args: APK_EPOCH=${{ github.run_id }}
           cache-from: type=gha
 
   # Continuous deployment to the server. Three entry points, each gated on
