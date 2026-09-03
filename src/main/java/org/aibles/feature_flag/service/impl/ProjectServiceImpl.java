@@ -4,9 +4,9 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateProjectRequest;
 import org.aibles.feature_flag.dto.request.UpdateProjectRequest;
 import org.aibles.feature_flag.dto.response.ProjectResponse;
@@ -32,7 +32,8 @@ public class ProjectServiceImpl implements ProjectService {
   @Override
   @Transactional
   public ProjectResponse create(CreateProjectRequest request) {
-    permissionService.requireRole(request.getOrganisationId(), MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(
+        Action.PROJECT_CREATE, PermissionService.ResourceRef.org(request.getOrganisationId()));
     if (projectRepository.existsByOrganizationIdAndName(
         request.getOrganisationId(), request.getName())) {
       throw new DuplicateResourceException("Project name already exists in this organisation");
@@ -62,8 +63,7 @@ public class ProjectServiceImpl implements ProjectService {
 
   @Override
   public Page<ProjectResponse> listByOrganisation(UUID organisationId, Pageable pageable) {
-    permissionService.requireRole(
-        organisationId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(Action.PROJECT_READ, PermissionService.ResourceRef.org(organisationId));
     return projectRepository
         .findAllByOrganizationId(organisationId, pageable)
         .map(this::toResponse);
@@ -72,8 +72,7 @@ public class ProjectServiceImpl implements ProjectService {
   @Override
   public ProjectResponse get(UUID id) {
     Project project = findById(id);
-    permissionService.requireRole(
-        project.getOrganization().getId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(Action.PROJECT_READ, PermissionService.ResourceRef.project(id));
     return toResponse(project);
   }
 
@@ -82,7 +81,7 @@ public class ProjectServiceImpl implements ProjectService {
   public ProjectResponse update(UUID id, UpdateProjectRequest request) {
     Project project = findById(id);
     UUID orgId = project.getOrganization().getId();
-    permissionService.requireRole(orgId, MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(Action.PROJECT_UPDATE, PermissionService.ResourceRef.project(id));
     ProjectResponse before = toResponse(project);
     if (request.getName() != null) project.setName(request.getName());
     if (request.getDescription() != null) project.setDescription(request.getDescription());
@@ -96,7 +95,7 @@ public class ProjectServiceImpl implements ProjectService {
   public void delete(UUID id) {
     Project project = findById(id);
     UUID orgId = project.getOrganization().getId();
-    permissionService.requireRole(orgId, MemberRole.OWNER);
+    permissionService.check(Action.PROJECT_DELETE, PermissionService.ResourceRef.project(id));
     ProjectResponse before = toResponse(project);
     projectRepository.delete(project);
     auditService.record(AuditEntityType.PROJECT, id, AuditAction.DELETE, orgId, before, null);

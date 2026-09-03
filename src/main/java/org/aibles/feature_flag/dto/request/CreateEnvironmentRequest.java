@@ -1,10 +1,14 @@
 package org.aibles.feature_flag.dto.request;
 
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.util.UUID;
 import lombok.Data;
+import org.aibles.feature_flag.domain.enums.EnvType;
 
 @Data
 public class CreateEnvironmentRequest {
@@ -15,4 +19,19 @@ public class CreateEnvironmentRequest {
   private String name;
 
   private String description;
+
+  private EnvType type;
+
+  @Min(0)
+  @Max(23)
+  private Integer changeWindowStartHour;
+
+  @Min(0)
+  @Max(23)
+  private Integer changeWindowEndHour;
+
+  @AssertTrue(message = "changeWindowStartHour and changeWindowEndHour must be provided together")
+  public boolean isChangeWindowComplete() {
+    return (changeWindowStartHour == null) == (changeWindowEndHour == null);
+  }
 }

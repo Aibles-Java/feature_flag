@@ -17,5 +17,10 @@
     <include file="db/changelog/migrations/011-create-audit-log.xml"/>
     <include file="db/changelog/migrations/012-create-webhooks.xml"/>
     <include file="db/changelog/migrations/013-add-flag-hygiene-columns.xml"/>
+    <include file="db/changelog/migrations/014-add-environment-type.xml"/>
+    <include file="db/changelog/migrations/015-create-permission-grants.xml"/>
+    <include file="db/changelog/migrations/016-create-custom-roles.xml"/>
+    <include file="db/changelog/migrations/017-permission-grant-custom-role.xml"/>
+    <include file="db/changelog/migrations/018-add-environment-change-window.xml"/>
 
 </databaseChangeLog>

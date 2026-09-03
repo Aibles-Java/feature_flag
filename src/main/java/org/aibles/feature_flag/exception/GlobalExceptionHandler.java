@@ -93,6 +93,16 @@ public class GlobalExceptionHandler {
     return withRequestId(problem);
   }
 
+  @ExceptionHandler(IllegalArgumentException.class)
+  public ProblemDetail handleBadRequest(IllegalArgumentException ex, HttpServletRequest request) {
+    ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+    problem.setType(URI.create("about:blank"));
+    problem.setTitle("Bad Request");
+    problem.setDetail(ex.getMessage());
+    problem.setInstance(URI.create(request.getRequestURI()));
+    return withRequestId(problem);
+  }
+
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ProblemDetail handleValidation(
       MethodArgumentNotValidException ex, HttpServletRequest request) {

@@ -12,9 +12,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.AuditLog;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.response.AuditLogResponse;
 import org.aibles.feature_flag.dto.response.ProjectResponse;
 import org.aibles.feature_flag.exception.UnauthorizedException;
@@ -85,8 +85,7 @@ class AuditServiceTest {
 
     var result = service.list(orgId, PageRequest.of(0, 20));
 
-    verify(permissionService)
-        .requireRole(orgId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    verify(permissionService).check(Action.AUDIT_READ, PermissionService.ResourceRef.org(orgId));
     assertThat(result.getContent()).hasSize(1);
     AuditLogResponse mapped = result.getContent().get(0);
     assertThat(mapped.getAction()).isEqualTo(AuditAction.DELETE);
@@ -98,7 +97,7 @@ class AuditServiceTest {
     UUID orgId = UUID.randomUUID();
     doThrow(new UnauthorizedException("nope"))
         .when(permissionService)
-        .requireRole(eq(orgId), any(MemberRole[].class));
+        .check(eq(Action.AUDIT_READ), any());
 
     assertThatThrownBy(() -> service.list(orgId, PageRequest.of(0, 20)))
         .isInstanceOf(UnauthorizedException.class);

@@ -13,8 +13,10 @@ import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
+import org.aibles.feature_flag.domain.enums.EnvType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
@@ -189,5 +191,94 @@ class EnvironmentServiceImplTest {
     service.delete(envId);
 
     verify(environmentRepository).deleteById(envId);
+  }
+
+  // --- ABAC: protection attributes are OWNER-only (rules B/D cannot be stripped by an ADMIN) ---
+
+  private Environment productionEnv() {
+    Environment prod =
+        Environment.builder()
+            .id(envId)
+            .project(project)
+            .name("prod")
+            .type(EnvType.PRODUCTION)
+            .apiKeyHash(ApiKeyHasher.hash("old-key"))
+            .build();
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(prod));
+    return prod;
+  }
+
+  @Test
+  void update_downgradingProductionType_requiresManageProtection() {
+    productionEnv();
+    doThrow(new org.aibles.feature_flag.exception.UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ENV_MANAGE_PROTECTION), any());
+
+    UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+    req.setType(EnvType.DEVELOPMENT);
+
+    assertThatThrownBy(() -> service.update(envId, req))
+        .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class);
+    verify(environmentRepository, never()).save(any());
+  }
+
+  @Test
+  void update_editingChangeWindow_requiresManageProtection() {
+    productionEnv();
+    doThrow(new org.aibles.feature_flag.exception.UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ENV_MANAGE_PROTECTION), any());
+
+    UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+    req.setChangeWindowStartHour(9);
+    req.setChangeWindowEndHour(17);
+
+    assertThatThrownBy(() -> service.update(envId, req))
+        .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class);
+    verify(environmentRepository, never()).save(any());
+  }
+
+  @Test
+  void update_nonProtectionChange_doesNotRequireManageProtection() {
+    productionEnv();
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+    req.setDescription("just a description");
+
+    service.update(envId, req);
+
+    verify(permissionService, never()).check(eq(Action.ENV_MANAGE_PROTECTION), any());
+  }
+
+  /**
+   * Both call sites must hand the PDP the environment itself, not just its project — the production
+   * rules read attributes off it, and a project-scoped ResourceRef silently disables them.
+   */
+  @Test
+  void rotate_passesTheEnvironmentToThePdpSoProductionRulesApply() {
+    Environment prod = productionEnv();
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
+
+    service.rotateApiKey(envId);
+
+    ArgumentCaptor<PermissionService.ResourceRef> captor =
+        ArgumentCaptor.forClass(PermissionService.ResourceRef.class);
+    verify(permissionService).check(eq(Action.ENV_ROTATE_KEY), captor.capture());
+    assertThat(captor.getValue().environment()).isSameAs(prod);
+  }
+
+  @Test
+  void delete_passesTheEnvironmentToThePdpSoProductionRulesApply() {
+    Environment prod = productionEnv();
+
+    service.delete(envId);
+
+    ArgumentCaptor<PermissionService.ResourceRef> captor =
+        ArgumentCaptor.forClass(PermissionService.ResourceRef.class);
+    verify(permissionService).check(eq(Action.ENV_DELETE), captor.capture());
+    assertThat(captor.getValue().environment()).isSameAs(prod);
   }
 }

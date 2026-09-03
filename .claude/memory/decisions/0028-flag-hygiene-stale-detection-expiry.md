@@ -79,8 +79,8 @@ because #53 is still open and will touch this method.
 ## Numbering
 
 Migration **013**: develop now tops out at 012 (webhooks, PR #62, merged), so 013 is the next
-free number. ⚠️ The in-flight ABAC branch (PR #87) also claims 013–017 and will have to shift to
-014–018 if this PR lands first — whichever merges second renumbers.
+free number. This PR landed first, so the ABAC branch (PR #87) shifted its `013–017` to
+`014–018` when it merged develop — as predicted here.
 
 Decision **0028**: originally written as 0023, but develop took 0023 (Trivy pin) while this branch
 was open, and 0024–0027 went to the Sonar/CD/401/webhooks work. Renumbered at the merge; see

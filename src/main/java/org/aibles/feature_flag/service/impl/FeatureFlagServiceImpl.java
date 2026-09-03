@@ -7,9 +7,9 @@ import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
@@ -49,8 +49,8 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   @Override
   @Transactional
   public FeatureFlagResponse create(CreateFeatureFlagRequest request) {
-    permissionService.requireRoleForProject(
-        request.getProjectId(), MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(
+        Action.FLAG_CREATE, PermissionService.ResourceRef.project(request.getProjectId()));
 
     if (featureFlagRepository.existsByProjectIdAndKey(request.getProjectId(), request.getKey())) {
       throw new DuplicateResourceException(
@@ -103,8 +103,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
 
   @Override
   public Page<FeatureFlagResponse> listByProject(UUID projectId, Pageable pageable) {
-    permissionService.requireRoleForProject(
-        projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(Action.FLAG_READ, PermissionService.ResourceRef.project(projectId));
     return featureFlagRepository
         .findAllByProjectIdAndArchivedFalse(projectId, pageable)
         .map(this::toResponse);
@@ -113,8 +112,8 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   @Override
   public FeatureFlagResponse get(UUID id) {
     FeatureFlag flag = findById(id);
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(
+        Action.FLAG_READ, PermissionService.ResourceRef.project(flag.getProject().getId()));
     return toResponse(flag);
   }
 
@@ -123,8 +122,8 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   public FeatureFlagResponse update(UUID id, UpdateFeatureFlagRequest request) {
     FeatureFlag flag = findById(id);
     UUID orgId = flag.getProject().getOrganization().getId();
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(
+        Action.FLAG_UPDATE, PermissionService.ResourceRef.project(flag.getProject().getId()));
     FeatureFlagResponse before = toResponse(flag);
     // key is intentionally not updated — it is immutable
     if (request.getName() != null) flag.setName(request.getName());
@@ -149,8 +148,8 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   public void archive(UUID id) {
     FeatureFlag flag = findById(id);
     UUID orgId = flag.getProject().getOrganization().getId();
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(
+        Action.FLAG_ARCHIVE, PermissionService.ResourceRef.project(flag.getProject().getId()));
     FeatureFlagResponse before = toResponse(flag);
     flag.setArchived(true);
     FeatureFlagResponse after = toResponse(featureFlagRepository.save(flag));
@@ -171,8 +170,8 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   public void unarchive(UUID id) {
     FeatureFlag flag = findById(id);
     UUID orgId = flag.getProject().getOrganization().getId();
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(
+        Action.FLAG_ARCHIVE, PermissionService.ResourceRef.project(flag.getProject().getId()));
     FeatureFlagResponse before = toResponse(flag);
     flag.setArchived(false);
     FeatureFlagResponse after = toResponse(featureFlagRepository.save(flag));
@@ -190,8 +189,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
 
   @Override
   public Page<FeatureFlagResponse> listArchivedByProject(UUID projectId, Pageable pageable) {
-    permissionService.requireRoleForProject(
-        projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(Action.FLAG_READ, PermissionService.ResourceRef.project(projectId));
     return featureFlagRepository
         .findAllByProjectIdAndArchivedTrue(projectId, pageable)
         .map(this::toResponse);
@@ -200,8 +198,8 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   @Override
   public FlagStateResponse getState(UUID flagId, UUID environmentId) {
     FeatureFlag flag = findById(flagId);
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(
+        Action.FLAG_READ, PermissionService.ResourceRef.project(flag.getProject().getId()));
     FlagEnvironmentState state =
         flagStateRepository
             .findByFeatureFlagIdAndEnvironmentId(flagId, environmentId)
@@ -216,8 +214,13 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
       UUID flagId, UUID environmentId, UpdateFlagStateRequest request) {
     FeatureFlag flag = findById(flagId);
     UUID orgId = flag.getProject().getOrganization().getId();
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    Environment environment =
+        environmentRepository
+            .findById(environmentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Environment", environmentId));
+    permissionService.check(
+        Action.FLAG_STATE_UPDATE,
+        PermissionService.ResourceRef.environment(flag.getProject().getId(), environment));
 
     FlagEnvironmentState state =
         flagStateRepository

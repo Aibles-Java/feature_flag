@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="017-permission-grant-custom-role" author="dev">
+        <!-- A grant now references EITHER a built-in role OR a custom role. -->
+        <dropNotNullConstraint tableName="permission_grant" columnName="role" columnDataType="VARCHAR(20)"/>
+        <addColumn tableName="permission_grant">
+            <column name="custom_role_id" type="UUID">
+                <constraints nullable="true"
+                             foreignKeyName="fk_permission_grant_custom_role"
+                             references="custom_role(id)"
+                             deleteCascade="true"/>
+            </column>
+        </addColumn>
+        <sql>ALTER TABLE permission_grant ADD CONSTRAINT chk_permission_grant_role_xor
+            CHECK ((role IS NOT NULL AND custom_role_id IS NULL)
+                OR (role IS NULL AND custom_role_id IS NOT NULL))</sql>
+        <rollback>
+            <sql>ALTER TABLE permission_grant DROP CONSTRAINT chk_permission_grant_role_xor</sql>
+            <dropColumn tableName="permission_grant" columnName="custom_role_id"/>
+            <addNotNullConstraint tableName="permission_grant" columnName="role" columnDataType="VARCHAR(20)"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

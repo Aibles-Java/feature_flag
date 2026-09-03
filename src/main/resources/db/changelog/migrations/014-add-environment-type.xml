@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="014-add-environment-type" author="dev">
+        <addColumn tableName="environments">
+            <column name="type" type="VARCHAR(20)" defaultValue="DEVELOPMENT">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <sql>ALTER TABLE environments ADD CONSTRAINT chk_environment_type
+            CHECK (type IN ('DEVELOPMENT', 'STAGING', 'PRODUCTION'))</sql>
+        <rollback>
+            <dropColumn tableName="environments" columnName="type"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

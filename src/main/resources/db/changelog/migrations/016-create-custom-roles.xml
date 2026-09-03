@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="016-create-custom-roles" author="dev">
+        <createTable tableName="custom_role">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="organization_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_custom_role_organization"
+                             references="organizations(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="name" type="VARCHAR(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="custom_role"
+                             columnNames="organization_id, name"
+                             constraintName="uq_custom_role_org_name"/>
+
+        <createTable tableName="custom_role_action">
+            <column name="custom_role_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_custom_role_action_role"
+                             references="custom_role(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="action" type="VARCHAR(40)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="custom_role_action"
+                             columnNames="custom_role_id, action"
+                             constraintName="uq_custom_role_action"/>
+
+        <rollback>
+            <dropTable tableName="custom_role_action"/>
+            <dropTable tableName="custom_role"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

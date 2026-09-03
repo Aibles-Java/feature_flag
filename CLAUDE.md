@@ -54,9 +54,38 @@ Organization → Project → Environment (has API key)
 
 2. **Admin chain** (all other `/api/v1/**`, order=2) — `JwtAuthenticationFilter` validates Bearer tokens. `UserPrincipal` (containing UUID userId) is set as principal.
 
-### Permission model
+### Permission model (ABAC)
 
-`PermissionService` is a helper injected into every service impl. It reads the current `UserPrincipal` from `SecurityContextHolder` and checks `OrganizationMember.role` (OWNER / ADMIN / VIEWER) before any mutating operation. Controllers do not contain authorization logic.
+`PermissionService` is the Policy Decision Point, injected into every service impl. Controllers
+contain no authorization logic. It reads the current `UserPrincipal` from `SecurityContextHolder`
+and resolves an **effective action set**, then asserts the required `Action` is in it:
+
+```
+effectiveActions(user, project) = actionsForRole(org role) ∪ grantActions(PROJECT grant)
+effectiveActions(user, org)     = actionsForRole(org role)      // grants never apply at org scope
+```
+
+- `OrganizationMember.role` (OWNER / ADMIN / VIEWER) is still the org-level source of truth.
+- `PermissionGrant` elevates a user on one **project** — carrying either a built-in role or a
+  `CustomRole` (an org-scoped named set of `Action`s). Grants only **add** capability; an org
+  OWNER/ADMIN is never downgraded by a narrow grant.
+- Two attribute rules layer on top of the action check. Any action in `PRODUCTION_ELEVATED`
+  (`FLAG_STATE_UPDATE`, `FLAG_ARCHIVE`, `ENV_ROTATE_KEY`, `ENV_DELETE`) that reaches a
+  `PRODUCTION` environment is rewritten to its OWNER-only `*_PRODUCTION` counterpart, and must
+  fall inside that environment's optional change window. **Archiving counts** — archived flags
+  are filtered out of every SDK response, so leaving it unguarded made the rule bypassable; any
+  new action that changes production behaviour has to be added to that table.
+- The environments an action is measured against: the one the call site names
+  (`ResourceRef.environment(...)`), or — for project-scoped archive/unarchive — every production
+  environment under the project, where the strictest change window wins.
+
+Call sites use `check(Action, ResourceRef)`. The older `requireRole(...)` /
+`requireRoleForProject(...)` / `requireRoleForEnvironment(...)` methods are **kept as adapters** so
+un-migrated call sites (currently `AuditService`) keep working; the project/environment adapters are
+grant-aware, but a grant carrying a *custom* role has no built-in role to compare against and so
+only works through `check`. Prefer `check` in new code.
+
+See `docs/ABAC.md` and `docs/adr/ADR-0006-abac-authorization-model.md`.
 
 ### SDK evaluation flow
 
@@ -91,7 +120,7 @@ defaults**, so prod can never fall back to dev values. `config/JwtProperties` (t
 is missing, an unresolved `${...}` placeholder, shorter than 512 bits (64 UTF-8 bytes), or
 contains the `change-me` placeholder marker.
 
-DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`). Never modify a changeset that has already run; always add a new one.
+DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–011` and `013–017`; `012` is reserved by the in-flight webhooks branch). Never modify a changeset that has already run; always add a new one.
 
 ## API Key generation
 

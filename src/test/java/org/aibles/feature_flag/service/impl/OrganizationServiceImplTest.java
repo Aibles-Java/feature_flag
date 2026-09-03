@@ -11,8 +11,10 @@ import java.util.Optional;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.OrganizationMember;
+import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.entity.User;
 import org.aibles.feature_flag.domain.enums.MemberRole;
+import org.aibles.feature_flag.domain.enums.ScopeType;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
 import org.aibles.feature_flag.dto.request.InviteMemberRequest;
 import org.aibles.feature_flag.dto.request.UpdateOrganizationRequest;
@@ -22,6 +24,8 @@ import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.OrganizationMemberRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
+import org.aibles.feature_flag.repository.PermissionGrantRepository;
+import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,6 +47,8 @@ class OrganizationServiceImplTest {
   @Mock OrganizationRepository organizationRepository;
   @Mock OrganizationMemberRepository memberRepository;
   @Mock UserRepository userRepository;
+  @Mock ProjectRepository projectRepository;
+  @Mock PermissionGrantRepository grantRepository;
   @Mock PermissionService permissionService;
   @Mock AuditService auditService;
 
@@ -59,10 +65,16 @@ class OrganizationServiceImplTest {
             organizationRepository,
             memberRepository,
             userRepository,
+            projectRepository,
+            grantRepository,
             permissionService,
             auditService);
     org = Organization.builder().id(orgId).name("Acme").slug("acme").build();
     doNothing().when(permissionService).requireRole(any(), any(MemberRole[].class));
+    // The invite ceiling reads the caller's effective actions — default the actor to OWNER.
+    when(permissionService.currentUserId()).thenReturn(userId);
+    when(permissionService.effectiveActionsForOrg(any(), any()))
+        .thenReturn(new java.util.HashSet<>(PermissionService.actionsForRole(MemberRole.OWNER)));
   }
 
   @Test
@@ -205,5 +217,44 @@ class OrganizationServiceImplTest {
 
     assertThatThrownBy(() -> service.listMembers(orgId, Pageable.unpaged()))
         .isInstanceOf(UnauthorizedException.class);
+  }
+
+  // --- ABAC: invite ceiling and grant revocation on member removal ---
+
+  @Test
+  void inviteMember_cannotGrantRoleHigherThanOwn() {
+    when(permissionService.effectiveActionsForOrg(any(), any()))
+        .thenReturn(new java.util.HashSet<>(PermissionService.actionsForRole(MemberRole.ADMIN)));
+
+    InviteMemberRequest req = new InviteMemberRequest();
+    req.setUserId(UUID.randomUUID());
+    req.setRole(MemberRole.OWNER);
+
+    assertThatThrownBy(() -> service.inviteMember(orgId, req))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("higher than your own");
+    verify(memberRepository, never()).save(any());
+  }
+
+  @Test
+  void removeMember_revokesProjectGrantsInOrg() {
+    UUID targetId = UUID.randomUUID();
+    OrganizationMember member =
+        OrganizationMember.builder()
+            .role(MemberRole.VIEWER)
+            .user(User.builder().id(targetId).email("target@example.com").build())
+            .build();
+    when(memberRepository.findByOrganizationIdAndUserId(orgId, targetId))
+        .thenReturn(Optional.of(member));
+    UUID projectId = UUID.randomUUID();
+    when(projectRepository.findAllByOrganizationId(orgId))
+        .thenReturn(List.of(Project.builder().id(projectId).build()));
+
+    service.removeMember(orgId, targetId);
+
+    verify(memberRepository).delete(member);
+    verify(grantRepository)
+        .deleteByUser_IdAndScopeTypeAndScopeIdIn(
+            eq(targetId), eq(ScopeType.PROJECT), eq(List.of(projectId)));
   }
 }

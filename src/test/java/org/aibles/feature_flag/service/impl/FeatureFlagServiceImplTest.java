@@ -76,6 +76,11 @@ class FeatureFlagServiceImplTest {
     Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
     doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
+    // updateState resolves the target Environment so the PDP can read its production attributes.
+    when(environmentRepository.findById(any()))
+        .thenAnswer(
+            inv ->
+                Optional.of(Environment.builder().id(inv.getArgument(0)).project(project).build()));
   }
 
   @Test
