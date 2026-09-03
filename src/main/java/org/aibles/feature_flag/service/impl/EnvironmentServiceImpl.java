@@ -129,7 +129,8 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   public void delete(UUID id) {
     Environment env = findById(id);
     permissionService.check(
-        Action.ENV_DELETE, PermissionService.ResourceRef.project(env.getProject().getId()));
+        Action.ENV_DELETE,
+        PermissionService.ResourceRef.environment(env.getProject().getId(), env));
     UUID orgId = env.getProject().getOrganization().getId();
     EnvironmentResponse before = toResponse(env);
     environmentRepository.deleteById(id);
@@ -141,7 +142,8 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   public EnvironmentSecretResponse rotateApiKey(UUID id) {
     Environment env = findById(id);
     permissionService.check(
-        Action.ENV_ROTATE_KEY, PermissionService.ResourceRef.project(env.getProject().getId()));
+        Action.ENV_ROTATE_KEY,
+        PermissionService.ResourceRef.environment(env.getProject().getId(), env));
     String plaintextKey = ApiKeyGenerator.generate();
     env.setApiKeyHash(ApiKeyHasher.hash(plaintextKey));
     Environment saved = environmentRepository.save(env);

@@ -156,14 +156,14 @@ B and D).
 
 ```mermaid
 flowchart TD
-    A["check(action, resource)"] --> B["resolve effectiveActions(resource)"]
-    B --> C{"prod flag-state change?<br/>(action = FLAG_STATE_UPDATE<br/>and env.type = PRODUCTION)"}
-    C -- yes --> D["required = FLAG_STATE_UPDATE_PRODUCTION"]
+    A["check(action, resource)"] --> B["productionEnvironments(action, resource)"]
+    B --> C{"action in PRODUCTION_ELEVATED<br/>and it reaches ≥1 PRODUCTION env?"}
+    C -- yes --> D["required = PRODUCTION_ELEVATED[action]"]
     C -- no --> E["required = action"]
     D --> F{"effectiveActions contains required?"}
     E --> F
     F -- no --> G["deny → UnauthorizedException (403)"]
-    F -- yes --> H{"required = FLAG_STATE_UPDATE_PRODUCTION<br/>and outside change window?"}
+    F -- yes --> H{"elevated, and any of those<br/>prod envs outside its change window?"}
     H -- yes --> G
     H -- no --> I["permit"]
 ```
@@ -190,15 +190,41 @@ effectiveActions(user, org)     =
 
 ### Rule B — production capability
 
-`FLAG_STATE_UPDATE` on a `PRODUCTION` environment is rewritten to require the distinct
-`FLAG_STATE_UPDATE_PRODUCTION` action. Only OWNER holds it by default; a **custom role can
-opt into it** deliberately. ADMIN can toggle dev/staging but not production. This is why B and
-C share one mechanism instead of a special-cased `role == OWNER` check.
+An action that would change what a production SDK sees is rewritten to require a distinct,
+elevated counterpart. `PermissionService.PRODUCTION_ELEVATED` is the whole table:
+
+| Action | Elevated to | Why it reaches production |
+|---|---|---|
+| `FLAG_STATE_UPDATE` | `FLAG_STATE_UPDATE_PRODUCTION` | changes the flag's value/enabled state there |
+| `FLAG_ARCHIVE` | `FLAG_ARCHIVE_PRODUCTION` | archived flags are filtered out of every evaluation response, so archiving is an off-switch |
+| `ENV_ROTATE_KEY` | `ENV_ROTATE_KEY_PRODUCTION` | invalidates the key every production SDK authenticates with |
+| `ENV_DELETE` | `ENV_DELETE_PRODUCTION` | removes the environment outright |
+
+Only OWNER holds the elevated actions by default; a **custom role can opt into any of them**
+deliberately. ADMIN can still archive, rotate and toggle in dev/staging. This is why B and C
+share one mechanism instead of a special-cased `role == OWNER` check.
+
+**Guarding only `FLAG_STATE_UPDATE` is not enough**, which is what the first cut did: an ADMIN
+denied a production toggle could archive the flag instead and get the same outcome. Any new
+action that alters production behaviour must be added to the table.
+
+### Which environments an action is measured against
+
+- **Environment-scoped call sites** (`updateState`, `rotateApiKey`, environment `delete`) name
+  their target with `ResourceRef.environment(...)`, and only that environment is considered. A
+  call site that passes `ResourceRef.project(...)` for one of these actions silently disables
+  rules B and D — `EnvironmentServiceImplTest` pins both against that regression.
+- **Project-scoped call sites** (`archive` / `unarchive`) reach every environment beneath the
+  project, so every `PRODUCTION` environment there is resolved and considered; **one closed
+  window denies the action** (strictest wins). The lookup is skipped for any action outside the
+  table, so the common path costs no extra query.
 
 ### Rule D — production change window
 
-If the target environment sets both `changeWindowStartHour` and `changeWindowEndHour`, a
-production state change is only permitted when the current local hour is inside `[start, end)`.
+If a production environment in scope sets both `changeWindowStartHour` and
+`changeWindowEndHour`, an elevated action against it is only permitted when the current local
+hour is inside `[start, end)`. The window applies to **every** action rule B elevates, not just
+state changes.
 Windows may wrap past midnight (`start > end`, e.g. `22–06`). `start == end` (or an unset
 window) means **no restriction** — never a permanent lock-out. Time comes from an injectable
 `Clock` bean, so it is unit-testable.
@@ -331,12 +357,13 @@ ADMIN can neither create nor destroy an OWNER-level grant.
 | `ORG_UPDATE` `MEMBER_INVITE` `MEMBER_MANAGE` | | ✅ | ✅ |
 | `GRANT_MANAGE` `ROLE_MANAGE` | | ✅ | ✅ |
 | `FLAG_DELETE` `ENV_DELETE` `PROJECT_DELETE` `ORG_DELETE` | | | ✅ |
-| `FLAG_STATE_UPDATE_PRODUCTION` | | | ✅ |
+| `FLAG_STATE_UPDATE_PRODUCTION` `FLAG_ARCHIVE_PRODUCTION` | | | ✅ |
+| `ENV_ROTATE_KEY_PRODUCTION` `ENV_DELETE_PRODUCTION` | | | ✅ |
 | `ENV_MANAGE_PROTECTION` (edit env `type` / change window) | | | ✅ |
 
-This matrix exactly preserves the pre-ABAC role behavior of every call site; the only
-intentional change is that production flag-state toggling now needs the OWNER-only
-`FLAG_STATE_UPDATE_PRODUCTION`.
+This matrix preserves the pre-ABAC role behavior of every call site apart from production:
+toggling, archiving or rotating a key against a `PRODUCTION` environment now needs the
+OWNER-only elevated counterpart from the rule-B table.
 
 ---
 
@@ -437,7 +464,11 @@ their own:
   is polymorphic.
 - **More context conditions (D)** — the change-window check is the seam. IP allowlists,
   change-freeze windows, or four-eyes approval would plug into `check()` (add inputs to a
-  policy context; today only the `Clock` is threaded in).
+  policy context; today only the `Clock` is threaded in). The window is evaluated in the
+  **server's** zone (`Clock.systemDefaultZone()`); a per-environment timezone is not modelled.
+- **`ENV_UPDATE` is deliberately not elevated** — changing an environment's `type` or change
+  window already needs `ENV_MANAGE_PROTECTION`, and renaming a production environment does not
+  alter what its SDKs evaluate.
 - **Read/list isolation** — hiding non-granted projects from an org member's reads is out of
   scope (grants are additive-elevation only today).
 
@@ -446,13 +477,16 @@ their own:
 ## 11. Tests
 
 - `service/impl/PermissionServiceTest` — action matrix, effective-action resolution (org ∪
-  grant, built-in & custom), production capability (B/C), change window (D, incl. wrap and
-  zero-width), **plus** the retained `requireRole*` adapter cases including grant elevation.
+  grant, built-in & custom), production capability (B/C) across **all four** elevated actions,
+  change window (D, incl. wrap, zero-width and the strictest-wins case for a project with two
+  production environments), the no-extra-query guarantee for non-production actions, **plus**
+  the retained `requireRole*` adapter cases including grant elevation.
 - `service/impl/ProjectGrantServiceImplTest` — grant subset ceiling, tenant-membership
   requirement, cross-org custom role rejection.
 - `service/impl/CustomRoleServiceImplTest` — custom-role ceiling on create/update/delete.
 - `service/impl/EnvironmentServiceImplTest` — `ENV_MANAGE_PROTECTION` guard on `type` and change
-  window, alongside develop's hashing/audit coverage.
+  window, alongside develop's hashing/audit coverage; plus two regression tests pinning that
+  `rotateApiKey` and `delete` hand the PDP the *environment*, not just its project.
 - `service/impl/OrganizationServiceImplTest` — invite ceiling and grant revocation on member
   removal, alongside develop's coverage.
 - `security/SecurityChainIntegrationTest` — `@SpringBootTest`; boots the full context and runs

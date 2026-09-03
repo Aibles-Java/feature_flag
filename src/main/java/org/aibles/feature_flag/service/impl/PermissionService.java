@@ -5,6 +5,7 @@ import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -50,6 +51,20 @@ public class PermissionService {
 
   private static final Map<MemberRole, Set<Action>> ROLE_ACTIONS = buildRoleActions();
 
+  /**
+   * Actions that change what a production SDK sees, mapped to the elevated action they require when
+   * they do. Every way to alter production behaviour must appear here: archiving a flag hides it
+   * from every evaluation response just as surely as toggling it off, and rotating or deleting an
+   * environment cuts its SDKs off entirely, so guarding only {@code FLAG_STATE_UPDATE} would leave
+   * the rule trivially bypassable.
+   */
+  private static final Map<Action, Action> PRODUCTION_ELEVATED =
+      Map.of(
+          Action.FLAG_STATE_UPDATE, Action.FLAG_STATE_UPDATE_PRODUCTION,
+          Action.FLAG_ARCHIVE, Action.FLAG_ARCHIVE_PRODUCTION,
+          Action.ENV_ROTATE_KEY, Action.ENV_ROTATE_KEY_PRODUCTION,
+          Action.ENV_DELETE, Action.ENV_DELETE_PRODUCTION);
+
   private static Map<MemberRole, Set<Action>> buildRoleActions() {
     Set<Action> viewer =
         EnumSet.of(Action.FLAG_READ, Action.ENV_READ, Action.PROJECT_READ, Action.AUDIT_READ);
@@ -80,6 +95,9 @@ public class PermissionService {
             Action.PROJECT_DELETE,
             Action.ORG_DELETE,
             Action.FLAG_STATE_UPDATE_PRODUCTION,
+            Action.FLAG_ARCHIVE_PRODUCTION,
+            Action.ENV_ROTATE_KEY_PRODUCTION,
+            Action.ENV_DELETE_PRODUCTION,
             Action.ENV_MANAGE_PROTECTION));
 
     return Map.of(
@@ -152,27 +170,47 @@ public class PermissionService {
    * deny.
    */
   public void check(Action action, ResourceRef resource) {
-    Environment env = resource.environment();
-    boolean prodEnv = env != null && env.getType() == EnvType.PRODUCTION;
-
+    List<Environment> productionEnvs = productionEnvironments(action, resource);
     Action required =
-        action == Action.FLAG_STATE_UPDATE && prodEnv
-            ? Action.FLAG_STATE_UPDATE_PRODUCTION
-            : action;
+        productionEnvs.isEmpty() ? action : PRODUCTION_ELEVATED.getOrDefault(action, action);
 
     if (!effectiveActions(resource).contains(required)) {
       throw new UnauthorizedException(
-          required == Action.FLAG_STATE_UPDATE_PRODUCTION
-              ? "Changing flag state in a PRODUCTION environment requires elevated permission"
-              : "Insufficient permissions for action: " + action);
+          required == action
+              ? "Insufficient permissions for action: " + action
+              : action + " against a PRODUCTION environment requires elevated permission");
     }
 
-    if (required == Action.FLAG_STATE_UPDATE_PRODUCTION
-        && env != null
-        && !withinChangeWindow(env)) {
+    if (required != action && productionEnvs.stream().anyMatch(e -> !withinChangeWindow(e))) {
       throw new UnauthorizedException(
-          "Production flag-state changes are only allowed within the configured change window");
+          "Production changes are only allowed within the configured change window");
     }
+  }
+
+  /**
+   * The production environments {@code action} would affect — empty when it cannot affect any, in
+   * which case no elevation applies.
+   *
+   * <p>Environment-scoped call sites name their target and only that one is considered. A
+   * project-scoped one (archiving a flag) reaches every environment beneath the project, so every
+   * production environment there is resolved and the strictest change window wins: one closed
+   * window denies the action. The lookup is skipped entirely for actions outside {@link
+   * #PRODUCTION_ELEVATED}, so the common path costs no extra query.
+   */
+  private List<Environment> productionEnvironments(Action action, ResourceRef resource) {
+    if (!PRODUCTION_ELEVATED.containsKey(action)) {
+      return List.of();
+    }
+    Environment target = resource.environment();
+    if (target != null) {
+      return target.getType() == EnvType.PRODUCTION ? List.of(target) : List.of();
+    }
+    if (resource.projectId() == null) {
+      return List.of();
+    }
+    return environmentRepository.findAllByProjectId(resource.projectId()).stream()
+        .filter(e -> e.getType() == EnvType.PRODUCTION)
+        .toList();
   }
 
   /**

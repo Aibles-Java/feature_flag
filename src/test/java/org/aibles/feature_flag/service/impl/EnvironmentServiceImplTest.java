@@ -251,4 +251,34 @@ class EnvironmentServiceImplTest {
 
     verify(permissionService, never()).check(eq(Action.ENV_MANAGE_PROTECTION), any());
   }
+
+  /**
+   * Both call sites must hand the PDP the environment itself, not just its project — the production
+   * rules read attributes off it, and a project-scoped ResourceRef silently disables them.
+   */
+  @Test
+  void rotate_passesTheEnvironmentToThePdpSoProductionRulesApply() {
+    Environment prod = productionEnv();
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
+
+    service.rotateApiKey(envId);
+
+    ArgumentCaptor<PermissionService.ResourceRef> captor =
+        ArgumentCaptor.forClass(PermissionService.ResourceRef.class);
+    verify(permissionService).check(eq(Action.ENV_ROTATE_KEY), captor.capture());
+    assertThat(captor.getValue().environment()).isSameAs(prod);
+  }
+
+  @Test
+  void delete_passesTheEnvironmentToThePdpSoProductionRulesApply() {
+    Environment prod = productionEnv();
+
+    service.delete(envId);
+
+    ArgumentCaptor<PermissionService.ResourceRef> captor =
+        ArgumentCaptor.forClass(PermissionService.ResourceRef.class);
+    verify(permissionService).check(eq(Action.ENV_DELETE), captor.capture());
+    assertThat(captor.getValue().environment()).isSameAs(prod);
+  }
 }

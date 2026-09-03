@@ -6,11 +6,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -296,6 +299,150 @@ class PermissionServiceTest {
         .doesNotThrowAnyException();
   }
 
+  // ── check(): production protection beyond flag state (B/D on every prod-reaching action) ──
+
+  @Test
+  void adminCannotRotateApiKeyOnProductionEnvironment() {
+    stubProjectRole(MemberRole.ADMIN);
+    assertThatCode(
+            () -> permissionService.check(Action.ENV_ROTATE_KEY, env(EnvType.STAGING, null, null)))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(
+            () ->
+                permissionService.check(Action.ENV_ROTATE_KEY, env(EnvType.PRODUCTION, null, null)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("PRODUCTION");
+  }
+
+  @Test
+  void ownerCanRotateApiKeyOnProductionEnvironment() {
+    stubProjectRole(MemberRole.OWNER);
+    assertThatCode(
+            () ->
+                permissionService.check(Action.ENV_ROTATE_KEY, env(EnvType.PRODUCTION, null, null)))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void ownerBlockedFromRotatingProductionKeyOutsideChangeWindow() {
+    stubProjectRole(MemberRole.OWNER);
+    // Window 13–17; clock is 10 → outside.
+    assertThatThrownBy(
+            () -> permissionService.check(Action.ENV_ROTATE_KEY, env(EnvType.PRODUCTION, 13, 17)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("change window");
+  }
+
+  @Test
+  void customRoleWithEnvDeleteButNotItsProductionVariantCannotDeleteProduction() {
+    stubProject();
+    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
+        .thenReturn(Optional.empty());
+    CustomRole envWrangler = CustomRole.builder().actions(Set.of(Action.ENV_DELETE)).build();
+    when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(userId, ScopeType.PROJECT, projectId))
+        .thenReturn(Optional.of(PermissionGrant.builder().customRole(envWrangler).build()));
+
+    assertThatCode(
+            () -> permissionService.check(Action.ENV_DELETE, env(EnvType.DEVELOPMENT, null, null)))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(
+            () -> permissionService.check(Action.ENV_DELETE, env(EnvType.PRODUCTION, null, null)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("PRODUCTION");
+  }
+
+  // ── check(): project-scoped actions that reach production (archive) ──────────────────
+
+  /**
+   * Archiving hides a flag from every SDK response, production included, so it is governed by the
+   * same rules as toggling it there — even though the call site names a project, not an
+   * environment.
+   */
+  @Test
+  void adminCannotArchiveFlagWhenProjectHasAProductionEnvironment() {
+    stubProjectRole(MemberRole.ADMIN);
+    stubProjectEnvironments(environment(EnvType.DEVELOPMENT, null, null), production(null, null));
+
+    assertThatThrownBy(
+            () ->
+                permissionService.check(
+                    Action.FLAG_ARCHIVE, PermissionService.ResourceRef.project(projectId)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("PRODUCTION");
+  }
+
+  @Test
+  void adminCanArchiveFlagWhenProjectHasNoProductionEnvironment() {
+    stubProjectRole(MemberRole.ADMIN);
+    stubProjectEnvironments(
+        environment(EnvType.DEVELOPMENT, null, null), environment(EnvType.STAGING, null, null));
+
+    assertThatCode(
+            () ->
+                permissionService.check(
+                    Action.FLAG_ARCHIVE, PermissionService.ResourceRef.project(projectId)))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void ownerCanArchiveFlagInAProjectWithProduction() {
+    stubProjectRole(MemberRole.OWNER);
+    stubProjectEnvironments(production(null, null));
+
+    assertThatCode(
+            () ->
+                permissionService.check(
+                    Action.FLAG_ARCHIVE, PermissionService.ResourceRef.project(projectId)))
+        .doesNotThrowAnyException();
+  }
+
+  /** Two production environments, one of them closed: the strictest window wins. */
+  @Test
+  void ownerBlockedFromArchivingWhenAnyProductionWindowIsClosed() {
+    stubProjectRole(MemberRole.OWNER);
+    stubProjectEnvironments(production(9, 12), production(13, 17));
+
+    assertThatThrownBy(
+            () ->
+                permissionService.check(
+                    Action.FLAG_ARCHIVE, PermissionService.ResourceRef.project(projectId)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("change window");
+  }
+
+  @Test
+  void customRoleWithProductionArchiveCanArchiveInAProjectWithProduction() {
+    stubProject();
+    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
+        .thenReturn(Optional.empty());
+    CustomRole releaseManager =
+        CustomRole.builder()
+            .actions(Set.of(Action.FLAG_ARCHIVE, Action.FLAG_ARCHIVE_PRODUCTION))
+            .build();
+    when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(userId, ScopeType.PROJECT, projectId))
+        .thenReturn(Optional.of(PermissionGrant.builder().customRole(releaseManager).build()));
+    stubProjectEnvironments(production(null, null));
+
+    assertThatCode(
+            () ->
+                permissionService.check(
+                    Action.FLAG_ARCHIVE, PermissionService.ResourceRef.project(projectId)))
+        .doesNotThrowAnyException();
+  }
+
+  /** A project-scoped action that cannot reach production must not pay for an environment scan. */
+  @Test
+  void projectScopedActionOutsideTheProductionSetDoesNotLoadEnvironments() {
+    stubProjectRole(MemberRole.ADMIN);
+
+    assertThatCode(
+            () ->
+                permissionService.check(
+                    Action.FLAG_UPDATE, PermissionService.ResourceRef.project(projectId)))
+        .doesNotThrowAnyException();
+    verify(environmentRepository, never()).findAllByProjectId(any(UUID.class));
+  }
+
   // ── helpers ─────────────────────────────────────────────────────────────────────────
 
   private OrganizationMember member(MemberRole role) {
@@ -315,6 +462,24 @@ class PermissionServiceTest {
     stubProject();
     when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
         .thenReturn(Optional.of(member(role)));
+  }
+
+  private Environment environment(EnvType type, Integer start, Integer end) {
+    return Environment.builder()
+        .id(UUID.randomUUID())
+        .project(projectInOrg())
+        .type(type)
+        .changeWindowStartHour(start)
+        .changeWindowEndHour(end)
+        .build();
+  }
+
+  private Environment production(Integer start, Integer end) {
+    return environment(EnvType.PRODUCTION, start, end);
+  }
+
+  private void stubProjectEnvironments(Environment... environments) {
+    when(environmentRepository.findAllByProjectId(projectId)).thenReturn(List.of(environments));
   }
 
   private PermissionService.ResourceRef env(EnvType type, Integer start, Integer end) {

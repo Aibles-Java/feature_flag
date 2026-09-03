@@ -69,9 +69,15 @@ effectiveActions(user, org)     = actionsForRole(org role)      // grants never 
 - `PermissionGrant` elevates a user on one **project** — carrying either a built-in role or a
   `CustomRole` (an org-scoped named set of `Action`s). Grants only **add** capability; an org
   OWNER/ADMIN is never downgraded by a narrow grant.
-- Two attribute rules layer on top of the action check: changing flag state on a `PRODUCTION`
-  environment requires the OWNER-only `FLAG_STATE_UPDATE_PRODUCTION`, and such a change must fall
-  inside the environment's optional change window.
+- Two attribute rules layer on top of the action check. Any action in `PRODUCTION_ELEVATED`
+  (`FLAG_STATE_UPDATE`, `FLAG_ARCHIVE`, `ENV_ROTATE_KEY`, `ENV_DELETE`) that reaches a
+  `PRODUCTION` environment is rewritten to its OWNER-only `*_PRODUCTION` counterpart, and must
+  fall inside that environment's optional change window. **Archiving counts** — archived flags
+  are filtered out of every SDK response, so leaving it unguarded made the rule bypassable; any
+  new action that changes production behaviour has to be added to that table.
+- The environments an action is measured against: the one the call site names
+  (`ResourceRef.environment(...)`), or — for project-scoped archive/unarchive — every production
+  environment under the project, where the strictest change window wins.
 
 Call sites use `check(Action, ResourceRef)`. The older `requireRole(...)` /
 `requireRoleForProject(...)` / `requireRoleForEnvironment(...)` methods are **kept as adapters** so

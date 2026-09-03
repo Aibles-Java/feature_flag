@@ -56,11 +56,14 @@ deliberately deferred.
 
 ### 3. Production protection is an attribute rule, not a role
 
-`Environment.type` ∈ {DEVELOPMENT, STAGING, PRODUCTION}. `FLAG_STATE_UPDATE` against a `PRODUCTION`
-environment is rewritten to require the distinct `FLAG_STATE_UPDATE_PRODUCTION` action, held only by
-OWNER by default. Expressing it as an action rather than a hardcoded `role == OWNER` check is what
-lets a **custom role** opt into production toggling deliberately — protection and custom roles share
-one mechanism instead of fighting each other.
+`Environment.type` ∈ {DEVELOPMENT, STAGING, PRODUCTION}. An action against a `PRODUCTION`
+environment is rewritten to require a distinct elevated counterpart, held only by OWNER by default.
+Expressing it as an action rather than a hardcoded `role == OWNER` check is what lets a **custom
+role** opt into production changes deliberately — protection and custom roles share one mechanism
+instead of fighting each other.
+
+The rewrite is table-driven (`PRODUCTION_ELEVATED`) and must cover *every* way to change what a
+production SDK sees, not just the obvious one — see the amendment below.
 
 A per-environment **change window** (`[start, end)`, may wrap past midnight) further restricts
 production state changes; an unset or zero-width window means no restriction, so the rule can never
@@ -117,3 +120,49 @@ works through `check`.
 - **Hardcoding `role == OWNER` for production.** Rejected: it would make production toggling
   unreachable for custom roles, forcing a second special case the moment a release-manager role is
   wanted.
+
+---
+
+## Amendment (2026-09-03) — production protection covers every production-reaching action
+
+**Problem.** As accepted, the rewrite fired for exactly one action, `FLAG_STATE_UPDATE`, and only
+when the call site named the target environment. Three other paths reached production without ever
+consulting `Environment.type` or the change window:
+
+| Path | Action needed | Held by | Effect |
+|---|---|---|---|
+| `POST /flags/{id}/archive` | `FLAG_ARCHIVE` | ADMIN | archived flags are filtered out of every evaluation response — an off-switch by another name |
+| `POST /environments/{id}/api-key/rotate` | `ENV_ROTATE_KEY` | ADMIN | invalidates the key every production SDK authenticates with |
+| `DELETE /environments/{id}` | `ENV_DELETE` | OWNER | removes the environment; the change window never applied |
+
+The first is the real hole: an ADMIN denied a production toggle could archive the flag instead and
+get the same outcome, so rule B was bypassable by an ordinary, documented endpoint.
+
+**Change.**
+
+- Three new actions — `FLAG_ARCHIVE_PRODUCTION`, `ENV_ROTATE_KEY_PRODUCTION`,
+  `ENV_DELETE_PRODUCTION` — OWNER-only by default, opt-in for custom roles like the original.
+- The rewrite becomes a `Map<Action, Action> PRODUCTION_ELEVATED` rather than one `if`, and the
+  change window applies to **every** elevated action instead of flag-state changes alone.
+- `check()` resolves which production environments an action touches. Environment-scoped call
+  sites name their target; project-scoped ones (archive/unarchive) reach every environment beneath
+  the project, so all of its production environments are considered and **the strictest change
+  window wins** — one closed window denies the action. Actions outside the table skip the lookup,
+  so the common path costs no extra query.
+- `EnvironmentServiceImpl.rotateApiKey` and `.delete` now pass `ResourceRef.environment(...)`;
+  passing `ResourceRef.project(...)` for a table action silently disables both rules, so two
+  regression tests pin it.
+
+**Consequences.**
+
+- One more behavioural change to existing endpoints, in the same spirit as the original: an ADMIN
+  archiving a flag in a project that has a `PRODUCTION` environment, or rotating a production
+  environment's key, now gets `403` where it previously succeeded. Projects with no production
+  environment are unaffected.
+- Archiving costs one extra query (the project's environments) on projects that have any
+  production environment. Archive is a rare operation; the hot read path is untouched.
+- `ENV_UPDATE` is deliberately **not** in the table: `type` and the change window are already
+  guarded by `ENV_MANAGE_PROTECTION`, and renaming a production environment does not change what
+  its SDKs evaluate.
+- No migration — the new actions are enum values, and `custom_role_action.action` is already
+  `VARCHAR(40)`.
