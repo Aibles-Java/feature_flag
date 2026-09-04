@@ -14,7 +14,16 @@ WORKDIR /app
 # base layer and fail the Trivy gate (ignore-unfixed=true) even though a fix
 # exists. `apk upgrade --no-cache` pulls those fixes at build time; run as root
 # before dropping privileges below.
-RUN apk upgrade --no-cache
+#
+# The explicit `libexpat` floor is load-bearing, not redundant: BuildKit caches
+# this RUN by its instruction text (the CI build uses cache-from/to: gha), so a
+# plain `apk upgrade` layer stays cached from an earlier build and never re-pulls
+# a since-published fix — which is exactly why libexpat 2.8.4-r0
+# (CVE-2026-66046, CVE-2026-76641, both HIGH) failed to land and tripped the gate.
+# Naming the fixed package forces a cache miss now and asserts the version floor,
+# failing the build loudly if it ever regresses. Bump the floor when a newer
+# base-package CVE needs the same treatment.
+RUN apk upgrade --no-cache && apk add --no-cache --upgrade "libexpat>=2.8.4-r0"
 COPY --from=build /app/target/*.jar app.jar
 # Run as a non-root user (defense in depth: a container breakout can't land as root).
 RUN addgroup -S spring && adduser -S spring -G spring \
