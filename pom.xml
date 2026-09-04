@@ -27,7 +27,7 @@
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.8.9</springdoc.version>
         <bucket4j.version>8.19.0</bucket4j.version>
-        <logstash-logback-encoder.version>8.0</logstash-logback-encoder.version>
+        <logstash-logback-encoder.version>9.0</logstash-logback-encoder.version>
         <jacoco.version>0.8.13</jacoco.version>
         <spotless.version>2.43.0</spotless.version>
         <google-java-format.version>1.24.0</google-java-format.version>
