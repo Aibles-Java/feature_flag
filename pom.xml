@@ -19,6 +19,10 @@
         <!-- Override Spring Boot 4.1.0 managed 42.7.11 → 42.7.12: patches CVE-2026-54291
              (HIGH, scram-client) flagged by the Trivy image-scan gate. -->
         <postgresql.version>42.7.12</postgresql.version>
+        <!-- Override Spring Boot 4.1.0 managed 11.0.22 → 11.0.25: patches CVE-2026-65182,
+             CVE-2026-65905, CVE-2026-68525 (all CRITICAL, tomcat-embed-core) flagged by the
+             Trivy image-scan gate. -->
+        <tomcat.version>11.0.25</tomcat.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.8.9</springdoc.version>
