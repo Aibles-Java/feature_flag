@@ -29,7 +29,7 @@
         <bucket4j.version>8.19.0</bucket4j.version>
         <logstash-logback-encoder.version>8.0</logstash-logback-encoder.version>
         <jacoco.version>0.8.13</jacoco.version>
-        <spotless.version>2.43.0</spotless.version>
+        <spotless.version>3.10.1</spotless.version>
         <google-java-format.version>1.24.0</google-java-format.version>
         <!-- Coverage ratchet floor: locked at current (89%) minus a 2% churn margin (issue #34).
              Only ever raise this; use .claude/scripts/coverage-floor.sh to re-measure. -->
