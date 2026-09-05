@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Migration number is `019`.** Never edit an existing changeset — a PreToolUse hook (`liquibase-immutable-guard.sh`) blocks it. Register the file in `db.changelog-master.xml`.
+- **Migration numbers are `019` (create table, Task 1) and `020` (backfill + drop, Task 2).** Never edit an existing changeset — a PreToolUse hook (`liquibase-immutable-guard.sh`) blocks it. Register the file in `db.changelog-master.xml`.
 - **`spring.jpa.hibernate.ddl-auto=validate`** — Liquibase owns the schema. Any entity field without a matching column fails startup, so migration and entity land in the same task.
 - **Formatting is CI-gating.** Run `./mvnw spotless:apply` before every commit; `./mvnw verify` runs `spotless:check`.
 - **Timestamps are `LocalDateTime` mapped to `TIMESTAMPTZ`**, matching every existing entity.
@@ -37,7 +37,7 @@ Creates the table and the entity that maps it. Nothing reads from it yet — `en
 
 **Interfaces:**
 - Produces: `EnvironmentApiKey` with `isActive(Clock)`, `isExpired(Clock)`, `isRevoked()`, `getEnvironment()`.
-- Produces: `EnvironmentApiKeyRepository.findActiveByKeyHash(String)`, `.findByKeyHash(String)`, `.findAllByEnvironmentId(UUID, Pageable)`, `.countActiveByEnvironmentId(UUID, LocalDateTime)`, `.touchLastUsedAt(UUID, LocalDateTime, LocalDateTime)`, `.findLastUsedAtByEnvironmentId(UUID)`.
+- Produces: `EnvironmentApiKeyRepository.findByKeyHash(String)`, `.findActiveByKeyHash(String, LocalDateTime)`, `.findAllByEnvironmentId(UUID, Pageable)`, `.findActiveByEnvironmentId(UUID, LocalDateTime)`, `.countActiveByEnvironmentId(UUID, LocalDateTime)`, `.touchLastUsedAt(UUID, LocalDateTime, LocalDateTime)`, `.findLastUsedAtByEnvironmentId(UUID)`.
 
 - [ ] **Step 1: Write the failing entity test**
 
@@ -237,10 +237,10 @@ public class EnvironmentApiKey {
 }
 ```
 
-- [ ] **Step 4: Run the entity test — it still fails on schema validation? No: it is a pure unit test**
+- [ ] **Step 4: Run the entity test**
 
 Run: `./mvnw test -Dtest=EnvironmentApiKeyTest`
-Expected: PASS. This test constructs the entity directly and never touches the database, so it passes before the table exists.
+Expected: PASS. The test constructs the entity directly and never opens a database connection, so it goes green before the table exists.
 
 - [ ] **Step 5: Write the migration**
 
@@ -653,7 +653,7 @@ Create `src/main/resources/db/changelog/migrations/020-migrate-api-keys-to-key-t
             <column name="name" value="legacy-prod"/>
             <!-- SHA-256 of the literal string "legacy-plaintext-key", asserted in the test. -->
             <column name="api_key_hash"
-                    value="99a6a2f8f0f1cf9b32a0ac0f30f1ba2d4b2a5d3e0d3f2c0a3f0a5f4d3e2c1b0a"/>
+                    value="85eb987e11e31c2ae834df9919214d0668988facc8786d5ac77b498b68130aec"/>
             <column name="type" value="PRODUCTION"/>
         </insert>
         <rollback>
@@ -777,15 +777,9 @@ class ApiKeyBackfillTest {
 }
 ```
 
-- [ ] **Step 2: Fix the seeded hash to the real value**
+- [ ] **Step 2: Run the test and confirm it fails**
 
-The hash literal in `020-0` above is a placeholder digit sequence and **will not match**. Compute the real one and replace it:
-
-```bash
-printf 'legacy-plaintext-key' | sha256sum
-```
-
-Paste the 64-char hex output into the `api_key_hash` column value in `020-0`. Run the test now:
+The hash literal in `020-0` is the real SHA-256 of `legacy-plaintext-key`, already verified with `printf 'legacy-plaintext-key' | sha256sum`. Use it verbatim — do not recompute or alter it, or the test asserts against a key the seed never inserted.
 
 Run: `./mvnw test -Dtest=ApiKeyBackfillTest`
 Expected: FAIL — `Environment.apiKeyHash` still maps a column `020-2` dropped, so the context fails to start with a Hibernate schema validation error. That is the expected failure; the next steps remove the mapping.
@@ -1033,7 +1027,7 @@ Also update the comment on `addFilterAfter` that says "so the Environment princi
 
 and return `toSecretResponse(saved, minted.plaintext())`. Inject `EnvironmentApiKeyRepository apiKeyRepository`.
 
-`EnvironmentServiceImpl.rotateApiKey()` — Task 5 rewrites this properly. For now keep it compiling and behaviour-identical by revoking every active key and minting one:
+`EnvironmentServiceImpl.rotateApiKey()` — Task 5 rewrites this properly. For now keep it compiling and behaviour-identical by revoking every active key and minting one. **Leave the existing `eventPublisher.publishEvent(new ApiKeyRotatedEvent(...))` and `auditService.record(...)` calls in the method untouched** — only the key-material lines change:
 
 ```java
     LocalDateTime now = LocalDateTime.now(clock);
@@ -1866,6 +1860,10 @@ the key exists elsewhere."
 
 **Interfaces:**
 - Produces: `EnvironmentApiKeyService.rotate(UUID envId, UUID keyId, RotateApiKeyRequest)` → `ApiKeySecretResponse`.
+
+**Two dependencies this task must add** (Task 4 did not need them, so they are not yet injected):
+- `EnvironmentApiKeyServiceImpl` gains `ApplicationEventPublisher eventPublisher` — `rotate` publishes `ApiKeyRotatedEvent`, which until now was published by `EnvironmentServiceImpl`.
+- `EnvironmentServiceImpl` gains `EnvironmentApiKeyService apiKeyService` — its legacy rotate endpoint delegates to it. Watch for a circular bean dependency: `EnvironmentApiKeyServiceImpl` must NOT inject `EnvironmentService`. It does not need to; if you find yourself reaching for it, the logic belongs on the key service side.
 
 - [ ] **Step 1: Write `RotateApiKeyRequest`**
 
