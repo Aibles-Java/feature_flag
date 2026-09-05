@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -155,7 +156,8 @@ class EnvironmentApiKeyServiceImplTest {
 
   @Test
   void createRejectsAnEleventhActiveKey() {
-    when(apiKeyRepository.countActiveByEnvironmentId(eq(ENV_ID), any())).thenReturn(10L);
+    // Pinned to NOW, not any(): the cap check must read the injected Clock, not wall-clock time.
+    when(apiKeyRepository.countActiveByEnvironmentId(eq(ENV_ID), eq(NOW))).thenReturn(10L);
 
     assertThatThrownBy(() -> service.create(ENV_ID, request("ios", null)))
         .isInstanceOf(DuplicateResourceException.class)
@@ -163,8 +165,8 @@ class EnvironmentApiKeyServiceImplTest {
   }
 
   @Test
-  void theCapCountsOnlyActiveKeysSoRevokingFreesASlot() {
-    when(apiKeyRepository.countActiveByEnvironmentId(eq(ENV_ID), any())).thenReturn(9L);
+  void createSucceedsWhenBelowTheCap() {
+    when(apiKeyRepository.countActiveByEnvironmentId(eq(ENV_ID), eq(NOW))).thenReturn(9L);
 
     assertThatCode(() -> service.create(ENV_ID, request("ios", null))).doesNotThrowAnyException();
   }
@@ -185,6 +187,21 @@ class EnvironmentApiKeyServiceImplTest {
                   .hasNoNullFieldsOrPropertiesExcept("expiresAt", "revokedAt", "lastUsedAt");
             });
     assertThat(page.getContent().toString()).doesNotContain(ACTIVE_KEY_HASH);
+  }
+
+  @Test
+  void listChecksEnvReadAgainstTheProject() {
+    when(apiKeyRepository.findAllByEnvironmentId(eq(ENV_ID), any()))
+        .thenReturn(new PageImpl<>(List.of()));
+
+    service.list(ENV_ID, PageRequest.of(0, 20));
+
+    // Listing does not reach production behaviour, so — unlike create/revoke — the ResourceRef
+    // is project-scoped only; it must not carry the environment.
+    verify(permissionService)
+        .check(
+            eq(Action.ENV_READ),
+            argThat(ref -> ref.projectId().equals(PROJECT_ID) && ref.environment() == null));
   }
 
   @Test
@@ -228,6 +245,10 @@ class EnvironmentApiKeyServiceImplTest {
     // 404, not 403: a guessed key id must not confirm that the key exists elsewhere.
     assertThatThrownBy(() -> service.revoke(ENV_ID, KEY_ID))
         .isInstanceOf(ResourceNotFoundException.class);
+    // The ownership guard must run before any permission check — otherwise a caller with no
+    // access to the foreign environment could still learn (via a 403 vs 404 distinction) that
+    // the key exists there.
+    verify(permissionService, never()).check(any(), any());
   }
 
   @Test
