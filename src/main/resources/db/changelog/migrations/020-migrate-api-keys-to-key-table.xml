@@ -27,7 +27,16 @@
             SELECT id, 'default', api_key_hash, '', last_used_at FROM environments
         </sql>
         <rollback>
-            <sql>DELETE FROM environment_api_key WHERE name = 'default'</sql>
+            <!--
+              name = 'default' is NOT a safe marker: EnvironmentApiKeyFactory.DEFAULT_KEY_NAME is
+              also 'default', so every key minted by create()/rotateApiKey()/clone() after this
+              migration ran is named 'default' too, and a name-only delete would destroy live
+              credentials the backfill never inserted. key_prefix = '' is the real marker: the
+              backfill writes an empty prefix because the plaintext was never recoverable, while
+              EnvironmentApiKeyFactory.mint() always derives a real 8-character prefix from the
+              plaintext it hands back. So only rows the backfill actually inserted are removed.
+            -->
+            <sql>DELETE FROM environment_api_key WHERE name = 'default' AND key_prefix = ''</sql>
         </rollback>
     </changeSet>
 
@@ -41,6 +50,33 @@
                 <column name="api_key_hash" type="VARCHAR(64)"/>
                 <column name="last_used_at" type="TIMESTAMPTZ"/>
             </addColumn>
+            <!--
+              Restore the data before re-imposing the constraints, matched by the same
+              key_prefix = '' marker 020-1's rollback uses to identify backfilled rows. Each
+              environment has at most one such row (the backfill inserts exactly one per
+              environment), so this correlated subquery cannot return more than one row.
+
+              Deliberate design point: an environment created after 020 ran has no backfilled
+              row, so its api_key_hash stays NULL here and the addNotNullConstraint below aborts
+              the rollback for it. That is intended — such an environment's live key genuinely
+              cannot be moved back into a one-key-per-environment schema, and failing loudly beats
+              a rollback that reports success while leaving credentials unrecoverable. Do not add
+              a fallback that picks an arbitrary key to paper over this.
+            -->
+            <sql>
+                UPDATE environments e
+                SET api_key_hash = (
+                        SELECT k.key_hash FROM environment_api_key k
+                        WHERE k.environment_id = e.id AND k.key_prefix = ''
+                    ),
+                    last_used_at = (
+                        SELECT k.last_used_at FROM environment_api_key k
+                        WHERE k.environment_id = e.id AND k.key_prefix = ''
+                    )
+            </sql>
+            <addNotNullConstraint tableName="environments"
+                                  columnName="api_key_hash"
+                                  columnDataType="VARCHAR(64)"/>
             <addUniqueConstraint tableName="environments"
                                  columnNames="api_key_hash"
                                  constraintName="uq_environments_api_key_hash"/>
