@@ -2,8 +2,6 @@ package org.aibles.feature_flag.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
@@ -17,19 +15,30 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * Deliberately NOT {@code @Transactional}. {@code touchLastUsedAt} is {@code REQUIRES_NEW} (see its
+ * Javadoc on {@link EnvironmentApiKeyRepository}), which suspends whatever transaction is already
+ * open and commits independently of it. Wrapping this test class in one rollback-only transaction
+ * would suspend *that* transaction for every {@code touchLastUsedAt} call — and since it is never
+ * committed, the fixture rows created in {@code setUp()} are invisible to the new transaction the
+ * update runs in (H2, like PostgreSQL, does not let one transaction see another's uncommitted
+ * writes). Every repository call here runs in, and commits, its own transaction instead, matching
+ * {@code FlagHygieneIntegrationTest}, the other place in this codebase that exercises a {@code
+ * REQUIRES_NEW} write end to end.
+ */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @ActiveProfiles("test")
 @TestPropertySource(
     properties = {
-      "spring.datasource.url=jdbc:h2:mem:testdb_jpa;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=KEY,VALUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE"
+      "spring.datasource.url=jdbc:h2:mem:testdb_envkey;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=KEY,VALUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE"
     })
-@Transactional
 class EnvironmentApiKeyRepositoryTest {
 
-  @PersistenceContext EntityManager em;
   @Autowired private EnvironmentApiKeyRepository repository;
+  @Autowired private EnvironmentRepository environmentRepository;
+  @Autowired private ProjectRepository projectRepository;
+  @Autowired private OrganizationRepository organizationRepository;
 
   private Environment environment;
   private LocalDateTime now;
@@ -38,18 +47,17 @@ class EnvironmentApiKeyRepositoryTest {
   void setUp() {
     now = LocalDateTime.of(2026, 9, 5, 12, 0);
     Organization org =
-        Organization.builder().name("Acme").slug("acme-" + System.nanoTime()).build();
-    em.persist(org);
-    Project project = Project.builder().organization(org).name("Web").build();
-    em.persist(project);
+        organizationRepository.save(
+            Organization.builder().name("Acme").slug("acme-" + System.nanoTime()).build());
+    Project project =
+        projectRepository.save(Project.builder().organization(org).name("Web").build());
     environment =
-        Environment.builder()
-            .project(project)
-            .name("prod-" + System.nanoTime())
-            .apiKeyHash("legacy-key-" + System.nanoTime())
-            .build();
-    em.persist(environment);
-    em.flush();
+        environmentRepository.save(
+            Environment.builder()
+                .project(project)
+                .name("prod-" + System.nanoTime())
+                .apiKeyHash("legacy-key-" + System.nanoTime())
+                .build());
   }
 
   private EnvironmentApiKey save(
@@ -86,6 +94,16 @@ class EnvironmentApiKeyRepositoryTest {
     save("ios", "cccc3333", now.minusMinutes(1), null);
 
     assertThat(repository.findActiveByKeyHash("cccc3333", now)).isEmpty();
+  }
+
+  @Test
+  void findActiveByKeyHashSkipsAKeyExpiringAtExactlyNow() {
+    // Mirrors EnvironmentApiKeyTest#keyIsExpiredAtTheExactExpiryInstant: the JPQL predicate
+    // (expiresAt > :now) must draw the same closed boundary as the Java isExpired(Clock) check,
+    // or the two could silently drift apart.
+    save("ios", "eeee5555", now, null);
+
+    assertThat(repository.findActiveByKeyHash("eeee5555", now)).isEmpty();
   }
 
   @Test
@@ -149,7 +167,10 @@ class EnvironmentApiKeyRepositoryTest {
   }
 
   @Test
-  void findAllByEnvironmentIdPagesKeysNewestFirst() {
+  void findAllByEnvironmentIdReturnsAPageOfThatEnvironmentsKeys() {
+    // findAllByEnvironmentId carries no ORDER BY; the production caller supplies its own
+    // (createdAt ascending), so this only asserts pagination scopes correctly to the
+    // environment — it makes no ordering claim.
     save("a", "aaaa0001", null, null);
     save("b", "aaaa0002", null, null);
 

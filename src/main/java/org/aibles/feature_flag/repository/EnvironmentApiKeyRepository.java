@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface EnvironmentApiKeyRepository extends JpaRepository<EnvironmentApiKey, UUID> {
@@ -69,9 +70,19 @@ public interface EnvironmentApiKeyRepository extends JpaRepository<EnvironmentAp
    * was updated recently, so it stays race-safe under concurrent SDK calls and lets the caller
    * throttle writes on the hot path. Must stay a bulk UPDATE — setting the field on a managed
    * entity would bump nothing here but would load the row on every SDK read.
+   *
+   * <p>This method's only caller, {@code ApiKeyAuthenticationFilter}, runs as a servlet filter
+   * before any service-layer transaction exists, so {@code REQUIRES_NEW} costs nothing today — with
+   * no ambient transaction it behaves exactly like {@code REQUIRED}. It is declared anyway so this
+   * method stays safe if it is ever called from inside a read-only service transaction, which is
+   * precisely the trap {@link FlagEnvironmentStateRepository#touchLastEvaluatedAtForEnvironment}
+   * documents: there, the caller chain genuinely does run inside {@code @Transactional(readOnly =
+   * true)}, and joining it would make this UPDATE fail against PostgreSQL (while passing silently
+   * against H2). That specific bug does not exist at this call site today, but the annotation is
+   * cheap insurance against it recurring here.
    */
-  @Transactional
-  @Modifying(clearAutomatically = true)
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  @Modifying
   @Query(
       "UPDATE EnvironmentApiKey k SET k.lastUsedAt = :now "
           + "WHERE k.id = :id AND (k.lastUsedAt IS NULL OR k.lastUsedAt < :threshold)")
