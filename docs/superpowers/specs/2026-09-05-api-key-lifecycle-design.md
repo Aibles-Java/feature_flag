@@ -3,7 +3,7 @@
 - **Issue:** _(to be filed)_ — `feat(security): multiple SDK API keys per environment with expiry and revocation`
 - **Branch:** `feature/api-key-lifecycle`
 - **Date:** 2026-09-05
-- **Status:** Draft design → awaiting human review
+- **Status:** Reviewed and approved → implementation plan next
 
 ## Problem
 
@@ -85,13 +85,21 @@ what the prefix exists for.
 The `expires_at` / `revoked_at` pair mirrors `refresh_token` exactly, so the two
 credential lifecycles read the same way.
 
+**Definition — a key is _active_ when** `revoked_at IS NULL AND (expires_at IS NULL OR
+expires_at > now)`. This one predicate decides authentication, the per-environment cap,
+whether the legacy rotate endpoint has an unambiguous target, and what the list endpoint
+marks as live, so it lives in exactly one place: `EnvironmentApiKey.isActive(Clock)` plus a
+matching repository predicate for the counting query.
+
 ### Migration steps (the `009` three-step shape)
 
 1. `019-1` — create `environment_api_key`.
-2. `019-2` — backfill: one row per existing environment, `name = 'default'`, `key_hash`
-   and `last_used_at` copied across, `key_prefix = ''` (unknown — the plaintext was never
-   stored), `expires_at`/`revoked_at` NULL, `created_by` NULL. Plain SQL, runs on both
-   PostgreSQL and H2; no pgcrypto needed since nothing is re-hashed.
+2. `019-2` — backfill: `INSERT INTO environment_api_key (environment_id, name, key_hash,
+   key_prefix, last_used_at, created_at) SELECT id, 'default', api_key_hash, '',
+   last_used_at, now() FROM environments`. The `id` column is left to its
+   `defaultValueComputed` default, exactly as `016` does, so the statement stays free of
+   any engine-specific UUID function and runs unchanged on PostgreSQL and H2. Nothing is
+   re-hashed, so unlike `009` this needs no pgcrypto and no `dbms=` restriction.
 3. `019-3` — drop `environments.api_key_hash` and `environments.last_used_at`.
 
 Because the hash is copied rather than recomputed, **every key in the field keeps
@@ -117,9 +125,18 @@ keys — which is the same quantity #56 needs, computed from the new home.
 | `EnvironmentApiKeyController` | `/api/v1/environments/{envId}/api-keys` |
 | `ApiKeyAuthenticationFilter` (changed) | Resolves the key, rejects revoked/expired, sets the principal |
 | `EnvironmentServiceImpl` (changed) | `create()` mints the environment's first key; `rotateApiKey()` delegates |
+| `EnvironmentTransferServiceImpl` (changed) | `clone()` mints the clone's own first key |
 
 `EnvironmentServiceImpl` is already 200+ lines and owns environment CRUD; key lifecycle
 goes in its own service rather than growing that file further.
+
+**Three call sites mint a key today** and all three must move to the new entity:
+`EnvironmentServiceImpl.create()` (line 53), `EnvironmentServiceImpl.rotateApiKey()`
+(line 147), and `EnvironmentTransferServiceImpl.clone()` (line 66). The third is easy to
+miss — a clone deliberately mints its own key rather than copying the source's, and that
+invariant must survive the refactor. All three create a key named `default`, and both
+`create()` and `clone()` keep returning today's `EnvironmentSecretResponse` carrying that
+key's plaintext, so their contracts do not change.
 
 ## API surface
 
@@ -128,7 +145,7 @@ goes in its own service rather than growing that file further.
 | POST | `/api/v1/environments/{envId}/api-keys` | `ENV_KEY_CREATE` | 201 + plaintext, **once** |
 | GET | `/api/v1/environments/{envId}/api-keys` | `ENV_READ` | 200, paginated, no plaintext |
 | DELETE | `/api/v1/environments/{envId}/api-keys/{keyId}` | `ENV_KEY_REVOKE` | 204 (revokes) |
-| POST | `/api/v1/environments/{envId}/api-keys/{keyId}/rotate` | `ENV_KEY_CREATE` | 200 + plaintext |
+| POST | `/api/v1/environments/{envId}/api-keys/{keyId}/rotate` | `ENV_ROTATE_KEY` | 200 + plaintext |
 | POST | `/api/v1/environments/{envId}/api-key/rotate` | `ENV_ROTATE_KEY` | 200 + plaintext, or **409** |
 
 `CreateApiKeyRequest`: `name` (required, ≤100), `expiresAt` (optional, must be in the
@@ -149,6 +166,13 @@ for callers who want it.
 The env-level `POST /api-key/rotate` resolves the environment's single active key and
 rotates it with `graceHours = 0` — byte-for-byte today's behaviour. With zero or several
 active keys it returns 409 naming the key-level endpoint, because "the" key is undefined.
+
+Both rotate endpoints authorize as **`ENV_ROTATE_KEY`**, the action that already means
+exactly this and is already in `PRODUCTION_ELEVATED`. Rotation is not decomposed into
+`ENV_KEY_CREATE` + `ENV_KEY_REVOKE`: that would open a second door to the same operation
+under different action names, and would drag rotation into the revoke window-exemption
+below, which it must not have. Rotation is a *planned* change that issues a new production
+credential, so it stays fully windowed; only break-glass revocation is exempt.
 
 ## Authentication flow — `ApiKeyAuthenticationFilter`
 
@@ -171,6 +195,12 @@ reason.
 The lookup is a single indexed query on `key_hash`; validity is evaluated in Java on the
 returned row rather than in the `WHERE` clause, so the filter can tell the three cases
 apart for the response message.
+
+**The filter and the key service take the `Clock` bean** (`AppConfig.clock()`, already
+injected into `PermissionService`) rather than calling `LocalDateTime.now()`. Expiry is the
+one part of this feature whose behaviour is a function of time, and the boundary cases —
+a key one second before and one second after `expires_at` — are not testable against a
+hardcoded clock.
 
 ### Principal change
 
