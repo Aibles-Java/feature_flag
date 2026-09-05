@@ -36,7 +36,7 @@ public class InviteMemberRequest {
    * same transaction as the membership: a half-applied invite would leave exactly the member with
    * no reach that passing these together exists to prevent.
    */
-  @Valid private List<ProjectGrantSpec> projectGrants = new ArrayList<>();
+  private List<@Valid ProjectGrantSpec> projectGrants = new ArrayList<>();
 
   @AssertTrue(message = "Provide exactly one of userId or email")
   public boolean isExactlyOneIdentifier() {
