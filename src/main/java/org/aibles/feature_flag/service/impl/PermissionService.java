@@ -59,11 +59,27 @@ public class PermissionService {
    * the rule trivially bypassable.
    */
   private static final Map<Action, Action> PRODUCTION_ELEVATED =
-      Map.of(
-          Action.FLAG_STATE_UPDATE, Action.FLAG_STATE_UPDATE_PRODUCTION,
-          Action.FLAG_ARCHIVE, Action.FLAG_ARCHIVE_PRODUCTION,
-          Action.ENV_ROTATE_KEY, Action.ENV_ROTATE_KEY_PRODUCTION,
-          Action.ENV_DELETE, Action.ENV_DELETE_PRODUCTION);
+      Map.ofEntries(
+          Map.entry(Action.FLAG_STATE_UPDATE, Action.FLAG_STATE_UPDATE_PRODUCTION),
+          Map.entry(Action.FLAG_ARCHIVE, Action.FLAG_ARCHIVE_PRODUCTION),
+          Map.entry(Action.ENV_ROTATE_KEY, Action.ENV_ROTATE_KEY_PRODUCTION),
+          Map.entry(Action.ENV_DELETE, Action.ENV_DELETE_PRODUCTION),
+          Map.entry(Action.ENV_KEY_CREATE, Action.ENV_KEY_CREATE_PRODUCTION),
+          Map.entry(Action.ENV_KEY_REVOKE, Action.ENV_KEY_REVOKE_PRODUCTION));
+
+  /**
+   * Elevated actions that skip the change window (rule D) while still requiring the elevated
+   * permission (rule B).
+   *
+   * <p>This is the <strong>only</strong> exception to rule D and it must stay that way unless the
+   * same argument holds: revocation is monotonically restrictive — it can only remove access, never
+   * grant it — so the window prevents no attack, while the delay it imposes is precisely the window
+   * an attacker holding a leaked key wants. A key leaked at 03:00 has to be withdrawable at 03:00,
+   * and widening the window is itself OWNER-gated, so a strict reading would leave no break-glass
+   * path at all. Rotation is deliberately NOT here: it issues a new production credential, which is
+   * a planned change and stays fully windowed.
+   */
+  private static final Set<Action> WINDOW_EXEMPT = Set.of(Action.ENV_KEY_REVOKE_PRODUCTION);
 
   private static Map<MemberRole, Set<Action>> buildRoleActions() {
     Set<Action> viewer =
@@ -79,6 +95,8 @@ public class PermissionService {
             Action.ENV_CREATE,
             Action.ENV_UPDATE,
             Action.ENV_ROTATE_KEY,
+            Action.ENV_KEY_CREATE,
+            Action.ENV_KEY_REVOKE,
             Action.PROJECT_CREATE,
             Action.PROJECT_UPDATE,
             Action.ORG_UPDATE,
@@ -98,7 +116,9 @@ public class PermissionService {
             Action.FLAG_ARCHIVE_PRODUCTION,
             Action.ENV_ROTATE_KEY_PRODUCTION,
             Action.ENV_DELETE_PRODUCTION,
-            Action.ENV_MANAGE_PROTECTION));
+            Action.ENV_MANAGE_PROTECTION,
+            Action.ENV_KEY_CREATE_PRODUCTION,
+            Action.ENV_KEY_REVOKE_PRODUCTION));
 
     return Map.of(
         MemberRole.VIEWER, Set.copyOf(viewer),
@@ -181,7 +201,9 @@ public class PermissionService {
               : action + " against a PRODUCTION environment requires elevated permission");
     }
 
-    if (required != action && productionEnvs.stream().anyMatch(e -> !withinChangeWindow(e))) {
+    if (required != action
+        && !WINDOW_EXEMPT.contains(required)
+        && productionEnvs.stream().anyMatch(e -> !withinChangeWindow(e))) {
       throw new UnauthorizedException(
           "Production changes are only allowed within the configured change window");
     }
