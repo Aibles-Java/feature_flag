@@ -136,11 +136,32 @@ public class PermissionService {
     return role == null ? Set.of() : ROLE_ACTIONS.getOrDefault(role, Set.of());
   }
 
+  /**
+   * What a grant confers, plus {@code PROJECT_READ} whenever it confers anything at all.
+   *
+   * <p>Without that addition a custom role holding {@code FLAG_READ} and not {@code PROJECT_READ}
+   * produces an incoherent state: the project is absent from the list and refuses a fetch by id,
+   * while its flags are served normally. The screen looks empty and the API does not. Nobody
+   * building a role is warned about it, and the omission is easy to make because {@code
+   * PROJECT_READ} reads like an administrative permission rather than the price of seeing anything
+   * inside the project.
+   *
+   * <p>An empty role stays empty. A grant that confers nothing should not confer visibility either
+   * — that is the "grants nothing yet" case the role list already labels.
+   */
   public static Set<Action> grantActions(PermissionGrant grant) {
+    Set<Action> granted;
     if (grant.getRole() != null) {
-      return actionsForRole(grant.getRole());
+      granted = actionsForRole(grant.getRole());
+    } else {
+      granted = grant.getCustomRole() != null ? grant.getCustomRole().getActions() : Set.of();
     }
-    return grant.getCustomRole() != null ? grant.getCustomRole().getActions() : Set.of();
+    if (granted.isEmpty() || granted.contains(Action.PROJECT_READ)) {
+      return granted;
+    }
+    Set<Action> withVisibility = EnumSet.copyOf(granted);
+    withVisibility.add(Action.PROJECT_READ);
+    return Set.copyOf(withVisibility);
   }
 
   public UUID currentUserId() {

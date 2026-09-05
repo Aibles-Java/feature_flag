@@ -109,6 +109,28 @@ class PermissionServiceTest {
   }
 
   @Test
+  void aGrantThatConfersAnythingAlsoConfersProjectVisibility() {
+    // A custom role of FLAG_READ alone used to hide the project from the list and refuse a fetch
+    // by id while serving its flags — an empty screen in front of a working API.
+    CustomRole flagsOnly =
+        CustomRole.builder().id(UUID.randomUUID()).actions(Set.of(Action.FLAG_READ)).build();
+    PermissionGrant grant = PermissionGrant.builder().customRole(flagsOnly).build();
+
+    assertThat(PermissionService.grantActions(grant))
+        .containsExactlyInAnyOrder(Action.FLAG_READ, Action.PROJECT_READ);
+  }
+
+  @Test
+  void aGrantThatConfersNothingStaysEmpty() {
+    // "Grants nothing yet" is a state the role list already shows; it should not quietly become
+    // "can see the project".
+    CustomRole empty = CustomRole.builder().id(UUID.randomUUID()).actions(Set.of()).build();
+    PermissionGrant grant = PermissionGrant.builder().customRole(empty).build();
+
+    assertThat(PermissionService.grantActions(grant)).isEmpty();
+  }
+
+  @Test
   void memberRoleCarriesOrganisationReadAndNothingAboutProjects() {
     // The point of MEMBER: in the organisation, reaching no project of its own. It is not the
     // empty set, or the workspace switcher would list an organisation it cannot then open.
@@ -192,8 +214,10 @@ class PermissionServiceTest {
     when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(userId, ScopeType.PROJECT, projectId))
         .thenReturn(Optional.of(PermissionGrant.builder().customRole(releaseManager).build()));
 
+    // PROJECT_READ comes along because the grant confers something: a person who can toggle a
+    // flag has to be able to see the project holding it.
     assertThat(permissionService.effectiveActionsForProject(userId, projectId))
-        .containsExactlyInAnyOrder(Action.FLAG_STATE_UPDATE, Action.FLAG_READ);
+        .containsExactlyInAnyOrder(Action.FLAG_STATE_UPDATE, Action.FLAG_READ, Action.PROJECT_READ);
   }
 
   // ── check(): action gate ────────────────────────────────────────────────────────────
