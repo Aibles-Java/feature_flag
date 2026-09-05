@@ -49,9 +49,16 @@ not about the grant mechanism.
 
 | Role | Actions | Implicit project reach |
 |---|---|---|
-| `MEMBER` | none | none |
-| `ADMIN` | `ORG_UPDATE`, `MEMBER_INVITE`, `MEMBER_MANAGE`, `GRANT_MANAGE`, `ROLE_MANAGE`, `AUDIT_READ`, `PROJECT_CREATE` | none |
+| `MEMBER` | `ORG_READ`, `MEMBER_READ` | none |
+| `ADMIN` | `MEMBER`'s, plus `ORG_UPDATE`, `MEMBER_INVITE`, `MEMBER_MANAGE`, `GRANT_MANAGE`, `ROLE_MANAGE`, `AUDIT_READ`, `PROJECT_CREATE` | none |
 | `OWNER` | everything ADMIN has, plus `ORG_DELETE` and every project action | **all projects** |
+
+`MEMBER` is not the empty set, which an earlier draft of this document had it
+be. Someone holding nothing at all cannot read the organisation they belong to
+(`ORG_READ`) or see who else is in it (`MEMBER_READ`), so the workspace
+switcher renders an organisation the user is provably a member of and then
+fails to open it. Both actions exist as of the step-2 commit that replaced the
+bare `isMember` checks; `MEMBER` keeps them and nothing else.
 
 `VIEWER` is retired: with project actions gone from the org axis it would name
 an empty set, which `MEMBER` already does under a name that does not promise

@@ -78,9 +78,7 @@ public class OrganizationServiceImpl implements OrganizationService {
   @Override
   public OrganizationResponse get(UUID id) {
     Organization org = findById(id);
-    if (!permissionService.isMember(id)) {
-      throw new UnauthorizedException("You are not a member of this organisation");
-    }
+    permissionService.check(Action.ORG_READ, PermissionService.ResourceRef.org(id));
     return toResponse(org);
   }
 
@@ -109,9 +107,7 @@ public class OrganizationServiceImpl implements OrganizationService {
   @Override
   @Transactional(readOnly = true)
   public Page<MemberResponse> listMembers(UUID orgId, Pageable pageable) {
-    if (!permissionService.isMember(orgId)) {
-      throw new UnauthorizedException("You are not a member of this organisation");
-    }
+    permissionService.check(Action.MEMBER_READ, PermissionService.ResourceRef.org(orgId));
     return memberRepository.findAllByOrganizationId(orgId, pageable).map(this::toMemberResponse);
   }
 

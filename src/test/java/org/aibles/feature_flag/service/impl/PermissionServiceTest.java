@@ -131,7 +131,9 @@ class PermissionServiceTest {
             Action.ENV_READ,
             Action.PROJECT_READ,
             Action.AUDIT_READ,
-            Action.WEBHOOK_READ);
+            Action.WEBHOOK_READ,
+            Action.ORG_READ,
+            Action.MEMBER_READ);
 
     assertThat(PermissionService.actionsForRole(MemberRole.ADMIN))
         .contains(

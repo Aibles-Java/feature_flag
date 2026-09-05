@@ -13,6 +13,7 @@ import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.OrganizationMember;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.entity.User;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.domain.enums.ScopeType;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
@@ -129,7 +130,9 @@ class OrganizationServiceImplTest {
   @Test
   void get_throwsUnauthorized_whenCallerIsNotMember() {
     when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org));
-    when(permissionService.isMember(orgId)).thenReturn(false);
+    doThrow(new UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(any(Action.class), any());
 
     assertThatThrownBy(() -> service.get(orgId)).isInstanceOf(UnauthorizedException.class);
   }
@@ -273,7 +276,9 @@ class OrganizationServiceImplTest {
 
   @Test
   void listMembers_throwsUnauthorized_whenCallerIsNotMember() {
-    when(permissionService.isMember(orgId)).thenReturn(false);
+    doThrow(new UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(any(Action.class), any());
 
     assertThatThrownBy(() -> service.listMembers(orgId, Pageable.unpaged()))
         .isInstanceOf(UnauthorizedException.class);

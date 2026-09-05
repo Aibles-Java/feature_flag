@@ -72,7 +72,12 @@ public class PermissionService {
             Action.ENV_READ,
             Action.PROJECT_READ,
             Action.AUDIT_READ,
-            Action.WEBHOOK_READ);
+            Action.WEBHOOK_READ,
+            // Reading the organisation and its member list used to be gated by a bare isMember
+            // check, which no role or custom role could describe. Both sit at VIEWER so today's
+            // behaviour is unchanged: anyone in the organisation can still see it.
+            Action.ORG_READ,
+            Action.MEMBER_READ);
 
     Set<Action> admin = EnumSet.copyOf(viewer);
     admin.addAll(
