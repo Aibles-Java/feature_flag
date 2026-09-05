@@ -213,8 +213,10 @@ class EnvironmentTransferServiceImplTest {
 
     service.clone(sourceEnvId, request);
 
-    verify(permissionService)
-        .requireRoleForEnvironment(sourceEnvId, MemberRole.OWNER, MemberRole.ADMIN);
+    // Two capabilities, asked separately: read the source, create the copy. ENV_CREATE is the
+    // narrower of the pair, so this lands where the old OWNER/ADMIN adapter did.
+    verify(permissionService).check(eq(Action.ENV_READ), any());
+    verify(permissionService).check(eq(Action.ENV_CREATE), any());
   }
 
   @Test
@@ -255,8 +257,8 @@ class EnvironmentTransferServiceImplTest {
         .containsExactly(
             tuple("banner-text", false, true, "hello", 30),
             tuple("legacy-cart", true, false, null, 100));
-    verify(permissionService)
-        .requireRoleForEnvironment(sourceEnvId, MemberRole.OWNER, MemberRole.ADMIN);
+    // ENV_EXPORT, not ENV_READ: an export dumps every flag state, and ENV_READ reaches VIEWER.
+    verify(permissionService).check(eq(Action.ENV_EXPORT), any());
   }
 
   /**

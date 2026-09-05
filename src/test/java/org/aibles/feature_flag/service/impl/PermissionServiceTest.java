@@ -127,10 +127,21 @@ class PermissionServiceTest {
   void actionMatrixEncodesRoleCapabilities() {
     assertThat(PermissionService.actionsForRole(MemberRole.VIEWER))
         .containsExactlyInAnyOrder(
-            Action.FLAG_READ, Action.ENV_READ, Action.PROJECT_READ, Action.AUDIT_READ);
+            Action.FLAG_READ,
+            Action.ENV_READ,
+            Action.PROJECT_READ,
+            Action.AUDIT_READ,
+            Action.WEBHOOK_READ);
 
     assertThat(PermissionService.actionsForRole(MemberRole.ADMIN))
-        .contains(Action.FLAG_STATE_UPDATE, Action.GRANT_MANAGE, Action.ROLE_MANAGE)
+        .contains(
+            Action.FLAG_STATE_UPDATE,
+            Action.GRANT_MANAGE,
+            Action.ROLE_MANAGE,
+            // Webhook management and export were OWNER/ADMIN through the old role adapter and
+            // keep exactly that reach now that they are named actions.
+            Action.WEBHOOK_MANAGE,
+            Action.ENV_EXPORT)
         .doesNotContain(Action.FLAG_STATE_UPDATE_PRODUCTION, Action.FLAG_DELETE, Action.ORG_DELETE);
 
     assertThat(PermissionService.actionsForRole(MemberRole.OWNER))

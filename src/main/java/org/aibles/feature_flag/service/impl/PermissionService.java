@@ -67,7 +67,12 @@ public class PermissionService {
 
   private static Map<MemberRole, Set<Action>> buildRoleActions() {
     Set<Action> viewer =
-        EnumSet.of(Action.FLAG_READ, Action.ENV_READ, Action.PROJECT_READ, Action.AUDIT_READ);
+        EnumSet.of(
+            Action.FLAG_READ,
+            Action.ENV_READ,
+            Action.PROJECT_READ,
+            Action.AUDIT_READ,
+            Action.WEBHOOK_READ);
 
     Set<Action> admin = EnumSet.copyOf(viewer);
     admin.addAll(
@@ -85,7 +90,9 @@ public class PermissionService {
             Action.MEMBER_INVITE,
             Action.MEMBER_MANAGE,
             Action.GRANT_MANAGE,
-            Action.ROLE_MANAGE));
+            Action.ROLE_MANAGE,
+            Action.ENV_EXPORT,
+            Action.WEBHOOK_MANAGE));
 
     Set<Action> owner = EnumSet.copyOf(admin);
     owner.addAll(
