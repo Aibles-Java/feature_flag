@@ -1,0 +1,647 @@
+### =====================================================================
+###  FEATURE FLAG PLATFORM — LUỒNG DEMO API (chạy tuần tự từ trên xuống)
+### =====================================================================
+###
+###  Cách chạy:
+###   - IntelliJ IDEA: mở file này, bấm ▶ ở từng request theo đúng thứ tự.
+###     Các biến (token, id, api-key) được tự động lưu qua script `> {% ... %}`
+###     nên KHÔNG cần copy-paste tay.
+###   - VS Code REST Client: script `> {% %}` không được hỗ trợ — dùng file
+###     `api-demo-flow.md` (cùng thư mục) và copy id thủ công, hoặc chạy trên Swagger UI.
+###
+###  Trước khi chạy:
+###     docker compose up -d          # PostgreSQL
+###     ./mvnw spring-boot:run        # app lên cổng 8081
+###     Swagger UI: http://localhost:8081/swagger-ui.html
+###
+###  ⚠ THỨ TỰ QUAN TRỌNG: phải tạo ENVIRONMENT TRƯỚC rồi mới tạo FLAG.
+###     Khi tạo flag, hệ thống tự sinh FlagEnvironmentState cho mọi environment
+###     đang tồn tại. Ngược lại, tạo environment mới KHÔNG backfill state cho
+###     các flag đã có → flag cũ sẽ thiếu state ở environment mới.
+### =====================================================================
+
+@baseUrl = http://localhost:8081
+@ownerEmail = demo.owner@aibles.io
+@ownerPassword = DemoPassw0rd!
+@devEmail = demo.dev@aibles.io
+@devPassword = DemoPassw0rd!
+
+
+### ---------------------------------------------------------------------
+### PHẦN 1 — AUTH
+### ---------------------------------------------------------------------
+
+### 01. Đăng ký tài khoản OWNER (201, không có body trả về)
+POST {{baseUrl}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "{{ownerEmail}}",
+  "password": "{{ownerPassword}}",
+  "firstName": "Demo",
+  "lastName": "Owner"
+}
+
+### 02. Đăng ký tài khoản thứ 2 (dùng để demo mời thành viên)
+POST {{baseUrl}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "{{devEmail}}",
+  "password": "{{devPassword}}",
+  "firstName": "Demo",
+  "lastName": "Developer"
+}
+
+### 03. Login user thứ 2 → lấy userId (endpoint invite yêu cầu userId, không phải email)
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{devEmail}}",
+  "password": "{{devPassword}}"
+}
+
+> {%
+    client.global.set("teammateUserId", response.body.userId);
+    client.log("teammateUserId = " + response.body.userId);
+%}
+
+### 04. Login OWNER → lấy accessToken + refreshToken (dùng cho toàn bộ Admin API)
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{ownerEmail}}",
+  "password": "{{ownerPassword}}"
+}
+
+> {%
+    client.global.set("accessToken", response.body.accessToken);
+    client.global.set("refreshToken", response.body.refreshToken);
+    client.test("login ok", function () {
+        client.assert(response.status === 200, "expected 200");
+    });
+%}
+
+### 05. Refresh access token (access token sống 15 phút, refresh 14 ngày)
+POST {{baseUrl}}/api/v1/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+> {%
+    client.global.set("accessToken", response.body.accessToken);
+    client.global.set("refreshToken", response.body.refreshToken);
+%}
+
+
+### ---------------------------------------------------------------------
+### PHẦN 2 — ORGANIZATION (người tạo tự động là OWNER)
+### ---------------------------------------------------------------------
+
+### 06. Tạo organisation (slug: chữ thường + số + gạch ngang)
+POST {{baseUrl}}/api/v1/organisations
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Aibles Demo Corp",
+  "slug": "aibles-demo"
+}
+
+> {%
+    client.global.set("orgId", response.body.id);
+    client.log("orgId = " + response.body.id);
+%}
+
+### 07. Danh sách organisation của tôi (phân trang)
+GET {{baseUrl}}/api/v1/organisations?page=0&size=20
+Authorization: Bearer {{accessToken}}
+
+### 08. Xem chi tiết organisation
+GET {{baseUrl}}/api/v1/organisations/{{orgId}}
+Authorization: Bearer {{accessToken}}
+
+### 09. Đổi tên organisation (OWNER/ADMIN)
+PUT {{baseUrl}}/api/v1/organisations/{{orgId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Aibles Demo Corporation"
+}
+
+### 10. Mời thành viên thứ 2 với role ADMIN (OWNER/ADMIN) — role: OWNER | ADMIN | VIEWER
+POST {{baseUrl}}/api/v1/organisations/{{orgId}}/members
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "userId": "{{teammateUserId}}",
+  "role": "ADMIN"
+}
+
+### 11. Danh sách thành viên
+GET {{baseUrl}}/api/v1/organisations/{{orgId}}/members?page=0&size=20
+Authorization: Bearer {{accessToken}}
+
+
+### ---------------------------------------------------------------------
+### PHẦN 3 — PROJECT
+### ---------------------------------------------------------------------
+
+### 12. Tạo project (OWNER/ADMIN)
+POST {{baseUrl}}/api/v1/projects
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "organisationId": "{{orgId}}",
+  "name": "Mobile Banking",
+  "description": "App ngân hàng số cho demo feature flag"
+}
+
+> {%
+    client.global.set("projectId", response.body.id);
+    client.log("projectId = " + response.body.id);
+%}
+
+### 13. Danh sách project theo organisation
+GET {{baseUrl}}/api/v1/projects?organisationId={{orgId}}&page=0&size=20
+Authorization: Bearer {{accessToken}}
+
+### 14. Chi tiết project
+GET {{baseUrl}}/api/v1/projects/{{projectId}}
+Authorization: Bearer {{accessToken}}
+
+### 15. Cập nhật project
+PUT {{baseUrl}}/api/v1/projects/{{projectId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Mobile Banking",
+  "description": "Cập nhật mô tả project"
+}
+
+
+### ---------------------------------------------------------------------
+### PHẦN 4 — ENVIRONMENT (tạo TRƯỚC khi tạo flag!)
+###   apiKey plaintext chỉ trả về ĐÚNG MỘT LẦN lúc tạo / lúc rotate.
+### ---------------------------------------------------------------------
+
+### 16. Tạo environment Development → nhận apiKey (lưu lại ngay)
+POST {{baseUrl}}/api/v1/environments
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "projectId": "{{projectId}}",
+  "name": "Development",
+  "description": "Môi trường dev"
+}
+
+> {%
+    client.global.set("devEnvId", response.body.id);
+    client.global.set("devApiKey", response.body.apiKey);
+    client.log("devEnvId  = " + response.body.id);
+    client.log("devApiKey = " + response.body.apiKey);
+%}
+
+### 17. Tạo environment Production
+POST {{baseUrl}}/api/v1/environments
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "projectId": "{{projectId}}",
+  "name": "Production",
+  "description": "Môi trường production"
+}
+
+> {%
+    client.global.set("prodEnvId", response.body.id);
+    client.global.set("prodApiKey", response.body.apiKey);
+    client.log("prodEnvId  = " + response.body.id);
+    client.log("prodApiKey = " + response.body.apiKey);
+%}
+
+### 18. Danh sách environment của project (không chứa apiKey)
+GET {{baseUrl}}/api/v1/environments?projectId={{projectId}}&page=0&size=20
+Authorization: Bearer {{accessToken}}
+
+### 19. Chi tiết environment
+GET {{baseUrl}}/api/v1/environments/{{devEnvId}}
+Authorization: Bearer {{accessToken}}
+
+### 20. Cập nhật environment
+PUT {{baseUrl}}/api/v1/environments/{{devEnvId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Development",
+  "description": "Dev — đã cập nhật mô tả"
+}
+
+
+### ---------------------------------------------------------------------
+### PHẦN 5 — FEATURE FLAG (key là bất biến, không sửa được sau khi tạo)
+###   valueType: BOOLEAN | STRING | INTEGER | JSON
+### ---------------------------------------------------------------------
+
+### 21. Tạo flag BOOLEAN
+POST {{baseUrl}}/api/v1/flags
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "projectId": "{{projectId}}",
+  "name": "New Checkout Flow",
+  "key": "new-checkout-flow",
+  "description": "Bật luồng thanh toán mới",
+  "valueType": "BOOLEAN"
+}
+
+> {%
+    client.global.set("flagBooleanId", response.body.id);
+%}
+
+### 22. Tạo flag STRING
+POST {{baseUrl}}/api/v1/flags
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "projectId": "{{projectId}}",
+  "name": "Welcome Banner Text",
+  "key": "welcome-banner-text",
+  "description": "Nội dung banner trang chủ",
+  "valueType": "STRING"
+}
+
+> {%
+    client.global.set("flagStringId", response.body.id);
+%}
+
+### 23. Tạo flag INTEGER
+POST {{baseUrl}}/api/v1/flags
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "projectId": "{{projectId}}",
+  "name": "Max Cart Items",
+  "key": "max_cart_items",
+  "description": "Số item tối đa trong giỏ",
+  "valueType": "INTEGER"
+}
+
+> {%
+    client.global.set("flagIntegerId", response.body.id);
+%}
+
+### 24. Tạo flag JSON
+POST {{baseUrl}}/api/v1/flags
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "projectId": "{{projectId}}",
+  "name": "Promo Config",
+  "key": "promo-config",
+  "description": "Cấu hình chương trình khuyến mãi",
+  "valueType": "JSON"
+}
+
+> {%
+    client.global.set("flagJsonId", response.body.id);
+%}
+
+### 25. Danh sách flag của project
+GET {{baseUrl}}/api/v1/flags?projectId={{projectId}}&page=0&size=20
+Authorization: Bearer {{accessToken}}
+
+### 26. Chi tiết flag
+GET {{baseUrl}}/api/v1/flags/{{flagBooleanId}}
+Authorization: Bearer {{accessToken}}
+
+### 27. Cập nhật flag (chỉ name/description — `key` bị bỏ qua có chủ đích)
+PUT {{baseUrl}}/api/v1/flags/{{flagBooleanId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "New Checkout Flow (v2)",
+  "description": "Đã đổi tên, key vẫn giữ nguyên"
+}
+
+
+### ---------------------------------------------------------------------
+### PHẦN 6 — FLAG STATE THEO TỪNG ENVIRONMENT
+###   Mỗi flag có đúng 1 state row / environment (enabled + value + rolloutPercent)
+### ---------------------------------------------------------------------
+
+### 28. Xem state mặc định của flag ở DEV (enabled=false)
+GET {{baseUrl}}/api/v1/flags/{{flagBooleanId}}/environments/{{devEnvId}}
+Authorization: Bearer {{accessToken}}
+
+### 29. Bật flag BOOLEAN ở DEV — 100% người dùng
+PUT {{baseUrl}}/api/v1/flags/{{flagBooleanId}}/environments/{{devEnvId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "enabled": true,
+  "rolloutPercent": 100
+}
+
+### 30. Bật flag STRING ở DEV + đặt value
+PUT {{baseUrl}}/api/v1/flags/{{flagStringId}}/environments/{{devEnvId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "enabled": true,
+  "value": "Xin chào Aibles!",
+  "rolloutPercent": 100
+}
+
+### 31. Bật flag INTEGER ở DEV
+PUT {{baseUrl}}/api/v1/flags/{{flagIntegerId}}/environments/{{devEnvId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "enabled": true,
+  "value": "20",
+  "rolloutPercent": 100
+}
+
+### 32. Bật flag JSON ở DEV (value là chuỗi JSON đã escape)
+PUT {{baseUrl}}/api/v1/flags/{{flagJsonId}}/environments/{{devEnvId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "enabled": true,
+  "value": "{\"campaign\":\"tet-2026\",\"discount\":15}",
+  "rolloutPercent": 100
+}
+
+### 33. Ở PROD chỉ mở 25% người dùng (demo percentage rollout)
+PUT {{baseUrl}}/api/v1/flags/{{flagBooleanId}}/environments/{{prodEnvId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "enabled": true,
+  "rolloutPercent": 25
+}
+
+
+### ---------------------------------------------------------------------
+### PHẦN 7 — SDK API (không dùng JWT, dùng header X-Environment-Key)
+###   Rate limit: 300 req/phút / environment
+### ---------------------------------------------------------------------
+
+### 34. Lấy toàn bộ flag của DEV (flag đã archive bị loại bỏ)
+GET {{baseUrl}}/api/v1/sdk/flags
+X-Environment-Key: {{devApiKey}}
+
+### 35. Lấy 1 flag theo key
+GET {{baseUrl}}/api/v1/sdk/flags/new-checkout-flow
+X-Environment-Key: {{devApiKey}}
+
+### 36. Đánh giá theo identity ở PROD — rollout 25%, cùng identifier luôn ra cùng kết quả
+GET {{baseUrl}}/api/v1/sdk/flags/new-checkout-flow?identifier=user-00001
+X-Environment-Key: {{prodApiKey}}
+
+### 37. Đổi identifier để thấy bucketing khác nhau
+GET {{baseUrl}}/api/v1/sdk/flags/new-checkout-flow?identifier=user-99999
+X-Environment-Key: {{prodApiKey}}
+
+### 38. Toàn bộ flag PROD theo identity
+GET {{baseUrl}}/api/v1/sdk/flags?identifier=user-00001
+X-Environment-Key: {{prodApiKey}}
+
+### 39. (Case lỗi) Thiếu API key → 401
+GET {{baseUrl}}/api/v1/sdk/flags
+
+### 40. (Case lỗi) API key sai → 401
+GET {{baseUrl}}/api/v1/sdk/flags
+X-Environment-Key: 0000000000000000000000000000000000000000000000000000000000000000
+
+
+### ---------------------------------------------------------------------
+### PHẦN 8 — CLONE ENVIRONMENT + EXPORT/IMPORT SNAPSHOT (issue #38)
+### ---------------------------------------------------------------------
+
+### 41. Clone DEV → Staging (copy toàn bộ flag state, LUÔN sinh API key mới)
+POST {{baseUrl}}/api/v1/environments/{{devEnvId}}/clone
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Staging",
+  "description": "Clone từ Development"
+}
+
+> {%
+    client.global.set("stagingEnvId", response.body.id);
+    client.global.set("stagingApiKey", response.body.apiKey);
+    client.log("stagingApiKey = " + response.body.apiKey);
+%}
+
+### 42. Kiểm tra: SDK trên Staging thấy đúng state đã clone
+GET {{baseUrl}}/api/v1/sdk/flags
+X-Environment-Key: {{stagingApiKey}}
+
+### 43. Export snapshot của DEV (giữ lại để import ở bước sau)
+GET {{baseUrl}}/api/v1/environments/{{devEnvId}}/export
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.global.set("devSnapshot", JSON.stringify(response.body));
+%}
+
+### 44. Import DRY-RUN vào PROD — xem trước thay đổi, KHÔNG ghi DB
+###     (body export được đưa nguyên xi vào `snapshot`, field thừa bị bỏ qua)
+POST {{baseUrl}}/api/v1/environments/{{prodEnvId}}/import
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "dryRun": true,
+  "conflictStrategy": "OVERWRITE",
+  "snapshot": {{devSnapshot}}
+}
+
+### 45. Import THẬT với SKIP (mặc định) — chỉ tạo cái còn thiếu, không đè state đang có
+POST {{baseUrl}}/api/v1/environments/{{prodEnvId}}/import
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "dryRun": false,
+  "conflictStrategy": "SKIP",
+  "snapshot": {{devSnapshot}}
+}
+
+### 46. Import THẬT với OVERWRITE — đè state PROD theo snapshot DEV
+POST {{baseUrl}}/api/v1/environments/{{prodEnvId}}/import
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "dryRun": false,
+  "conflictStrategy": "OVERWRITE",
+  "snapshot": {{devSnapshot}}
+}
+
+### 47. Import snapshot thủ công (viết tay, không cần export trước)
+POST {{baseUrl}}/api/v1/environments/{{stagingEnvId}}/import
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "dryRun": false,
+  "conflictStrategy": "OVERWRITE",
+  "snapshot": {
+    "schemaVersion": 1,
+    "flags": [
+      {
+        "key": "new-checkout-flow",
+        "name": "New Checkout Flow",
+        "valueType": "BOOLEAN",
+        "archived": false,
+        "enabled": true,
+        "rolloutPercent": 50
+      },
+      {
+        "key": "beta-dashboard",
+        "name": "Beta Dashboard",
+        "description": "Flag mới, sẽ được tạo trong project",
+        "valueType": "BOOLEAN",
+        "archived": false,
+        "enabled": true,
+        "rolloutPercent": 100
+      }
+    ]
+  }
+}
+
+### 48. (Case lỗi) schemaVersion sai → 400
+POST {{baseUrl}}/api/v1/environments/{{stagingEnvId}}/import
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "dryRun": true,
+  "conflictStrategy": "SKIP",
+  "snapshot": {
+    "schemaVersion": 99,
+    "flags": []
+  }
+}
+
+
+### ---------------------------------------------------------------------
+### PHẦN 9 — ARCHIVE / UNARCHIVE FLAG
+### ---------------------------------------------------------------------
+
+### 49. Archive flag (soft delete — SDK sẽ không trả về nữa)
+DELETE {{baseUrl}}/api/v1/flags/{{flagIntegerId}}
+Authorization: Bearer {{accessToken}}
+
+### 50. Kiểm tra: SDK DEV không còn `max_cart_items`
+GET {{baseUrl}}/api/v1/sdk/flags
+X-Environment-Key: {{devApiKey}}
+
+### 51. Danh sách flag đã archive
+GET {{baseUrl}}/api/v1/flags/archived?projectId={{projectId}}&page=0&size=20
+Authorization: Bearer {{accessToken}}
+
+### 52. Khôi phục flag
+POST {{baseUrl}}/api/v1/flags/{{flagIntegerId}}/unarchive
+Authorization: Bearer {{accessToken}}
+
+
+### ---------------------------------------------------------------------
+### PHẦN 10 — ROTATE API KEY
+### ---------------------------------------------------------------------
+
+### 53. Rotate API key của DEV → key cũ mất hiệu lực ngay
+POST {{baseUrl}}/api/v1/environments/{{devEnvId}}/api-key/rotate
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.global.set("devApiKeyOld", client.global.get("devApiKey"));
+    client.global.set("devApiKey", response.body.apiKey);
+    client.log("new devApiKey = " + response.body.apiKey);
+%}
+
+### 54. (Case lỗi) Dùng key CŨ → 401
+GET {{baseUrl}}/api/v1/sdk/flags
+X-Environment-Key: {{devApiKeyOld}}
+
+### 55. Dùng key MỚI → 200
+GET {{baseUrl}}/api/v1/sdk/flags
+X-Environment-Key: {{devApiKey}}
+
+
+### ---------------------------------------------------------------------
+### PHẦN 11 — AUDIT LOG (mọi thao tác ở trên đều đã được ghi nhận)
+### ---------------------------------------------------------------------
+
+### 56. Xem audit log của organisation (mới nhất trước, VIEWER trở lên xem được)
+GET {{baseUrl}}/api/v1/organisations/{{orgId}}/audit-log?page=0&size=50
+Authorization: Bearer {{accessToken}}
+
+
+### ---------------------------------------------------------------------
+### PHẦN 12 — MONITORING (không cần JWT)
+### ---------------------------------------------------------------------
+
+### 57. Health check (public)
+GET {{baseUrl}}/actuator/health
+
+### 58. Readiness probe
+GET {{baseUrl}}/actuator/health/readiness
+
+### 59. Prometheus metrics — cần HTTP Basic user `metrics`
+###     Chỉ chạy được khi đã set env APP_METRICS_PASSWORD (mặc định blank = account bị disable)
+GET {{baseUrl}}/actuator/prometheus
+Authorization: Basic metrics:CHANGE_ME
+
+
+### ---------------------------------------------------------------------
+### PHẦN 13 — DỌN DẸP (tuỳ chọn — chạy ngược từ trong ra ngoài)
+### ---------------------------------------------------------------------
+
+### 60. Xoá environment Staging (OWNER)
+DELETE {{baseUrl}}/api/v1/environments/{{stagingEnvId}}
+Authorization: Bearer {{accessToken}}
+
+### 61. Gỡ thành viên khỏi organisation (không gỡ được OWNER cuối cùng)
+DELETE {{baseUrl}}/api/v1/organisations/{{orgId}}/members/{{teammateUserId}}
+Authorization: Bearer {{accessToken}}
+
+### 62. Xoá project (OWNER)
+DELETE {{baseUrl}}/api/v1/projects/{{projectId}}
+Authorization: Bearer {{accessToken}}
+
+### 63. Xoá organisation (OWNER)
+DELETE {{baseUrl}}/api/v1/organisations/{{orgId}}
+Authorization: Bearer {{accessToken}}
+
+### 64. Logout — thu hồi refresh token (luôn trả 204 dù token có tồn tại hay không)
+POST {{baseUrl}}/api/v1/auth/logout
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
