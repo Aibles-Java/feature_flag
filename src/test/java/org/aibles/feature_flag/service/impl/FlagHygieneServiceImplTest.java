@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -20,7 +19,6 @@ import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.HygieneStatus;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.response.FlagHygieneResponse;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
@@ -56,7 +54,6 @@ class FlagHygieneServiceImplTest {
             flagStateRepository,
             new HygieneProperties(Duration.ofDays(30), Duration.ofMinutes(5)),
             permissionService);
-    doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
   }
 
   private FlagEnvironmentState row(

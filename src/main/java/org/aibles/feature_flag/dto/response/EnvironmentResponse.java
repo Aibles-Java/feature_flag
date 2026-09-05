@@ -16,5 +16,6 @@ public class EnvironmentResponse {
   private EnvType type;
   private Integer changeWindowStartHour;
   private Integer changeWindowEndHour;
+  private String changeWindowTimezone;
   private LocalDateTime createdAt;
 }

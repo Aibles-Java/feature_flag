@@ -13,7 +13,6 @@ import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.Action;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateProjectRequest;
 import org.aibles.feature_flag.dto.request.UpdateProjectRequest;
 import org.aibles.feature_flag.dto.response.ProjectResponse;
@@ -56,7 +55,6 @@ class ProjectServiceImplTest {
             projectRepository, organizationRepository, permissionService, auditService);
     org = Organization.builder().id(orgId).name("Acme").slug("acme").build();
     project = Project.builder().id(projectId).organization(org).name("Backend").build();
-    doNothing().when(permissionService).requireRole(any(), any(MemberRole[].class));
   }
 
   @Test

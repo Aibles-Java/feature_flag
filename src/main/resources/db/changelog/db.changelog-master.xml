@@ -23,5 +23,6 @@
     <include file="db/changelog/migrations/017-permission-grant-custom-role.xml"/>
     <include file="db/changelog/migrations/018-add-environment-change-window.xml"/>
     <include file="db/changelog/migrations/021-allow-member-role.xml"/>
+    <include file="db/changelog/migrations/022-add-change-window-timezone.xml"/>
 
 </databaseChangeLog>

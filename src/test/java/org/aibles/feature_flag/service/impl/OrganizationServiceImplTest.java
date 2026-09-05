@@ -77,7 +77,6 @@ class OrganizationServiceImplTest {
             auditService,
             projectGrantService);
     org = Organization.builder().id(orgId).name("Acme").slug("acme").build();
-    doNothing().when(permissionService).requireRole(any(), any(MemberRole[].class));
     // The invite ceiling reads the caller's effective actions — default the actor to OWNER.
     when(permissionService.currentUserId()).thenReturn(userId);
     when(permissionService.effectiveActionsForOrg(any(), any()))

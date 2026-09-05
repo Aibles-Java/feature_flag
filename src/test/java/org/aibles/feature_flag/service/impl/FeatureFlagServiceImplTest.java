@@ -16,7 +16,6 @@ import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
@@ -75,7 +74,6 @@ class FeatureFlagServiceImplTest {
             auditService);
     Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
-    doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
     // updateState resolves the target Environment so the PDP can read its production attributes.
     when(environmentRepository.findById(any()))
         .thenAnswer(

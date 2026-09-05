@@ -1,8 +1,9 @@
 package org.aibles.feature_flag.service.impl;
 
 import java.time.Clock;
+import java.time.DateTimeException;
 import java.time.LocalTime;
-import java.util.Arrays;
+import java.time.ZoneId;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -10,6 +11,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.OrganizationMember;
 import org.aibles.feature_flag.domain.entity.PermissionGrant;
@@ -33,12 +35,13 @@ import org.springframework.stereotype.Service;
  * union of their organization role and any scoped grant (built-in or custom role); {@link #check}
  * asserts the required action is in that set, then applies the production and change-window rules.
  *
- * <p>The {@code requireRole*} methods are the pre-ABAC API, kept as adapters so call sites migrate
- * to {@link #check} incrementally. The project- and environment-scoped adapters are grant-aware: a
- * PROJECT grant carrying a built-in role elevates the caller. A grant carrying a <em>custom</em>
- * role has no built-in role to compare against, so it does not satisfy an adapter — those paths
- * must use {@link #check}.
+ * <p>{@link #check} is the only way in. The pre-ABAC {@code requireRole*} adapters are gone: they
+ * compared built-in roles, so a grant carrying a custom role could never satisfy one, and the
+ * environment-scoped adapter loaded the environment purely for its project id and threw away the
+ * {@code type} and change window the production rules are made of. Every call site still using them
+ * was, by construction, invisible to half of this class.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PermissionService {
@@ -63,7 +66,11 @@ public class PermissionService {
           Action.FLAG_STATE_UPDATE, Action.FLAG_STATE_UPDATE_PRODUCTION,
           Action.FLAG_ARCHIVE, Action.FLAG_ARCHIVE_PRODUCTION,
           Action.ENV_ROTATE_KEY, Action.ENV_ROTATE_KEY_PRODUCTION,
-          Action.ENV_DELETE, Action.ENV_DELETE_PRODUCTION);
+          Action.ENV_DELETE, Action.ENV_DELETE_PRODUCTION,
+          // A webhook on a production environment streams every flag change, values included, to
+          // a URL the subscriber picks. Creating, repointing, deleting or re-keying one changes
+          // where production state goes, which is what this table is for.
+          Action.WEBHOOK_MANAGE, Action.WEBHOOK_MANAGE_PRODUCTION);
 
   private static Map<MemberRole, Set<Action>> buildRoleActions() {
     Set<Action> viewer =
@@ -110,7 +117,8 @@ public class PermissionService {
             Action.FLAG_ARCHIVE_PRODUCTION,
             Action.ENV_ROTATE_KEY_PRODUCTION,
             Action.ENV_DELETE_PRODUCTION,
-            Action.ENV_MANAGE_PROTECTION));
+            Action.ENV_MANAGE_PROTECTION,
+            Action.WEBHOOK_MANAGE_PRODUCTION));
 
     // MEMBER is not the empty set: someone who cannot read the organisation they belong to sees
     // it in the workspace switcher and then cannot open it. Project reach, and only project
@@ -145,10 +153,6 @@ public class PermissionService {
     UserPrincipal principal =
         (UserPrincipal) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     return principal.getEmail();
-  }
-
-  public boolean isMember(UUID orgId) {
-    return memberRepository.existsByOrganizationIdAndUserId(orgId, currentUserId());
   }
 
   public MemberRole orgRole(UUID userId, UUID orgId) {
@@ -259,69 +263,32 @@ public class PermissionService {
     if (start == null || end == null || start.equals(end)) {
       return true;
     }
-    int hour = LocalTime.now(clock).getHour();
+    int hour = LocalTime.now(zonedClock(env)).getHour();
     return start < end ? (hour >= start && hour < end) : (hour >= start || hour < end);
   }
 
-  /** Org-scope adapter. Project grants deliberately do not apply at org scope. */
-  public void requireRole(UUID orgId, MemberRole... roles) {
-    MemberRole role = orgRole(currentUserId(), orgId);
-    if (role == null) {
-      throw new UnauthorizedException("You are not a member of this organisation");
-    }
-    if (Arrays.stream(roles).noneMatch(r -> r == role)) {
-      throw new UnauthorizedException(
-          "Insufficient permissions. Required: " + Arrays.toString(roles));
-    }
-  }
-
-  /** Project-scope adapter — a built-in-role PROJECT grant elevates the caller. */
-  public void requireRoleForProject(UUID projectId, MemberRole... roles) {
-    MemberRole role = effectiveRoleForProject(currentUserId(), projectId);
-    if (role == null) {
-      throw new UnauthorizedException("You are not a member of this organisation");
-    }
-    if (Arrays.stream(roles).noneMatch(r -> r == role)) {
-      throw new UnauthorizedException(
-          "Insufficient permissions. Required: " + Arrays.toString(roles));
-    }
-  }
-
-  public void requireRoleForEnvironment(UUID environmentId, MemberRole... roles) {
-    Environment env =
-        environmentRepository
-            .findById(environmentId)
-            .orElseThrow(() -> new ResourceNotFoundException("Environment", environmentId));
-    requireRoleForProject(env.getProject().getId(), roles);
-  }
-
   /**
-   * The more permissive of the caller's org role and any built-in-role PROJECT grant. Grants only
-   * elevate: an org OWNER/ADMIN is never downgraded by a narrower grant.
+   * The clock to read the window in.
+   *
+   * <p>An unparseable zone falls back to the server's rather than throwing: the stored string is
+   * validated when it is set, so a bad value here means data written before that validation
+   * existed, and refusing every production change until someone fixes a row is a worse failure than
+   * reading the window in the wrong zone.
    */
-  public MemberRole effectiveRoleForProject(UUID userId, UUID projectId) {
-    Project project =
-        projectRepository
-            .findById(projectId)
-            .orElseThrow(() -> new ResourceNotFoundException("Project", projectId));
-
-    MemberRole role = orgRole(userId, project.getOrganization().getId());
-    MemberRole granted =
-        grantRepository
-            .findByUser_IdAndScopeTypeAndScopeId(userId, ScopeType.PROJECT, projectId)
-            .map(PermissionGrant::getRole)
-            .orElse(null);
-    return mostPermissive(role, granted);
-  }
-
-  private static MemberRole mostPermissive(MemberRole a, MemberRole b) {
-    if (a == null) {
-      return b;
+  private Clock zonedClock(Environment env) {
+    String zone = env.getChangeWindowTimezone();
+    if (zone == null || zone.isBlank()) {
+      return clock;
     }
-    if (b == null) {
-      return a;
+    try {
+      return clock.withZone(ZoneId.of(zone));
+    } catch (DateTimeException e) {
+      log.warn(
+          "Environment {} has an unusable change-window timezone {}; falling back to the server zone",
+          env.getId(),
+          zone);
+      return clock;
     }
-    return actionsForRole(a).size() >= actionsForRole(b).size() ? a : b;
   }
 
   /**
