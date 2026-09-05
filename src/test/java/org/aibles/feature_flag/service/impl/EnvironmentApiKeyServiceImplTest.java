@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -25,6 +26,7 @@ import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.dto.request.CreateApiKeyRequest;
+import org.aibles.feature_flag.dto.request.RotateApiKeyRequest;
 import org.aibles.feature_flag.dto.response.ApiKeyResponse;
 import org.aibles.feature_flag.dto.response.ApiKeySecretResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
@@ -40,6 +42,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -59,6 +62,7 @@ class EnvironmentApiKeyServiceImplTest {
   @Mock EnvironmentApiKeyRepository apiKeyRepository;
   @Mock EnvironmentRepository environmentRepository;
   @Mock PermissionService permissionService;
+  @Mock ApplicationEventPublisher eventPublisher;
   @Mock AuditService auditService;
 
   EnvironmentApiKeyServiceImpl service;
@@ -66,14 +70,20 @@ class EnvironmentApiKeyServiceImplTest {
   Organization organization;
   Project project;
   Environment environment;
+  Clock fixedClock;
 
   @BeforeEach
   void setUp() {
-    Clock clock =
+    fixedClock =
         Clock.fixed(NOW.atZone(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
     service =
         new EnvironmentApiKeyServiceImpl(
-            apiKeyRepository, environmentRepository, permissionService, auditService, clock);
+            apiKeyRepository,
+            environmentRepository,
+            permissionService,
+            eventPublisher,
+            auditService,
+            fixedClock);
 
     organization = Organization.builder().id(ORG_ID).name("org").build();
     project = Project.builder().id(PROJECT_ID).organization(organization).name("proj").build();
@@ -259,5 +269,84 @@ class EnvironmentApiKeyServiceImplTest {
 
     verify(permissionService)
         .check(eq(Action.ENV_KEY_REVOKE), argThat(ref -> ref.environment() == environment));
+  }
+
+  private RotateApiKeyRequest grace(int hours) {
+    RotateApiKeyRequest request = new RotateApiKeyRequest();
+    request.setGraceHours(hours);
+    return request;
+  }
+
+  @Test
+  void rotateWithGraceLeavesTheOldKeyValidUntilTheDeadline() {
+    EnvironmentApiKey old = activeKey();
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    service.rotate(ENV_ID, KEY_ID, grace(24));
+
+    assertThat(old.getRevokedAt()).isNull();
+    assertThat(old.getExpiresAt()).isEqualTo(NOW.plusHours(24));
+    assertThat(old.isActive(fixedClock)).isTrue();
+  }
+
+  @Test
+  void rotateWithZeroGraceRevokesTheOldKeyImmediately() {
+    EnvironmentApiKey old = activeKey();
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    service.rotate(ENV_ID, KEY_ID, grace(0));
+
+    assertThat(old.getRevokedAt()).isEqualTo(NOW);
+    assertThat(old.isActive(fixedClock)).isFalse();
+  }
+
+  @Test
+  void theRotatedKeyCarriesTheOldNameForward() {
+    EnvironmentApiKey old = activeKey();
+    old.setName("ios-app");
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    service.rotate(ENV_ID, KEY_ID, grace(24));
+
+    // Names are labels, not identifiers — a collision during the grace window is expected
+    // and the two rows are told apart by prefix and creation time. Rotation saves the fresh
+    // key first, then the updated old key — the fresh one is the first save() call.
+    ArgumentCaptor<EnvironmentApiKey> captor = ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository, times(2)).save(captor.capture());
+    assertThat(captor.getAllValues().get(0).getName()).isEqualTo("ios-app");
+  }
+
+  @Test
+  void rotateIssuesAFreshSecretNotTheOldOne() {
+    EnvironmentApiKey old = activeKey();
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    ApiKeySecretResponse response = service.rotate(ENV_ID, KEY_ID, grace(24));
+
+    assertThat(ApiKeyHasher.hash(response.getApiKey())).isNotEqualTo(old.getKeyHash());
+  }
+
+  @Test
+  void rotateAuthorizesAsEnvRotateKeyNotAsCreatePlusRevoke() {
+    // Decomposing rotation into ENV_KEY_CREATE + ENV_KEY_REVOKE would drag it into the
+    // revoke window exemption, which rotation must not have: issuing a new production
+    // credential is a planned change and stays fully windowed.
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(activeKey()));
+
+    service.rotate(ENV_ID, KEY_ID, grace(24));
+
+    verify(permissionService)
+        .check(eq(Action.ENV_ROTATE_KEY), argThat(ref -> ref.environment() == environment));
+    verify(permissionService, never()).check(eq(Action.ENV_KEY_REVOKE), any());
+  }
+
+  @Test
+  void rotatingAnAlreadyRevokedKeyIsRejected() {
+    EnvironmentApiKey old = activeKey();
+    old.setRevokedAt(NOW.minusDays(1));
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    assertThatThrownBy(() -> service.rotate(ENV_ID, KEY_ID, grace(24)))
+        .isInstanceOf(DuplicateResourceException.class);
   }
 }

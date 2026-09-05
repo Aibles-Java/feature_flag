@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.dto.request.CreateApiKeyRequest;
+import org.aibles.feature_flag.dto.request.RotateApiKeyRequest;
 import org.aibles.feature_flag.dto.response.ApiKeyResponse;
 import org.aibles.feature_flag.dto.response.ApiKeySecretResponse;
 import org.aibles.feature_flag.dto.response.PageResponse;
@@ -45,5 +46,14 @@ public class EnvironmentApiKeyController {
   @ResponseStatus(HttpStatus.NO_CONTENT)
   public void revoke(@PathVariable UUID envId, @PathVariable UUID keyId) {
     apiKeyService.revoke(envId, keyId);
+  }
+
+  @PostMapping("/{keyId}/rotate")
+  public ApiKeySecretResponse rotate(
+      @PathVariable UUID envId,
+      @PathVariable UUID keyId,
+      @Valid @RequestBody(required = false) RotateApiKeyRequest request) {
+    return apiKeyService.rotate(
+        envId, keyId, request != null ? request : new RotateApiKeyRequest());
   }
 }
