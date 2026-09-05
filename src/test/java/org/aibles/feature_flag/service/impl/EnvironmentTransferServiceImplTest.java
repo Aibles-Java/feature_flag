@@ -128,6 +128,16 @@ class EnvironmentTransferServiceImplTest {
 
   @Test
   void clone_copiesEveryStateAndMintsAFreshApiKey() {
+    // A real key fixture for the source, so "the clone's key differs from the source's" is
+    // actually exercised rather than merely holding true because nothing compares them.
+    EnvironmentApiKey sourceKey =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(sourceEnv)
+            .name("default")
+            .keyHash(ApiKeyHasher.hash("source-environment-plaintext-key"))
+            .build();
+
     when(flagStateRepository.findAllByEnvironmentIdOrderByFlagKey(sourceEnvId))
         .thenReturn(
             List.of(
@@ -156,6 +166,7 @@ class EnvironmentTransferServiceImplTest {
     // is only ever read, never saved, in this method.
     assertThat(mintedKey.getEnvironment()).isSameAs(created);
     assertThat(mintedKey.getKeyHash()).isEqualTo(ApiKeyHasher.hash(response.getApiKey()));
+    assertThat(mintedKey.getKeyHash()).isNotEqualTo(sourceKey.getKeyHash());
 
     ArgumentCaptor<FlagEnvironmentState> stateCaptor =
         ArgumentCaptor.forClass(FlagEnvironmentState.class);

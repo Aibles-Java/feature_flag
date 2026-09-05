@@ -8,43 +8,12 @@
       Moves every environment's key into environment_api_key and drops the old columns.
       Because the hash is COPIED rather than recomputed, every key already deployed in the
       field keeps authenticating across this migration. Getting that wrong logs out every
-      SDK client in production, so 020-0 seeds a pre-migration row and ApiKeyBackfillTest
-      asserts it survives. The seed runs only under the "backfill-test" context, which no
-      dev or production run activates.
+      SDK client in production, so ApiKeyBackfillTest seeds a pre-migration row and asserts
+      it survives. That fixture lives in a test-only changelog under src/test/resources —
+      never here: a context attribute would NOT have confined it, because Liquibase runs a
+      context-tagged changeset whenever the runtime context set is empty, which it is in
+      every configuration in this repo.
     -->
-
-    <changeSet id="020-0-seed-pre-migration-environment" author="dev" context="backfill-test">
-        <insert tableName="organizations">
-            <column name="id" value="00000000-0000-0000-0000-0000000000a1"/>
-            <column name="name" value="Backfill Fixture Org"/>
-            <column name="slug" value="backfill-fixture-org"/>
-        </insert>
-        <insert tableName="projects">
-            <column name="id" value="00000000-0000-0000-0000-0000000000b1"/>
-            <column name="organization_id" value="00000000-0000-0000-0000-0000000000a1"/>
-            <column name="name" value="Backfill Fixture Project"/>
-        </insert>
-        <insert tableName="environments">
-            <column name="id" value="00000000-0000-0000-0000-0000000000c1"/>
-            <column name="project_id" value="00000000-0000-0000-0000-0000000000b1"/>
-            <column name="name" value="legacy-prod"/>
-            <!-- SHA-256 of the literal string "legacy-plaintext-key", asserted in the test. -->
-            <column name="api_key_hash"
-                    value="85eb987e11e31c2ae834df9919214d0668988facc8786d5ac77b498b68130aec"/>
-            <column name="type" value="PRODUCTION"/>
-        </insert>
-        <rollback>
-            <delete tableName="environments">
-                <where>id = '00000000-0000-0000-0000-0000000000c1'</where>
-            </delete>
-            <delete tableName="projects">
-                <where>id = '00000000-0000-0000-0000-0000000000b1'</where>
-            </delete>
-            <delete tableName="organizations">
-                <where>id = '00000000-0000-0000-0000-0000000000a1'</where>
-            </delete>
-        </rollback>
-    </changeSet>
 
     <changeSet id="020-1-backfill-keys" author="dev">
         <!--

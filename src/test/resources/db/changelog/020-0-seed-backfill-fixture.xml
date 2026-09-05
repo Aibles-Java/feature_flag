@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Test-only fixture for ApiKeyBackfillTest. Seeds one environment with a pre-migration
+      api_key_hash, inserted between "core" (001-019) and "020" so 020-1's backfill has a
+      pre-existing hash to copy and 020-2's column drop has something to observe surviving in
+      environment_api_key afterwards.
+
+      This changeset lives ONLY in src/test/resources — it is reachable exclusively via
+      db.changelog-backfill-test.xml, and db.changelog-master.xml (the changelog every real
+      deploy and every other test uses) never includes this file. There is deliberately no
+      Liquibase `context` guard here: an earlier version of this fixture tried to gate it with
+      `context="backfill-test"` inside the production migration file, on the mistaken belief that
+      a context-tagged changeset is skipped unless that context is explicitly activated. Liquibase
+      does the opposite — ContextExpression.matches() returns true whenever the runtime context
+      set is EMPTY, which it is on every `./mvnw spring-boot:run` and every production deploy in
+      this repo (spring.liquibase.contexts is never set). That meant this fixture — a live,
+      publicly-known SDK credential ("legacy-plaintext-key") for a fake PRODUCTION environment —
+      was inserted into every real database this migration ever ran against. Physical file
+      separation, not a context tag, is what keeps it out of production: this file simply does not
+      exist on the classpath path that db.changelog-master.xml walks.
+    -->
+
+    <changeSet id="020-0-seed-pre-migration-environment" author="dev">
+        <insert tableName="organizations">
+            <column name="id" value="00000000-0000-0000-0000-0000000000a1"/>
+            <column name="name" value="Backfill Fixture Org"/>
+            <column name="slug" value="backfill-fixture-org"/>
+        </insert>
+        <insert tableName="projects">
+            <column name="id" value="00000000-0000-0000-0000-0000000000b1"/>
+            <column name="organization_id" value="00000000-0000-0000-0000-0000000000a1"/>
+            <column name="name" value="Backfill Fixture Project"/>
+        </insert>
+        <insert tableName="environments">
+            <column name="id" value="00000000-0000-0000-0000-0000000000c1"/>
+            <column name="project_id" value="00000000-0000-0000-0000-0000000000b1"/>
+            <column name="name" value="legacy-prod"/>
+            <!-- SHA-256 of the literal string "legacy-plaintext-key", asserted in the test. -->
+            <column name="api_key_hash"
+                    value="85eb987e11e31c2ae834df9919214d0668988facc8786d5ac77b498b68130aec"/>
+            <column name="type" value="PRODUCTION"/>
+        </insert>
+        <rollback>
+            <delete tableName="environments">
+                <where>id = '00000000-0000-0000-0000-0000000000c1'</where>
+            </delete>
+            <delete tableName="projects">
+                <where>id = '00000000-0000-0000-0000-0000000000b1'</where>
+            </delete>
+            <delete tableName="organizations">
+                <where>id = '00000000-0000-0000-0000-0000000000a1'</where>
+            </delete>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

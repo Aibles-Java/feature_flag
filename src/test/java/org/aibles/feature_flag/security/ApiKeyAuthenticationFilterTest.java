@@ -120,8 +120,13 @@ class ApiKeyAuthenticationFilterTest {
 
     filter.doFilter(request, response, filterChain);
 
-    assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal())
-        .isSameAs(valid);
+    var auth = SecurityContextHolder.getContext().getAuthentication();
+    assertThat(auth).isInstanceOf(ApiKeyAuthenticationToken.class);
+    assertThat(auth.getPrincipal()).isSameAs(valid);
+    assertThat(auth.isAuthenticated()).isTrue();
+    // The filter must NOT short-circuit with a 401 — it hands off to the chain untouched.
+    assertThat(response.getStatus()).isNotEqualTo(HttpStatus.UNAUTHORIZED.value());
+    assertThat(response.getContentAsString()).isEmpty();
     verify(filterChain).doFilter(request, response);
   }
 
@@ -186,6 +191,24 @@ class ApiKeyAuthenticationFilterTest {
   }
 
   @Test
+  void writesTheUsageStampWhenNeverUsedBefore() throws Exception {
+    EnvironmentApiKey neverUsed = key(null, null);
+    // lastUsedAt defaults to null — the "never authenticated before" branch of the throttle
+    // guard, distinct from "stale" (a non-null timestamp older than the throttle window).
+    when(apiKeyRepository.findByKeyHash(ApiKeyHasher.hash("plaintext")))
+        .thenReturn(Optional.of(neverUsed));
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.addHeader(HEADER, "plaintext");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    filter.doFilter(request, response, filterChain);
+
+    verify(apiKeyRepository)
+        .touchLastUsedAt(eq(neverUsed.getId()), eq(NOW), any(LocalDateTime.class));
+    verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
   void skipsTheUsageWriteWhenTheStampIsRecent() throws Exception {
     EnvironmentApiKey recent = key(null, null);
     recent.setLastUsedAt(NOW.minusMinutes(1));
@@ -193,10 +216,12 @@ class ApiKeyAuthenticationFilterTest {
         .thenReturn(Optional.of(recent));
     MockHttpServletRequest request = new MockHttpServletRequest();
     request.addHeader(HEADER, "plaintext");
+    MockHttpServletResponse response = new MockHttpServletResponse();
 
-    filter.doFilter(request, new MockHttpServletResponse(), filterChain);
+    filter.doFilter(request, response, filterChain);
 
     verify(apiKeyRepository, never()).touchLastUsedAt(any(), any(), any());
+    verify(filterChain).doFilter(request, response);
   }
 
   @Test
@@ -207,9 +232,11 @@ class ApiKeyAuthenticationFilterTest {
         .thenReturn(Optional.of(stale));
     MockHttpServletRequest request = new MockHttpServletRequest();
     request.addHeader(HEADER, "plaintext");
+    MockHttpServletResponse response = new MockHttpServletResponse();
 
-    filter.doFilter(request, new MockHttpServletResponse(), filterChain);
+    filter.doFilter(request, response, filterChain);
 
     verify(apiKeyRepository).touchLastUsedAt(eq(stale.getId()), eq(NOW), any());
+    verify(filterChain).doFilter(request, response);
   }
 }
