@@ -32,13 +32,20 @@ Supports multi-tenant flag management via an Org → Project → Environment hie
 ## Data model hierarchy
 
 ```
-Organization → Project → Environment (has API key)
+Organization → Project → Environment ← EnvironmentApiKey (0..N per environment)
                        → FeatureFlag (has immutable key slug)
                              ↕
                     FlagEnvironmentState (enabled + value per env)
 ```
 
 `FlagEnvironmentState` is auto-created for every existing environment when a new `FeatureFlag` is created — a flag always has exactly one state row per environment.
+
+An `Environment` no longer carries a single `api_key_hash` column; it holds any number of
+`EnvironmentApiKey` rows (table `environment_api_key`, migration `019`/`020`), each with its own
+`key_hash`, optional `expires_at`, and soft `revoked_at`. This is what lets a key be rotated with a
+grace period instead of a hard cutover, and lets one leaked consumer's key be revoked without
+affecting the environment's other keys. See `CLAUDE.md` ("API Key generation") and
+`docs/main-flows.md` (Luồng 3) for the endpoints and lifecycle.
 
 ## External dependencies
 
@@ -71,18 +78,20 @@ src/main/java/org/aibles/feature_flag/
 src/main/resources/
   application.properties
   db/changelog/
-    db.changelog-master.xml
-    migrations/     001–011, 013–017, Liquibase-owned schema (append-only)
+    db.changelog-master.xml    includes db.changelog-core.xml (001–019) + migration 020
+    db.changelog-core.xml      001–019, Liquibase-owned schema (append-only)
+    migrations/                001–020
 ```
 
 ## What to know before touching code
 
 - `FeatureFlag.key` is immutable — set at creation, never updated (`FeatureFlagServiceImpl.update()` intentionally ignores it).
-- Security filter chain order matters: SDK chain (`/api/v1/sdk/**`, order=1) before Admin chain (order=2).
+- Security filter chain order matters: SDK chain (`/api/v1/sdk/**`, order=1) before Admin chain (order=2). The SDK chain's principal is an `EnvironmentApiKey` (not `Environment`); call `((EnvironmentApiKey) auth.getPrincipal()).getEnvironment()` to reach the environment.
 - `PermissionService` (not controllers) is the Policy Decision Point: it resolves the caller's
   effective `Action` set — org role ∪ any project-scoped `PermissionGrant` (built-in or custom
-  role) — and applies the production and change-window rules. See `ABAC.md`.
+  role) — and applies the production and change-window rules, with one documented exception
+  (`WINDOW_EXEMPT`, currently just `ENV_KEY_REVOKE_PRODUCTION`). See `ABAC.md`.
 - DB schema is Liquibase-owned (`ddl-auto=validate`) — never modify an already-run changeset, always add a new one under `db/changelog/migrations/`.
-- `ApiKeyGenerator` uses `SecureRandom` → 32 bytes → 64-char hex string; runs on environment creation and key rotation.
+- `ApiKeyGenerator` uses `SecureRandom` → 32 bytes → 64-char hex string; `EnvironmentApiKeyFactory.mint(...)` wraps it as the single place that mints an `EnvironmentApiKey` row (environment creation, environment cloning, and the `/api-keys` create/rotate endpoints).
 
 See `CLAUDE.md` for full development conventions and workflow gates.

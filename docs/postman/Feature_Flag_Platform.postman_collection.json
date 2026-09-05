@@ -18,6 +18,9 @@
     { "key": "prodApiKey",     "value": "",  "type": "string" },
     { "key": "stagingEnvId",   "value": "",  "type": "string" },
     { "key": "stagingApiKey",  "value": "",  "type": "string" },
+    { "key": "stagingFirstKeyId",  "value": "",  "type": "string" },
+    { "key": "stagingSecondKeyId", "value": "",  "type": "string" },
+    { "key": "stagingSecondApiKey", "value": "", "type": "string" },
     { "key": "boolFlagId",     "value": "",  "type": "string" },
     { "key": "strFlagId",      "value": "",  "type": "string" },
     { "key": "intFlagId",      "value": "",  "type": "string" },
@@ -798,6 +801,128 @@
               "pm.test('New key is 64 chars', () => pm.expect(body.apiKey).to.have.lengthOf(64));",
               "pm.test('API key changed', () => pm.expect(body.apiKey).to.not.eql(pm.collectionVariables.get('stagingApiKey')));",
               "pm.collectionVariables.set('stagingApiKey', body.apiKey);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "05-07 Create Second API Key (Staging)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{stagingEnvId}}/api-keys", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{stagingEnvId}}","api-keys"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"nightly-batch\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.test('Has apiKey (64 chars)', () => pm.expect(body.apiKey).to.have.lengthOf(64));",
+              "pm.test('keyPrefix is 8 chars', () => pm.expect(body.key.keyPrefix).to.have.lengthOf(8));",
+              "pm.collectionVariables.set('stagingSecondKeyId', body.key.id);",
+              "pm.collectionVariables.set('stagingSecondApiKey', body.apiKey);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Legacy rotate with 2 active keys → 409",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{stagingEnvId}}/api-key/rotate", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{stagingEnvId}}","api-key","rotate"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 409 — ambiguous which key to rotate', () => pm.response.to.have.status(409));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "05-08 List API Keys (Staging — 2 active)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{stagingEnvId}}/api-keys?page=0&size=20", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{stagingEnvId}}","api-keys"], "query": [{ "key": "page", "value": "0" }, { "key": "size", "value": "20" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('2 keys listed', () => pm.expect(body.content).to.have.lengthOf(2));",
+              "pm.test('No plaintext or hash exposed', () => body.content.forEach(k => {",
+              "  pm.expect(k).to.not.have.property('apiKey');",
+              "  pm.expect(k).to.not.have.property('keyHash');",
+              "}));",
+              "const first = body.content.find(k => k.id !== pm.collectionVariables.get('stagingSecondKeyId'));",
+              "pm.collectionVariables.set('stagingFirstKeyId', first.id);"
+            ]}
+          }]
+        },
+
+        {
+          "name": "05-09 Revoke First API Key (Staging)",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{stagingEnvId}}/api-keys/{{stagingFirstKeyId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{stagingEnvId}}","api-keys","{{stagingFirstKeyId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 204', () => pm.response.to.have.status(204));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "[ERR] Revoke an already-revoked key → 409",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{stagingEnvId}}/api-keys/{{stagingFirstKeyId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{stagingEnvId}}","api-keys","{{stagingFirstKeyId}}"] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{ownerToken}}" }]
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 409', () => pm.response.to.have.status(409));"
+            ]}
+          }]
+        },
+
+        {
+          "name": "05-10 Rotate Second API Key with 24h grace period",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/environments/{{stagingEnvId}}/api-keys/{{stagingSecondKeyId}}/rotate", "host": ["{{baseUrl}}"], "path": ["api","v1","environments","{{stagingEnvId}}","api-keys","{{stagingSecondKeyId}}","rotate"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{ownerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"graceHours\": 24\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('New key differs from the old one', () => pm.expect(body.apiKey).to.not.eql(pm.collectionVariables.get('stagingSecondApiKey')));",
+              "pm.test('New key keeps the old name', () => pm.expect(body.key.name).to.eql('nightly-batch'));",
+              "pm.collectionVariables.set('stagingSecondKeyId', body.key.id);",
+              "pm.collectionVariables.set('stagingSecondApiKey', body.apiKey);"
             ]}
           }]
         },

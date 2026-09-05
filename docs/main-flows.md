@@ -403,20 +403,31 @@ curl -s -X PUT "$BASE/api/v1/environments/$ENV_ID" \
 
 SDK chạy trong ứng dụng khách (backend service, mobile app) **không thể đăng nhập bằng email/password**. Nó cần một credential dài hạn, không gắn với người, và **tự nó xác định luôn là môi trường nào** — để cùng một dòng code không cần biết mình đang chạy dev hay prod.
 
-Đó là API key của environment: một key = một môi trường. Đổi key trong config là đổi môi trường, không phải sửa code.
+Trước đây một environment chỉ có **đúng một** API key (`environments.api_key_hash`, NOT NULL UNIQUE). Điều đó kéo theo ba vấn đề thực tế:
 
-Vấn đề thứ hai: DB bị lộ thì sao? Nên key **không lưu plaintext** — chỉ lưu SHA-256 hash, y hệt cách xử lý password. Hệ quả: plaintext chỉ hiện **đúng một lần**, lúc tạo và lúc rotate.
+1. **Rotate là hard cutover.** Ghi đè hash tại chỗ ⇒ mọi SDK client đang chạy bị văng ra ngay khi call trả về, cho tới khi từng client được deploy lại với key mới. Vì vậy team ngại rotate — ngược hẳn với mục đích của việc rotate key.
+2. **Một key bị lộ thì phải thu hồi cả cụm.** Một key phục vụ mọi consumer, nên revoke key mà app mobile làm lộ cũng giết luôn batch job và backend đang dùng chung key đó.
+3. **Key không bao giờ hết hạn.** Key cấp cho một đối tác tích hợp 2 tuần thì cứ sống mãi, hệ thống không có khái niệm "key này chỉ tạm thời".
+
+Nên bây giờ key được tách thành entity riêng — bảng `environment_api_key` (migration `019`/`020`, thay cho cột `environments.api_key_hash` đã bị xoá) — để **một environment giữ được nhiều key cùng lúc**, mỗi key có vòng đời (hết hạn, thu hồi) riêng. "Một key = một môi trường" **không còn đúng nữa**: đúng phải là *nhiều key cùng xác thực cho một môi trường*, mỗi key ứng với một consumer (mobile app, batch job, backend...).
+
+Vấn đề DB bị lộ vẫn được giữ nguyên cách xử lý cũ: key **không lưu plaintext** — chỉ lưu SHA-256 hash, y hệt cách xử lý password. Plaintext chỉ hiện **đúng một lần**, lúc tạo (`POST .../api-keys`) hoặc lúc rotate.
 
 ### Cơ chế
 
-- `util/ApiKeyGenerator.java` — `SecureRandom` 32 byte → hex 64 ký tự (256 bit entropy)
-- `util/ApiKeyHasher.java` — SHA-256, lookup O(1) khi SDK gọi
-- `EnvironmentServiceImpl.java` — `create()` và `rotateApiKey()` trả `EnvironmentSecretResponse` (bản duy nhất có field `apiKey`); `get()`/`list()` trả `EnvironmentResponse` **không có key**
-- Rotate phát `ApiKeyRotatedEvent` → Slack, và ghi audit **chỉ sự kiện, không ghi key** (`before`/`after` cố tình để `null`)
+- `util/ApiKeyGenerator.java` — không đổi: `SecureRandom` 32 byte → hex 64 ký tự (256 bit entropy)
+- `util/ApiKeyHasher.java` — không đổi: SHA-256, lookup O(1) khi SDK gọi
+- `util/EnvironmentApiKeyFactory.mint(...)` — điểm khởi tạo **duy nhất** cho một key: sinh plaintext, hash nó, và cắt 8 ký tự đầu làm `key_prefix` (lưu kèm hash để phân biệt các key khi plaintext đã mất). Ba nơi gọi tới: tạo environment (`EnvironmentServiceImpl.create()`), clone environment (`EnvironmentTransferServiceImpl.clone()` — clone **luôn** mint key riêng, không copy key của nguồn), và API tạo key mới.
+- Một key **active** khi và chỉ khi `revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now)` — đúng một chỗ định nghĩa (`EnvironmentApiKey.isActive(Clock)`), dùng cho cả xác thực SDK, đếm hạn mức, và endpoint rotate cũ có key duy nhất hay không.
+- Hạn mức: **tối đa 10 key active** mỗi environment (`EnvironmentApiKeyServiceImpl.MAX_ACTIVE_KEYS_PER_ENVIRONMENT`). Rotate **không** bị chặn bởi hạn mức này — trong lúc grace period, environment tạm thời có nhiều hơn 10 key active, việc đó là cố ý.
+- `EnvironmentApiKeyServiceImpl` — create/list/revoke/rotate; mỗi thao tác qua `PermissionService.check(...)` rồi ghi audit (`before`/`after` cố định `null` — ledger chỉ ghi *có sự kiện xảy ra*, không ghi key).
+- `ApiKeyAuthenticationFilter` — principal giờ là `EnvironmentApiKey` (không còn là `Environment` trực tiếp); lấy `Environment` qua `((EnvironmentApiKey) auth.getPrincipal()).getEnvironment()`. Ba lý do 401 tách biệt (xem bảng lỗi bên dưới) nhưng dùng chung 1 counter, để không biến metric thành "oracle" tiết lộ key nào tồn tại.
+- Endpoint environment-level cũ (`POST /environments/{id}/api-key/rotate`) **vẫn còn** — dùng khi environment chỉ có đúng 1 key active; nếu 0 hoặc ≥2 key active thì trả **409**, chỉ tên endpoint mới thay vì tự đoán "cái key" là key nào.
+- Rotate mới (endpoint theo key, `POST .../api-keys/{keyId}/rotate`) nhận `graceHours` (mặc định `0`, tối đa `720` = 30 ngày): key mới mang cùng `name` với key cũ; key cũ được set `expires_at = now + graceHours` thay vì bị revoke ngay — **đây là trọng tâm của tính năng**, cho phép redeploy một fleet SDK dần dần mà không downtime. `graceHours=0` thì key cũ bị revoke ngay lập tức, giống hệt hành vi cutover cũ.
 
 ### Request
 
-**3.1 Tạo environment (→ 201 — COPY NGAY `apiKey`)**
+**3.1 Tạo environment (→ 201 — COPY NGAY `apiKey`, đây chính là key đầu tiên, tên `default`)**
 
 ```bash
 curl -s -X POST $BASE/api/v1/environments \
@@ -448,14 +459,67 @@ curl -s -X POST $BASE/api/v1/environments \
   -d "{\"projectId\": \"$PROJECT_ID\", \"name\": \"production\"}"
 ```
 
-**3.2 Xoay API key (→ 200, key cũ chết ngay lập tức)**
+**3.2 Tạo thêm key thứ 2 cho cùng environment (→ 201 — mỗi consumer một key)**
+
+```bash
+curl -s -X POST $BASE/api/v1/environments/$ENV_ID/api-keys \
+  -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d '{"name": "mobile-app", "expiresAt": "2026-12-31T00:00:00"}'
+```
+
+```json
+{
+  "key": {
+    "id": "1a2b...",
+    "environmentId": "8c7d...",
+    "name": "mobile-app",
+    "keyPrefix": "9f3a7c21",
+    "expiresAt": "2026-12-31T00:00:00",
+    "revokedAt": null,
+    "lastUsedAt": null,
+    "createdBy": "...",
+    "createdAt": "2026-09-05T10:00:00",
+    "active": true
+  },
+  "apiKey": "9f3a7c21...64 ký tự hex   ← chỉ hiện lần này"
+}
+```
+
+`name` **không cần unique** — trong lúc grace period, key cũ và key mới của cùng một lần rotate cùng mang một tên; phân biệt bằng `keyPrefix` + `createdAt`. `expiresAt` là tuỳ chọn (phải ở tương lai); bỏ trống nghĩa là không bao giờ hết hạn.
+
+**3.3 Danh sách key của environment (→ 200, phân trang, KHÔNG có plaintext lẫn hash)**
+
+```bash
+curl -s "$BASE/api/v1/environments/$ENV_ID/api-keys?page=0&size=20" -H "Authorization: Bearer $ACCESS"
+```
+
+**3.4 Thu hồi (revoke) một key riêng lẻ (→ 204, soft — chỉ set `revokedAt`, không xoá row)**
+
+```bash
+curl -i -X DELETE "$BASE/api/v1/environments/$ENV_ID/api-keys/$KEY_ID" \
+  -H "Authorization: Bearer $ACCESS"
+```
+
+Chỉ key này chết; các key khác của cùng environment **không bị ảnh hưởng** — đây là điểm khác biệt lớn nhất so với model một-key-một-môi-trường cũ.
+
+**3.5 Rotate một key cụ thể, có grace period (→ 200 + `apiKey` mới)**
+
+```bash
+curl -s -X POST "$BASE/api/v1/environments/$ENV_ID/api-keys/$KEY_ID/rotate" \
+  -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d '{"graceHours": 24}'
+```
+
+Trong 24 giờ tiếp theo, **cả key cũ lẫn key mới đều xác thực được** — đủ thời gian để redeploy fleet SDK. Muốn cutover ngay như trước thì gọi với `{"graceHours": 0}` hoặc bỏ field (mặc định là `0`).
+
+**3.6 Rotate kiểu cũ — chỉ dùng được khi environment có đúng 1 key active (→ 200, hoặc 409)**
 
 ```bash
 curl -s -X POST $BASE/api/v1/environments/$ENV_ID/api-key/rotate \
   -H "Authorization: Bearer $ACCESS"
 ```
 
-**3.3 Các endpoint còn lại**
+**3.7 Các endpoint còn lại**
 
 ```bash
 curl -s "$BASE/api/v1/environments?projectId=$PROJECT_ID" -H "Authorization: Bearer $ACCESS"
@@ -470,10 +534,22 @@ curl -i -X DELETE "$BASE/api/v1/environments/$ENV_ID"     -H "Authorization: Bea
 
 | Test | Cách làm | Kết quả đúng |
 |---|---|---|
-| **Key không lấy lại được** | `GET /environments/$ENV_ID` | response **không có** field `apiKey` |
-| **Rotate làm chết key cũ** | Rotate xong gọi SDK bằng key cũ | 401 `"Invalid API key"` |
+| **Key không lấy lại được** | `GET /environments/$ENV_ID` hoặc `GET .../api-keys` | response **không có** field `apiKey` (list còn không có cả `keyHash`) |
+| **Revoke làm chết đúng 1 key** | Revoke key A xong gọi SDK bằng key A | 401 `"API key has been revoked"` |
+| **Revoke không ảnh hưởng key khác** | Sau khi revoke key A, gọi SDK bằng key B (cùng environment) | vẫn 200 |
+| **Key hết hạn** | Gọi SDK bằng key có `expiresAt` đã qua | 401 `"API key has expired"` (biên đóng: đúng thời điểm `expiresAt` cũng tính là hết hạn) |
+| **Key không tồn tại** | Gọi SDK bằng key ngẫu nhiên | 401 `"Invalid API key"` (không lộ thông tin key nào có thật) |
+| **Rotate làm chết key cũ ngay (graceHours=0)** | Rotate xong (không truyền `graceHours`), gọi SDK bằng key cũ | 401 `"API key has been revoked"` |
+| **Rotate với grace period** | Rotate `graceHours=24`, gọi SDK bằng cả key cũ lẫn key mới | cả hai đều 200 cho tới khi hết 24h |
+| Vượt hạn mức 10 key active | Tạo key thứ 11 khi 10 key kia còn active | 409 `"Environment has reached the maximum of 10 active API keys"` |
+| Revoke key đã revoke | Gọi DELETE 2 lần cùng 1 key | lần 2 → 409 `"API key is already revoked"` |
+| Key thuộc environment khác | Gọi `DELETE .../environments/{envA}/api-keys/{keyOfEnvB}` | 404 (không lộ là key có tồn tại ở nơi khác) |
+| Rotate kiểu cũ khi có 0 hoặc ≥2 key active | Gọi `POST .../api-key/rotate` lúc environment có 2 key | 409, message chỉ sang endpoint theo key |
 | Trùng tên env | tạo lại `development` trong cùng project | 409 |
 | ADMIN xoá environment | dùng token role ADMIN gọi DELETE | 403 (chỉ OWNER được xoá) |
+| ADMIN tạo/revoke key trên PRODUCTION | dùng token role ADMIN gọi `POST`/`DELETE .../api-keys` trên env `PRODUCTION` | 403 — cần OWNER (`ENV_KEY_CREATE_PRODUCTION`/`ENV_KEY_REVOKE_PRODUCTION`) |
+| OWNER revoke key PRODUCTION ngoài change window | đặt window `9–17`, gọi `DELETE` lúc 3h sáng | **vẫn 200/204** — revoke chỉ *giảm* quyền truy cập nên được miễn luật change window (xem Luồng 2, mục change window) |
+| OWNER rotate key PRODUCTION ngoài change window | đặt window `9–17`, gọi rotate lúc 3h sáng | 403 — rotate **không** được miễn, vẫn phải trong window |
 
 ---
 
@@ -605,7 +681,7 @@ curl -s "$BASE/api/v1/flags/$FLAG_ID"                       -H "Authorization: B
 
 Ứng dụng khách cần biết *bây giờ flag nào đang bật cho tôi*, với ràng buộc: gọi rất nhiều lần, phải nhanh, và **không được thấy dữ liệu của môi trường khác**.
 
-Giải pháp: một security chain riêng biệt. API key không chỉ để xác thực — nó **chính là** cách hệ thống biết đang phục vụ môi trường nào. Controller không cần truy vấn thêm gì, `Environment` đã nằm sẵn trong security principal.
+Giải pháp: một security chain riêng biệt. API key không chỉ để xác thực — nó **chính là** cách hệ thống biết đang phục vụ môi trường nào. Controller không cần truy vấn thêm gì: principal là `EnvironmentApiKey` (Luồng 3 — một trong nhiều key của environment), và `Environment` lấy ra qua `getEnvironment()` trên chính principal đó, không cần query DB thêm lần nữa.
 
 Vấn đề thứ hai — **percentage rollout**: muốn mở tính năng cho 10% người dùng để quan sát trước khi mở toàn bộ. Nhưng phải là *cùng 10% người đó* ở mọi lần gọi, nếu không user sẽ thấy giao diện nhấp nháy giữa cũ và mới. Giải pháp là hash tất định thay vì random: `MurmurHash3(identifier + ":" + flagKey) % 100 < rolloutPercent`. Không lưu state, không cần DB, cùng input luôn ra cùng kết quả (`util/RolloutEvaluator.java:13`).
 
@@ -613,7 +689,7 @@ Hash có kèm `flagKey` là cố ý: nếu chỉ hash `identifier`, cùng một 
 
 ### Cơ chế
 
-- `security/ApiKeyAuthenticationFilter.java` — đọc `X-Environment-Key` → hash → tra `Environment` → set principal; đồng thời cập nhật `last_used_at` (chặn ghi DB mỗi request, chỉ ghi 5 phút/lần)
+- `security/ApiKeyAuthenticationFilter.java` — đọc `X-Environment-Key` → hash → tra `EnvironmentApiKey` (revoked/expired thì 401 riêng biệt, xem Luồng 3) → set principal; đồng thời cập nhật `last_used_at` **của chính key đó** (chặn ghi DB mỗi request, chỉ ghi 5 phút/lần)
 - `EvaluationServiceImpl.java` — load state active của env, lọc flag archived, chạy rollout
 - **`enabled=false` ⇒ `value` trả về `null`** — client không đọc nhầm giá trị của tính năng đang tắt
 - Rate limit riêng: 300 req/phút **theo environment** (không theo IP, vì một server backend có thể gọi rất nhiều từ một IP)
@@ -881,7 +957,7 @@ Kết quả mong đợi ở bước cuối: `refresh lan 1: 200`, `refresh lan 2
 
 ## Bảng tra endpoint nhanh
 
-Cột **Quyền** ghi `Action` mà PDP kiểm tra (`PermissionService.check`), kèm role dựng sẵn tối thiểu có action đó. Chỗ đánh `†` là action nằm trong `PRODUCTION_ELEVATED`: nếu môi trường đích là `PRODUCTION` thì yêu cầu nhảy lên **OWNER** và phải nằm trong change window. Chỗ đánh `‡` vẫn đi qua adapter `requireRole*` cũ nên **không** chịu hai luật đó.
+Cột **Quyền** ghi `Action` mà PDP kiểm tra (`PermissionService.check`), kèm role dựng sẵn tối thiểu có action đó. Chỗ đánh `†` là action nằm trong `PRODUCTION_ELEVATED`: nếu môi trường đích là `PRODUCTION` thì yêu cầu nhảy lên **OWNER** và phải nằm trong change window. Chỗ đánh `‡` vẫn đi qua adapter `requireRole*` cũ nên **không** chịu hai luật đó. Chỗ đánh `§` là ngoại lệ **duy nhất** của luật change window: vẫn cần OWNER trên PRODUCTION (`†`), nhưng được miễn khung giờ — xem `PermissionService.WINDOW_EXEMPT` và mục change window ở Luồng 2.
 
 | Method | Endpoint | Auth | Quyền | Status |
 |---|---|---|---|---|
@@ -912,7 +988,11 @@ Cột **Quyền** ghi `Action` mà PDP kiểm tra (`PermissionService.check`), k
 | GET | `/api/v1/environments/{envId}` | JWT | `ENV_READ` — VIEWER | 200 |
 | PUT | `/api/v1/environments/{envId}` | JWT | `ENV_UPDATE` — ADMIN; đổi `type`/change window cần `ENV_MANAGE_PROTECTION` — OWNER | 200 |
 | DELETE | `/api/v1/environments/{envId}` | JWT | `ENV_DELETE` — OWNER † | 204 |
-| POST | `/api/v1/environments/{envId}/api-key/rotate` | JWT | `ENV_ROTATE_KEY` — ADMIN † | 200 + `apiKey` |
+| POST | `/api/v1/environments/{envId}/api-key/rotate` | JWT | `ENV_ROTATE_KEY` — ADMIN † | 200 + `apiKey`, hoặc **409** nếu env có 0 hoặc ≥2 key active |
+| POST | `/api/v1/environments/{envId}/api-keys` | JWT | `ENV_KEY_CREATE` — ADMIN † | 201 + `apiKey` (chỉ hiện lần này) |
+| GET | `/api/v1/environments/{envId}/api-keys` | JWT | `ENV_READ` — VIEWER | 200, phân trang, không có `apiKey`/hash |
+| DELETE | `/api/v1/environments/{envId}/api-keys/{keyId}` | JWT | `ENV_KEY_REVOKE` — ADMIN † § | 204 (soft — set `revokedAt`) |
+| POST | `/api/v1/environments/{envId}/api-keys/{keyId}/rotate` | JWT | `ENV_ROTATE_KEY` — ADMIN † | 200 + `apiKey` mới; `graceHours` giữ key cũ sống thêm |
 | POST | `/api/v1/environments/{envId}/clone` | JWT | ADMIN ‡ | 201 + `apiKey` |
 | GET | `/api/v1/environments/{envId}/export` | JWT | ADMIN ‡ | 200 |
 | POST | `/api/v1/environments/{envId}/import` | JWT | `FLAG_CREATE` + `FLAG_STATE_UPDATE` — ADMIN † | 200 |

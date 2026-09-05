@@ -189,3 +189,65 @@ reason to finish migrating the remaining ones.
   archive); strictest-wins was chosen because a change window is a change-management control and
   silently ignoring it for the one action that can hide a flag from production would repeat the
   mistake this amendment fixes.
+
+---
+
+## Amendment (2026-09-05) — multiple API keys per environment: the first exception to rule D
+
+**Context.** `environments.api_key_hash` (`NOT NULL UNIQUE`) gave every environment exactly one
+SDK key, so rotation was a hard cutover, a leaked key could only be withdrawn by killing every
+other consumer sharing it, and keys never expired. The `feature/api-key-lifecycle` branch moves
+the key to its own entity (`environment_api_key`, migrations `019`/`020`) so an environment can
+hold several concurrently-valid keys, each with its own optional expiry and its own soft
+revocation (`revoked_at`). This is additive to the model this ADR describes, with one deliberate
+exception to it.
+
+**Change.**
+
+- Two new action pairs join `PRODUCTION_ELEVATED`: `ENV_KEY_CREATE` → `ENV_KEY_CREATE_PRODUCTION`
+  and `ENV_KEY_REVOKE` → `ENV_KEY_REVOKE_PRODUCTION`, OWNER-only by default like every other row in
+  that table, for the same reason decision `0035` established for `FLAG_ARCHIVE`: minting a
+  production credential and withdrawing one each change what production SDKs can do, so leaving
+  either unguarded reopens the exact hole this ADR's first amendment closed.
+- `PermissionService` gains `WINDOW_EXEMPT`, a `Set<Action>` currently holding exactly
+  `ENV_KEY_REVOKE_PRODUCTION`. `check()` still requires the elevated action for anything in it
+  (rule B is untouched), but skips rule D — the change-window check — for it alone.
+
+**Why this one action, and no other.** Every other entry in `PRODUCTION_ELEVATED` — including the
+new `ENV_KEY_CREATE_PRODUCTION` and, notably, `ENV_ROTATE_KEY_PRODUCTION`, which issues a *new*
+production credential and was explicitly considered and rejected for this list — *expands or
+changes* what a production SDK can do, which is exactly what a change window exists to confine to
+a reviewed slot. Revoking a key is the opposite shape of operation: it is **monotonically
+restrictive**, capable only of shrinking what a caller can do, never growing it. There is no
+attack the window prevents by delaying a revocation, and a concrete cost to delaying one anyway: a
+key leaked at 03:00 must be withdrawable at 03:00, and the fix a strict reading would offer —
+widen or clear the window first — is itself gated behind the OWNER-only `ENV_MANAGE_PROTECTION`,
+which would leave **no** break-glass path for revocation outside configured hours at all.
+Rotation was kept out of `WINDOW_EXEMPT` for the mirror-image reason: it is a planned change that
+issues a new credential, not a withdrawal, so it stays fully windowed. Decomposing rotation into
+`ENV_KEY_CREATE` + `ENV_KEY_REVOKE` so it could ride the revoke exemption was rejected for the
+same reason — it would smuggle a credential-issuing operation under break-glass reasoning that
+does not apply to it, and would open a second door to the same operation under a different action
+name.
+
+**This is the first exception to rule D**, and the bar for a second one is the same property this
+one has — the action must be *incapable* of increasing what a production SDK can do — not that it
+is merely urgent or inconvenient to delay. It is pinned by
+`PermissionServiceTest.ownerCanRevokeAProductionKeyOutsideTheChangeWindow`; two companion tests,
+`ownerBlockedFromRotatingProductionKeyOutsideChangeWindow` and
+`theWindowExemptionDoesNotLeakToKeyCreation`, assert the boundary does not drift to the two
+neighbouring actions. See `docs/ABAC.md` §4 for the full write-up and `CLAUDE.md`'s
+permission-model section for the short version.
+
+**Consequences.**
+
+- One narrow, intentional asymmetry in an otherwise uniform rule: `ENV_KEY_REVOKE_PRODUCTION` is
+  the only elevated action that can be exercised on a production environment at any hour. Every
+  other elevated action, including the sibling `ENV_KEY_CREATE_PRODUCTION`, is unaffected.
+- No change to rule B, the grant/custom-role ceiling, or any existing call site's authorization —
+  `EnvironmentApiKeyServiceImpl` is new code, written directly against `check()` from the start,
+  so it adds no new `requireRole*` adapter usage.
+- Additive schema only: migrations `019` (create `environment_api_key`) and `020` (backfill from
+  `environments.api_key_hash`, then drop that column and `environments.last_used_at`). The
+  backfill copies the existing hash rather than recomputing it, so every key already deployed
+  keeps authenticating across the migration — proven by `ApiKeyBackfillTest`.
