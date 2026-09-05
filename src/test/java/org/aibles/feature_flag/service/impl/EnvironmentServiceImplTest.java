@@ -237,6 +237,53 @@ class EnvironmentServiceImplTest {
   }
 
   @Test
+  void legacyRotateChecksEnvRotateKeyBeforeRevealingAnything() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    doThrow(new org.aibles.feature_flag.exception.UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ENV_ROTATE_KEY), any());
+
+    assertThatThrownBy(() -> service.rotateApiKey(envId))
+        .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class);
+
+    // Asserting only the exception type would pass against code that queried first and threw
+    // afterwards — the actual bug. An unauthorized caller must not learn whether this
+    // environment has any active keys at all.
+    verify(apiKeyRepository, never()).findActiveByEnvironmentId(any(), any());
+  }
+
+  @Test
+  void legacyRotateChecksEnvRotateKeyBeforeRevealingTheActiveKeyCount() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    EnvironmentApiKey keyA =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(env)
+            .name("a")
+            .keyHash(ApiKeyHasher.hash("a"))
+            .build();
+    EnvironmentApiKey keyB =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(env)
+            .name("b")
+            .keyHash(ApiKeyHasher.hash("b"))
+            .build();
+    when(apiKeyRepository.findActiveByEnvironmentId(eq(envId), any()))
+        .thenReturn(List.of(keyA, keyB));
+    doThrow(new org.aibles.feature_flag.exception.UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ENV_ROTATE_KEY), any());
+
+    // Even though the environment actually has several active keys, an unauthorized caller must
+    // get 403, never the 409 that would disclose the count.
+    assertThatThrownBy(() -> service.rotateApiKey(envId))
+        .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class)
+        .isNotInstanceOf(DuplicateResourceException.class);
+    verify(apiKeyRepository, never()).findActiveByEnvironmentId(any(), any());
+  }
+
+  @Test
   void update_changesNameAndDescription() {
     when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
     when(environmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -350,10 +397,14 @@ class EnvironmentServiceImplTest {
 
     service.rotateApiKey(envId);
 
+    // Checked twice by design: once in the legacy endpoint before it reveals the active-key
+    // count, again inside apiKeyService.rotate() on the happy path. Both must carry the
+    // environment, not just the project.
     ArgumentCaptor<PermissionService.ResourceRef> captor =
         ArgumentCaptor.forClass(PermissionService.ResourceRef.class);
-    verify(permissionService).check(eq(Action.ENV_ROTATE_KEY), captor.capture());
-    assertThat(captor.getValue().environment()).isSameAs(prod);
+    verify(permissionService, times(2)).check(eq(Action.ENV_ROTATE_KEY), captor.capture());
+    assertThat(captor.getAllValues())
+        .allSatisfy(ref -> assertThat(ref.environment()).isSameAs(prod));
   }
 
   @Test

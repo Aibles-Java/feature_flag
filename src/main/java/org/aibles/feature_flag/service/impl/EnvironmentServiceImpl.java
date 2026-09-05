@@ -157,6 +157,12 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   @Transactional
   public EnvironmentSecretResponse rotateApiKey(UUID id) {
     Environment env = findById(id);
+    // Authorize before resolving or revealing anything below: an unauthorized caller must not
+    // learn how many active keys this environment holds (or that it has any at all) from the
+    // 409 message that follows.
+    permissionService.check(
+        Action.ENV_ROTATE_KEY,
+        PermissionService.ResourceRef.environment(env.getProject().getId(), env));
     List<EnvironmentApiKey> active =
         apiKeyRepository.findActiveByEnvironmentId(id, LocalDateTime.now(clock));
     // "The" key is only meaningful while there is exactly one. With several, the caller has
@@ -167,6 +173,10 @@ public class EnvironmentServiceImpl implements EnvironmentService {
               + active.size()
               + " active API keys; use POST /api/v1/environments/{envId}/api-keys/{keyId}/rotate");
     }
+    // apiKeyService.rotate() re-checks ENV_ROTATE_KEY below — intentional duplication, not an
+    // oversight: it is a pure predicate re-run on an already-loaded environment, and removing
+    // either check would leave a path whose safety depends on the other method never being
+    // called directly.
     ApiKeySecretResponse rotated =
         apiKeyService.rotate(id, active.get(0).getId(), new RotateApiKeyRequest());
     return toSecretResponse(env, rotated.getApiKey());
