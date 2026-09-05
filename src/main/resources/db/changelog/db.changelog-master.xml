@@ -23,5 +23,6 @@
     <include file="db/changelog/migrations/017-permission-grant-custom-role.xml"/>
     <include file="db/changelog/migrations/018-add-environment-change-window.xml"/>
     <include file="db/changelog/migrations/019-create-environment-api-keys.xml"/>
+    <include file="db/changelog/migrations/020-migrate-api-keys-to-key-table.xml"/>
 
 </databaseChangeLog>

@@ -53,11 +53,7 @@ class EnvironmentApiKeyRepositoryTest {
         projectRepository.save(Project.builder().organization(org).name("Web").build());
     environment =
         environmentRepository.save(
-            Environment.builder()
-                .project(project)
-                .name("prod-" + System.nanoTime())
-                .apiKeyHash("legacy-key-" + System.nanoTime())
-                .build());
+            Environment.builder().project(project).name("prod-" + System.nanoTime()).build());
   }
 
   private EnvironmentApiKey save(

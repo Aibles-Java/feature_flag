@@ -7,10 +7,14 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.Action;
@@ -25,6 +29,7 @@ import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.util.ApiKeyHasher;
@@ -45,7 +50,10 @@ import org.springframework.data.domain.PageRequest;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class EnvironmentServiceImplTest {
 
+  private static final LocalDateTime NOW = LocalDateTime.of(2026, 9, 5, 12, 0);
+
   @Mock EnvironmentRepository environmentRepository;
+  @Mock EnvironmentApiKeyRepository apiKeyRepository;
   @Mock ProjectRepository projectRepository;
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
@@ -60,22 +68,20 @@ class EnvironmentServiceImplTest {
 
   @BeforeEach
   void setUp() {
+    Clock clock =
+        Clock.fixed(NOW.atZone(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
     service =
         new EnvironmentServiceImpl(
             environmentRepository,
+            apiKeyRepository,
             projectRepository,
             permissionService,
             eventPublisher,
-            auditService);
+            auditService,
+            clock);
     Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
-    env =
-        Environment.builder()
-            .id(envId)
-            .project(project)
-            .name("prod")
-            .apiKeyHash(ApiKeyHasher.hash("old-key"))
-            .build();
+    env = Environment.builder().id(envId).project(project).name("prod").build();
     doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
     doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
   }
@@ -106,9 +112,9 @@ class EnvironmentServiceImplTest {
 
     assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
 
-    ArgumentCaptor<Environment> saved = ArgumentCaptor.forClass(Environment.class);
-    verify(environmentRepository).save(saved.capture());
-    assertThat(saved.getValue().getApiKeyHash())
+    ArgumentCaptor<EnvironmentApiKey> saved = ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository).save(saved.capture());
+    assertThat(saved.getValue().getKeyHash())
         .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
         .isNotEqualTo(response.getApiKey());
   }
@@ -126,16 +132,29 @@ class EnvironmentServiceImplTest {
   }
 
   @Test
-  void rotate_replacesHashAndReturnsNewPlaintextOnce() {
+  void rotate_revokesActiveKeysAndReturnsNewPlaintextOnce() {
     when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
-    when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
+    EnvironmentApiKey oldKey =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(env)
+            .name("default")
+            .keyHash(ApiKeyHasher.hash("old-key"))
+            .build();
+    when(apiKeyRepository.findActiveByEnvironmentId(eq(envId), any())).thenReturn(List.of(oldKey));
 
     when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
 
     EnvironmentSecretResponse response = service.rotateApiKey(envId);
 
     assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
-    assertThat(env.getApiKeyHash())
+    // The old key is now revoked, so it can no longer authenticate.
+    assertThat(oldKey.getRevokedAt()).isNotNull();
+
+    ArgumentCaptor<EnvironmentApiKey> newKeyCaptor =
+        ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository).save(newKeyCaptor.capture());
+    assertThat(newKeyCaptor.getValue().getKeyHash())
         .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
         .isNotEqualTo(ApiKeyHasher.hash("old-key"));
 
@@ -202,7 +221,6 @@ class EnvironmentServiceImplTest {
             .project(project)
             .name("prod")
             .type(EnvType.PRODUCTION)
-            .apiKeyHash(ApiKeyHasher.hash("old-key"))
             .build();
     when(environmentRepository.findById(envId)).thenReturn(Optional.of(prod));
     return prod;

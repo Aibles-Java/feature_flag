@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
@@ -35,6 +36,7 @@ import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.InvalidRequestException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
@@ -53,6 +55,7 @@ import org.mockito.quality.Strictness;
 class EnvironmentTransferServiceImplTest {
 
   @Mock EnvironmentRepository environmentRepository;
+  @Mock EnvironmentApiKeyRepository apiKeyRepository;
   @Mock FeatureFlagRepository featureFlagRepository;
   @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock PermissionService permissionService;
@@ -83,6 +86,7 @@ class EnvironmentTransferServiceImplTest {
     service =
         new EnvironmentTransferServiceImpl(
             environmentRepository,
+            apiKeyRepository,
             featureFlagRepository,
             flagStateRepository,
             permissionService,
@@ -90,20 +94,8 @@ class EnvironmentTransferServiceImplTest {
 
     Organization org = Organization.builder().id(orgId).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
-    sourceEnv =
-        Environment.builder()
-            .id(sourceEnvId)
-            .project(project)
-            .name("production")
-            .apiKeyHash(ApiKeyHasher.hash("source-key"))
-            .build();
-    targetEnv =
-        Environment.builder()
-            .id(targetEnvId)
-            .project(project)
-            .name("staging")
-            .apiKeyHash(ApiKeyHasher.hash("target-key"))
-            .build();
+    sourceEnv = Environment.builder().id(sourceEnvId).project(project).name("production").build();
+    targetEnv = Environment.builder().id(targetEnvId).project(project).name("staging").build();
 
     boolFlag = flag("checkout-v2", "Checkout v2", FlagValueType.BOOLEAN, false);
     stringFlag = flag("banner-text", "Banner text", FlagValueType.STRING, false);
@@ -155,9 +147,15 @@ class EnvironmentTransferServiceImplTest {
     ArgumentCaptor<Environment> envCaptor = ArgumentCaptor.forClass(Environment.class);
     verify(environmentRepository).save(envCaptor.capture());
     Environment created = envCaptor.getValue();
-    // Fresh key: hashed, never copied from the source, and never returned in hashed form.
-    assertThat(created.getApiKeyHash()).isEqualTo(ApiKeyHasher.hash(response.getApiKey()));
-    assertThat(created.getApiKeyHash()).isNotEqualTo(sourceEnv.getApiKeyHash());
+
+    ArgumentCaptor<EnvironmentApiKey> keyCaptor = ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository).save(keyCaptor.capture());
+    EnvironmentApiKey mintedKey = keyCaptor.getValue();
+    // Fresh key: hashed, minted for the clone itself (never the source), never returned in hashed
+    // form. verify(environmentRepository, never()) on the source would be redundant — the source
+    // is only ever read, never saved, in this method.
+    assertThat(mintedKey.getEnvironment()).isSameAs(created);
+    assertThat(mintedKey.getKeyHash()).isEqualTo(ApiKeyHasher.hash(response.getApiKey()));
 
     ArgumentCaptor<FlagEnvironmentState> stateCaptor =
         ArgumentCaptor.forClass(FlagEnvironmentState.class);
