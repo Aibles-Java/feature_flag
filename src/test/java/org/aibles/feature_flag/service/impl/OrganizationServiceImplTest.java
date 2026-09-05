@@ -18,6 +18,7 @@ import org.aibles.feature_flag.domain.enums.ScopeType;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
 import org.aibles.feature_flag.dto.request.InviteMemberRequest;
 import org.aibles.feature_flag.dto.request.UpdateOrganizationRequest;
+import org.aibles.feature_flag.dto.response.MemberResponse;
 import org.aibles.feature_flag.dto.response.OrganizationResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
@@ -136,6 +137,11 @@ class OrganizationServiceImplTest {
   @Test
   void inviteMember_throwsDuplicate_whenUserAlreadyMember() {
     UUID newUserId = UUID.randomUUID();
+    // The invitee is resolved before the duplicate check now, so this stub is required: a user
+    // who is already a member necessarily exists, and leaving it out only ever described a state
+    // the database cannot hold.
+    when(userRepository.findById(newUserId))
+        .thenReturn(Optional.of(User.builder().id(newUserId).email("dup@example.com").build()));
     when(memberRepository.existsByOrganizationIdAndUserId(orgId, newUserId)).thenReturn(true);
 
     InviteMemberRequest req = new InviteMemberRequest();
@@ -144,6 +150,60 @@ class OrganizationServiceImplTest {
 
     assertThatThrownBy(() -> service.inviteMember(orgId, req))
         .isInstanceOf(DuplicateResourceException.class);
+  }
+
+  @Test
+  void inviteMember_resolvesByEmail_whenNoUserIdGiven() {
+    UUID newUserId = UUID.randomUUID();
+    User invitee = User.builder().id(newUserId).email("new@example.com").build();
+    when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.of(invitee));
+    when(memberRepository.existsByOrganizationIdAndUserId(orgId, newUserId)).thenReturn(false);
+    when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org));
+    when(permissionService.effectiveActionsForOrg(any(), eq(orgId)))
+        .thenReturn(PermissionService.actionsForRole(MemberRole.OWNER));
+
+    InviteMemberRequest req = new InviteMemberRequest();
+    req.setEmail("new@example.com");
+    req.setRole(MemberRole.VIEWER);
+
+    MemberResponse response = service.inviteMember(orgId, req);
+
+    assertThat(response.getUserId()).isEqualTo(newUserId);
+    verify(userRepository).findByEmail("new@example.com");
+  }
+
+  @Test
+  void inviteMember_trimsEmailBeforeLookup() {
+    UUID newUserId = UUID.randomUUID();
+    User invitee = User.builder().id(newUserId).email("spaced@example.com").build();
+    when(userRepository.findByEmail("spaced@example.com")).thenReturn(Optional.of(invitee));
+    when(memberRepository.existsByOrganizationIdAndUserId(orgId, newUserId)).thenReturn(false);
+    when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org));
+    when(permissionService.effectiveActionsForOrg(any(), eq(orgId)))
+        .thenReturn(PermissionService.actionsForRole(MemberRole.OWNER));
+
+    InviteMemberRequest req = new InviteMemberRequest();
+    req.setEmail("  spaced@example.com  ");
+    req.setRole(MemberRole.VIEWER);
+
+    service.inviteMember(orgId, req);
+
+    verify(userRepository).findByEmail("spaced@example.com");
+  }
+
+  @Test
+  void inviteMember_throwsResourceNotFound_whenEmailIsNotRegistered() {
+    when(userRepository.findByEmail("ghost@example.com")).thenReturn(Optional.empty());
+
+    InviteMemberRequest req = new InviteMemberRequest();
+    req.setEmail("ghost@example.com");
+    req.setRole(MemberRole.VIEWER);
+
+    // The address is echoed back so a typo is distinguishable from an account that never
+    // registered; it tells the caller nothing they did not already supply.
+    assertThatThrownBy(() -> service.inviteMember(orgId, req))
+        .isInstanceOf(ResourceNotFoundException.class)
+        .hasMessageContaining("ghost@example.com");
   }
 
   @Test

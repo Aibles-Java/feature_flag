@@ -135,13 +135,12 @@ public class OrganizationServiceImpl implements OrganizationService {
       throw new UnauthorizedException(
           "You cannot invite a member with a role higher than your own");
     }
-    if (memberRepository.existsByOrganizationIdAndUserId(orgId, request.getUserId())) {
+    // Resolve before the duplicate check: with email the caller has no id to check against, and
+    // "already a member" is only meaningful once we know which account is meant.
+    User user = resolveInvitee(request);
+    if (memberRepository.existsByOrganizationIdAndUserId(orgId, user.getId())) {
       throw new DuplicateResourceException("User is already a member of this organisation");
     }
-    User user =
-        userRepository
-            .findById(request.getUserId())
-            .orElseThrow(() -> new ResourceNotFoundException("User", request.getUserId()));
     Organization org = findById(orgId);
 
     OrganizationMember member =
@@ -152,6 +151,27 @@ public class OrganizationServiceImpl implements OrganizationService {
     auditService.record(
         AuditEntityType.MEMBER, user.getId(), AuditAction.INVITE_MEMBER, orgId, null, response);
     return response;
+  }
+
+  /**
+   * Finds the account named by whichever identifier the request carried. Bean Validation has
+   * already guaranteed exactly one is present.
+   *
+   * <p>The not-found message repeats the email back rather than saying "no such user": the caller
+   * supplied the address, so echoing it confirms nothing they did not already know, and a bare "not
+   * found" leaves them unable to tell a typo from an account that never registered.
+   */
+  private User resolveInvitee(InviteMemberRequest request) {
+    if (request.getUserId() != null) {
+      return userRepository
+          .findById(request.getUserId())
+          .orElseThrow(() -> new ResourceNotFoundException("User", request.getUserId()));
+    }
+    String email = request.getEmail().trim();
+    return userRepository
+        .findByEmail(email)
+        .orElseThrow(
+            () -> new ResourceNotFoundException("No registered user with the email " + email));
   }
 
   @Override
