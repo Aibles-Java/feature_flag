@@ -347,6 +347,51 @@ class EnvironmentApiKeyServiceImplTest {
     when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
 
     assertThatThrownBy(() -> service.rotate(ENV_ID, KEY_ID, grace(24)))
-        .isInstanceOf(DuplicateResourceException.class);
+        .isInstanceOf(DuplicateResourceException.class)
+        .hasMessageContaining("revoked");
+  }
+
+  @Test
+  void rotatingAnExpiredButUnrevokedKeyIsRejectedWithoutExtendingItsExpiry() {
+    // An expired key is already dead per isActive(): !isRevoked() && !isExpired(clock). Grace
+    // must not resurrect it by pushing its past expiresAt into the future.
+    LocalDateTime pastExpiry = NOW.minusDays(1);
+    EnvironmentApiKey old = keyExpiringAt(pastExpiry);
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    assertThatThrownBy(() -> service.rotate(ENV_ID, KEY_ID, grace(24)))
+        .isInstanceOf(DuplicateResourceException.class)
+        .hasMessageContaining("expired");
+    assertThat(old.getExpiresAt()).isEqualTo(pastExpiry);
+    verify(apiKeyRepository, never()).save(any());
+  }
+
+  @Test
+  void rotateCarriesForwardTheOldKeysExpiresAtOntoTheFreshKey() {
+    // activeKey() alone leaves expiresAt null, which cannot distinguish "inherited correctly"
+    // from "hardcoded to null" — this pins the inheritance with a non-null deadline.
+    LocalDateTime futureExpiry = NOW.plusDays(30);
+    EnvironmentApiKey old = keyExpiringAt(futureExpiry);
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    service.rotate(ENV_ID, KEY_ID, grace(24));
+
+    ArgumentCaptor<EnvironmentApiKey> captor = ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository, times(2)).save(captor.capture());
+    assertThat(captor.getAllValues().get(0).getExpiresAt()).isEqualTo(futureExpiry);
+  }
+
+  @Test
+  void oldKeyBecomesInactiveOncePastTheGraceDeadline() {
+    EnvironmentApiKey old = activeKey();
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    service.rotate(ENV_ID, KEY_ID, grace(24));
+
+    // isExpired's boundary is closed: exactly at the deadline the key is already expired.
+    Clock atDeadline =
+        Clock.fixed(
+            NOW.plusHours(24).atZone(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+    assertThat(old.isActive(atDeadline)).isFalse();
   }
 }

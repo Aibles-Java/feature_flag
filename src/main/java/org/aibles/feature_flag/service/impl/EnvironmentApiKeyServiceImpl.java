@@ -114,6 +114,13 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
         null);
   }
 
+  /**
+   * Deliberately does not consult {@link #MAX_ACTIVE_KEYS_PER_ENVIRONMENT}: rotation replaces one
+   * key with another, so an environment already at the cap must still be able to rotate — it cannot
+   * free a slot without revoking the very key it is trying to rotate. During the grace window the
+   * environment transiently holds one more active key than the cap; that count returns to its prior
+   * value once the old key's grace period ends (or is revoked with graceHours=0).
+   */
   @Override
   @Transactional
   public ApiKeySecretResponse rotate(UUID environmentId, UUID keyId, RotateApiKeyRequest request) {
@@ -124,8 +131,15 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
         Action.ENV_ROTATE_KEY,
         PermissionService.ResourceRef.environment(env.getProject().getId(), env));
 
+    // isRevoked()/isExpired() checked separately, not old.isActive(clock) collapsed into one
+    // branch, so the 409 message tells an operator which of the two dead states they hit.
     if (old.isRevoked()) {
       throw new DuplicateResourceException("API key is already revoked");
+    }
+    if (old.isExpired(clock)) {
+      // Must reject before minting: falling through to the graceHours>0 branch below would
+      // push this key's already-past expiresAt into the future, resurrecting a dead credential.
+      throw new DuplicateResourceException("API key has already expired");
     }
 
     LocalDateTime now = LocalDateTime.now(clock);
