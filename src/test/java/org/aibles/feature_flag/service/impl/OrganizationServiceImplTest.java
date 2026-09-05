@@ -17,11 +17,13 @@ import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.domain.enums.ScopeType;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
+import org.aibles.feature_flag.dto.request.CreateProjectGrantRequest;
 import org.aibles.feature_flag.dto.request.InviteMemberRequest;
 import org.aibles.feature_flag.dto.request.UpdateOrganizationRequest;
 import org.aibles.feature_flag.dto.response.MemberResponse;
 import org.aibles.feature_flag.dto.response.OrganizationResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
+import org.aibles.feature_flag.exception.InvalidRequestException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.OrganizationMemberRepository;
@@ -29,6 +31,7 @@ import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.PermissionGrantRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.repository.UserRepository;
+import org.aibles.feature_flag.service.ProjectGrantService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -53,6 +56,7 @@ class OrganizationServiceImplTest {
   @Mock PermissionGrantRepository grantRepository;
   @Mock PermissionService permissionService;
   @Mock AuditService auditService;
+  @Mock ProjectGrantService projectGrantService;
 
   OrganizationServiceImpl service;
 
@@ -70,7 +74,8 @@ class OrganizationServiceImplTest {
             projectRepository,
             grantRepository,
             permissionService,
-            auditService);
+            auditService,
+            projectGrantService);
     org = Organization.builder().id(orgId).name("Acme").slug("acme").build();
     doNothing().when(permissionService).requireRole(any(), any(MemberRole[].class));
     // The invite ceiling reads the caller's effective actions — default the actor to OWNER.
@@ -192,6 +197,67 @@ class OrganizationServiceImplTest {
     service.inviteMember(orgId, req);
 
     verify(userRepository).findByEmail("spaced@example.com");
+  }
+
+  @Test
+  void inviteMember_confersProjectGrantsInTheSameCall() {
+    UUID newUserId = UUID.randomUUID();
+    UUID projectId = UUID.randomUUID();
+    UUID customRoleId = UUID.randomUUID();
+    User invitee = User.builder().id(newUserId).email("nam@example.com").build();
+    when(userRepository.findByEmail("nam@example.com")).thenReturn(Optional.of(invitee));
+    when(memberRepository.existsByOrganizationIdAndUserId(orgId, newUserId)).thenReturn(false);
+    when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org));
+    when(permissionService.effectiveActionsForOrg(any(), eq(orgId)))
+        .thenReturn(PermissionService.actionsForRole(MemberRole.OWNER));
+    when(projectRepository.findById(projectId))
+        .thenReturn(Optional.of(Project.builder().id(projectId).organization(org).build()));
+
+    InviteMemberRequest req = new InviteMemberRequest();
+    req.setEmail("nam@example.com");
+    req.setRole(MemberRole.MEMBER);
+    InviteMemberRequest.ProjectGrantSpec spec = new InviteMemberRequest.ProjectGrantSpec();
+    spec.setProjectId(projectId);
+    spec.setCustomRoleId(customRoleId);
+    req.setProjectGrants(List.of(spec));
+
+    service.inviteMember(orgId, req);
+
+    ArgumentCaptor<CreateProjectGrantRequest> captor =
+        ArgumentCaptor.forClass(CreateProjectGrantRequest.class);
+    verify(projectGrantService).upsertGrant(eq(projectId), captor.capture());
+    assertThat(captor.getValue().getUserId()).isEqualTo(newUserId);
+    assertThat(captor.getValue().getCustomRoleId()).isEqualTo(customRoleId);
+  }
+
+  @Test
+  void inviteMember_rejectsAGrantOnAProjectFromAnotherOrganisation() {
+    UUID newUserId = UUID.randomUUID();
+    UUID foreignProjectId = UUID.randomUUID();
+    User invitee = User.builder().id(newUserId).email("nam@example.com").build();
+    Organization otherOrg = Organization.builder().id(UUID.randomUUID()).build();
+    when(userRepository.findByEmail("nam@example.com")).thenReturn(Optional.of(invitee));
+    when(memberRepository.existsByOrganizationIdAndUserId(orgId, newUserId)).thenReturn(false);
+    when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org));
+    when(permissionService.effectiveActionsForOrg(any(), eq(orgId)))
+        .thenReturn(PermissionService.actionsForRole(MemberRole.OWNER));
+    when(projectRepository.findById(foreignProjectId))
+        .thenReturn(
+            Optional.of(Project.builder().id(foreignProjectId).organization(otherOrg).build()));
+
+    InviteMemberRequest req = new InviteMemberRequest();
+    req.setEmail("nam@example.com");
+    req.setRole(MemberRole.MEMBER);
+    InviteMemberRequest.ProjectGrantSpec spec = new InviteMemberRequest.ProjectGrantSpec();
+    spec.setProjectId(foreignProjectId);
+    spec.setRole(MemberRole.VIEWER);
+    req.setProjectGrants(List.of(spec));
+
+    // GRANT_MANAGE on the foreign project would authorise this on its own, so the organisation
+    // the invite is addressed to has to be checked against the project that owns it.
+    assertThatThrownBy(() -> service.inviteMember(orgId, req))
+        .isInstanceOf(InvalidRequestException.class);
+    verify(projectGrantService, never()).upsertGrant(any(), any());
   }
 
   @Test

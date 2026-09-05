@@ -13,11 +13,13 @@ import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.domain.enums.ScopeType;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
+import org.aibles.feature_flag.dto.request.CreateProjectGrantRequest;
 import org.aibles.feature_flag.dto.request.InviteMemberRequest;
 import org.aibles.feature_flag.dto.request.UpdateOrganizationRequest;
 import org.aibles.feature_flag.dto.response.MemberResponse;
 import org.aibles.feature_flag.dto.response.OrganizationResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
+import org.aibles.feature_flag.exception.InvalidRequestException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.OrganizationMemberRepository;
@@ -26,6 +28,7 @@ import org.aibles.feature_flag.repository.PermissionGrantRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.aibles.feature_flag.service.OrganizationService;
+import org.aibles.feature_flag.service.ProjectGrantService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -42,6 +45,7 @@ public class OrganizationServiceImpl implements OrganizationService {
   private final PermissionGrantRepository grantRepository;
   private final PermissionService permissionService;
   private final AuditService auditService;
+  private final ProjectGrantService projectGrantService;
 
   @Override
   @Transactional
@@ -146,7 +150,40 @@ public class OrganizationServiceImpl implements OrganizationService {
     MemberResponse response = toMemberResponse(member);
     auditService.record(
         AuditEntityType.MEMBER, user.getId(), AuditAction.INVITE_MEMBER, orgId, null, response);
+
+    applyProjectGrants(orgId, user.getId(), request.getProjectGrants());
     return response;
+  }
+
+  /**
+   * Confers the requested project access as part of the same transaction as the membership.
+   *
+   * <p>Delegates to {@link ProjectGrantService#upsertGrant} rather than writing grant rows here, so
+   * every rule that guards a grant still applies: GRANT_MANAGE on that specific project, the custom
+   * role having to belong to the same organisation, and the caller being unable to confer beyond
+   * what they hold. Sharing the caller's transaction is what makes the whole invite all-or-nothing
+   * — a refusal on the third project unwinds the membership too.
+   */
+  private void applyProjectGrants(
+      UUID orgId, UUID userId, List<InviteMemberRequest.ProjectGrantSpec> specs) {
+    for (InviteMemberRequest.ProjectGrantSpec spec : specs) {
+      Project project =
+          projectRepository
+              .findById(spec.getProjectId())
+              .orElseThrow(() -> new ResourceNotFoundException("Project", spec.getProjectId()));
+      // A grant on someone else's project would be authorised by GRANT_MANAGE there and quietly
+      // succeed, so the organisation the invite is addressed to has to be the one that owns it.
+      if (!project.getOrganization().getId().equals(orgId)) {
+        throw new InvalidRequestException(
+            "Project " + spec.getProjectId() + " does not belong to this organisation");
+      }
+
+      CreateProjectGrantRequest grant = new CreateProjectGrantRequest();
+      grant.setUserId(userId);
+      grant.setRole(spec.getRole());
+      grant.setCustomRoleId(spec.getCustomRoleId());
+      projectGrantService.upsertGrant(spec.getProjectId(), grant);
+    }
   }
 
   /**
