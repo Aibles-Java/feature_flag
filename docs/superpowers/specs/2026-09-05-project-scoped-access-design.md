@@ -60,9 +60,16 @@ switcher renders an organisation the user is provably a member of and then
 fails to open it. Both actions exist as of the step-2 commit that replaced the
 bare `isMember` checks; `MEMBER` keeps them and nothing else.
 
-`VIEWER` is retired: with project actions gone from the org axis it would name
-an empty set, which `MEMBER` already does under a name that does not promise
-read access it no longer grants.
+`VIEWER` was to be retired. **Implementation changed that.** Adding `MEMBER`
+beside `VIEWER` rather than in place of it makes the whole model change
+additive: nobody's access moves, no migration runs, and the case this design
+exists for — scope someone to one project — is answered the moment `MEMBER`
+exists.
+
+Retiring `VIEWER` is what makes *scoped access the default* rather than an
+option, and that is the part needing the migration in the next section. It is
+now a separate decision, deferred until there is real usage to judge it by.
+Steps 3 and 4 below are therefore no longer a package.
 
 **OWNER keeps implicit reach on purpose.** Without it an OWNER can create a
 project and then be unable to enter it, with nobody able to grant them in —
@@ -186,8 +193,8 @@ Each step lands on its own and leaves the system consistent.
 |---|---|---|
 | 1 | Route the 10 adapter call sites through the PDP | An open hole today: 7 webhook operations, `clone`, `export` and the hygiene report reach production environments with no elevation, no change window, and unreachable by custom roles. Independent of this design. |
 | 2 | Add `ORG_READ` / `MEMBER_READ`, drop the bare `isMember` checks | Small; finishes the action vocabulary this design assumes |
-| 3 | `MEMBER` role + grant-filtered project listing | The model change |
-| 4 | Migration `019` | Must follow 3 and ship with it |
+| 3 | `MEMBER` role + grant-filtered project listing | The model change. Additive: `VIEWER` stays, nothing migrates |
+| 4 | Retire `VIEWER`, migration `019` | Only if scoped access should be the default. Deferred |
 | 5 | `projectGrants` on the invite endpoint | Makes the empty-member state hard to create |
 | 6 | Frontend | Follows the API |
 

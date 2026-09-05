@@ -17,6 +17,9 @@ public interface PermissionGrantRepository extends JpaRepository<PermissionGrant
 
   List<PermissionGrant> findAllByScopeTypeAndScopeId(ScopeType scopeType, UUID scopeId);
 
+  /** Every grant this user holds at one scope, used to work out which projects they can reach. */
+  List<PermissionGrant> findAllByUser_IdAndScopeType(UUID userId, ScopeType scopeType);
+
   Page<PermissionGrant> findAllByScopeTypeAndScopeId(
       ScopeType scopeType, UUID scopeId, Pageable pageable);
 

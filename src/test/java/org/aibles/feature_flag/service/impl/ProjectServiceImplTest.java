@@ -8,15 +8,18 @@ import static org.mockito.Mockito.*;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateProjectRequest;
 import org.aibles.feature_flag.dto.request.UpdateProjectRequest;
 import org.aibles.feature_flag.dto.response.ProjectResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -113,6 +116,7 @@ class ProjectServiceImplTest {
 
   @Test
   void listByOrganisation_delegatesToRepository() {
+    when(permissionService.hasOrgAction(Action.PROJECT_READ, orgId)).thenReturn(true);
     when(projectRepository.findAllByOrganizationId(eq(orgId), any()))
         .thenReturn(new PageImpl<>(List.of(project)));
 
@@ -120,6 +124,54 @@ class ProjectServiceImplTest {
 
     assertThat(result.getContent()).hasSize(1);
     assertThat(result.getContent().get(0).getName()).isEqualTo("Backend");
+  }
+
+  @Test
+  void listByOrganisation_orgWideReaderPaysNoExtraQuery() {
+    // VIEWER and up keep exactly the old path: one repository call, no grant lookup.
+    when(permissionService.hasOrgAction(Action.PROJECT_READ, orgId)).thenReturn(true);
+    when(projectRepository.findAllByOrganizationId(eq(orgId), any()))
+        .thenReturn(new PageImpl<>(List.of(project)));
+
+    service.listByOrganisation(orgId, PageRequest.of(0, 20));
+
+    verify(permissionService, never()).grantedProjectIds(any());
+  }
+
+  @Test
+  void listByOrganisation_narrowsToGrantedProjectsWhenRoleCarriesNoOrgWideRead() {
+    when(permissionService.hasOrgAction(Action.PROJECT_READ, orgId)).thenReturn(false);
+    when(permissionService.grantedProjectIds(Action.PROJECT_READ)).thenReturn(Set.of(projectId));
+    when(projectRepository.findAllByOrganizationIdAndIdIn(eq(orgId), eq(Set.of(projectId)), any()))
+        .thenReturn(new PageImpl<>(List.of(project)));
+
+    Page<ProjectResponse> result = service.listByOrganisation(orgId, PageRequest.of(0, 20));
+
+    assertThat(result.getContent()).hasSize(1);
+    // The unfiltered query must not run, or the narrowing is cosmetic.
+    verify(projectRepository, never()).findAllByOrganizationId(eq(orgId), any());
+  }
+
+  @Test
+  void listByOrganisation_returnsEmptyForAMemberWithNoGrants() {
+    when(permissionService.hasOrgAction(Action.PROJECT_READ, orgId)).thenReturn(false);
+    when(permissionService.grantedProjectIds(Action.PROJECT_READ)).thenReturn(Set.of());
+
+    Page<ProjectResponse> result = service.listByOrganisation(orgId, PageRequest.of(0, 20));
+
+    assertThat(result.getContent()).isEmpty();
+    // An empty IN () clause is a query worth not sending.
+    verify(projectRepository, never()).findAllByOrganizationIdAndIdIn(any(), any(), any());
+  }
+
+  @Test
+  void listByOrganisation_requiresMembership() {
+    doThrow(new UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ORG_READ), any());
+
+    assertThatThrownBy(() -> service.listByOrganisation(orgId, PageRequest.of(0, 20)))
+        .isInstanceOf(UnauthorizedException.class);
   }
 
   @Test

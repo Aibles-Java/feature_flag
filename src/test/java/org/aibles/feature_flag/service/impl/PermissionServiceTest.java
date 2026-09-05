@@ -121,6 +121,22 @@ class PermissionServiceTest {
     assertThat(permissionService.isMember(other)).isFalse();
   }
 
+  @Test
+  void memberRoleCarriesOrganisationReadAndNothingAboutProjects() {
+    // The point of MEMBER: in the organisation, reaching no project of its own. It is not the
+    // empty set, or the workspace switcher would list an organisation it cannot then open.
+    assertThat(PermissionService.actionsForRole(MemberRole.MEMBER))
+        .containsExactlyInAnyOrder(Action.ORG_READ, Action.MEMBER_READ);
+  }
+
+  @Test
+  void memberIsTheLeastPermissiveRole() {
+    // mostPermissive() ranks by action-set size, so MEMBER has to stay the smallest for a grant
+    // to win over it.
+    assertThat(PermissionService.actionsForRole(MemberRole.MEMBER).size())
+        .isLessThan(PermissionService.actionsForRole(MemberRole.VIEWER).size());
+  }
+
   // ── Role → action matrix ────────────────────────────────────────────────────────────
 
   @Test

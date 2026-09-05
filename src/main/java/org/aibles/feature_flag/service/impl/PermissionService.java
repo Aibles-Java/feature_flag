@@ -112,7 +112,13 @@ public class PermissionService {
             Action.ENV_DELETE_PRODUCTION,
             Action.ENV_MANAGE_PROTECTION));
 
+    // MEMBER is not the empty set: someone who cannot read the organisation they belong to sees
+    // it in the workspace switcher and then cannot open it. Project reach, and only project
+    // reach, is what MEMBER gives up relative to VIEWER.
+    Set<Action> member = EnumSet.of(Action.ORG_READ, Action.MEMBER_READ);
+
     return Map.of(
+        MemberRole.MEMBER, Set.copyOf(member),
         MemberRole.VIEWER, Set.copyOf(viewer),
         MemberRole.ADMIN, Set.copyOf(admin),
         MemberRole.OWNER, Set.copyOf(owner));
@@ -181,6 +187,24 @@ public class PermissionService {
    * Authorizes {@code action} against {@code resource}, throwing {@link UnauthorizedException} on
    * deny.
    */
+  /** Whether the caller's organisation role alone carries this action, before any grant. */
+  public boolean hasOrgAction(Action action, UUID orgId) {
+    return effectiveActionsForOrg(currentUserId(), orgId).contains(action);
+  }
+
+  /**
+   * Projects the caller reaches through a grant that confers {@code action}.
+   *
+   * <p>Only meaningful for a caller whose org role does not already carry the action org-wide — ask
+   * {@link #hasOrgAction} first, or this will understate what they can see.
+   */
+  public Set<UUID> grantedProjectIds(Action action) {
+    return grantRepository.findAllByUser_IdAndScopeType(currentUserId(), ScopeType.PROJECT).stream()
+        .filter(grant -> grantActions(grant).contains(action))
+        .map(PermissionGrant::getScopeId)
+        .collect(java.util.stream.Collectors.toSet());
+  }
+
   public void check(Action action, ResourceRef resource) {
     List<Environment> productionEnvs = productionEnvironments(action, resource);
     Action required =
