@@ -17,7 +17,6 @@ import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.EnvType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
 import org.aibles.feature_flag.dto.response.EnvironmentResponse;
@@ -76,8 +75,6 @@ class EnvironmentServiceImplTest {
             .name("prod")
             .apiKeyHash(ApiKeyHasher.hash("old-key"))
             .build();
-    doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
-    doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
   }
 
   @Test

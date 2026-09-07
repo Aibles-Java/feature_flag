@@ -1,5 +1,6 @@
 package org.aibles.feature_flag.service.impl;
 
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Organization;
@@ -63,9 +64,26 @@ public class ProjectServiceImpl implements ProjectService {
 
   @Override
   public Page<ProjectResponse> listByOrganisation(UUID organisationId, Pageable pageable) {
-    permissionService.check(Action.PROJECT_READ, PermissionService.ResourceRef.org(organisationId));
+    // Membership is the floor: you have to be in the organisation to ask at all.
+    permissionService.check(Action.ORG_READ, PermissionService.ResourceRef.org(organisationId));
+
+    // A role carrying org-wide PROJECT_READ (VIEWER and up) sees everything, exactly as before —
+    // and pays no extra query for the privilege.
+    if (permissionService.hasOrgAction(Action.PROJECT_READ, organisationId)) {
+      return projectRepository
+          .findAllByOrganizationId(organisationId, pageable)
+          .map(this::toResponse);
+    }
+
+    // Otherwise the list narrows to the projects a grant actually reaches. Hiding rows here would
+    // be decoration on its own; it works because get(id) already asks at project scope, so a
+    // hidden project is unreadable by id too.
+    Set<UUID> reachable = permissionService.grantedProjectIds(Action.PROJECT_READ);
+    if (reachable.isEmpty()) {
+      return Page.empty(pageable);
+    }
     return projectRepository
-        .findAllByOrganizationId(organisationId, pageable)
+        .findAllByOrganizationIdAndIdIn(organisationId, reachable, pageable)
         .map(this::toResponse);
   }
 

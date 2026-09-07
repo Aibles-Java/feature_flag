@@ -30,6 +30,21 @@ public class CreateEnvironmentRequest {
   @Max(23)
   private Integer changeWindowEndHour;
 
+  /**
+   * IANA zone the window hours are read in, e.g. {@code Asia/Ho_Chi_Minh}. Null keeps the server's
+   * zone, which is how every window behaved before this field existed.
+   */
+  private String changeWindowTimezone;
+
+  @AssertTrue(message = "changeWindowTimezone must be a valid IANA zone id, e.g. Asia/Ho_Chi_Minh")
+  public boolean isChangeWindowTimezoneValid() {
+    if (changeWindowTimezone == null || changeWindowTimezone.isBlank()) {
+      return true;
+    }
+    // Rejecting here is the whole reason the PDP can fall back quietly instead of throwing.
+    return java.time.ZoneId.getAvailableZoneIds().contains(changeWindowTimezone);
+  }
+
   @AssertTrue(message = "changeWindowStartHour and changeWindowEndHour must be provided together")
   public boolean isChangeWindowComplete() {
     return (changeWindowStartHour == null) == (changeWindowEndHour == null);

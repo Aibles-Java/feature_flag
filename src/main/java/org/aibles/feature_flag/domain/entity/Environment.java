@@ -52,6 +52,17 @@ public class Environment {
   @Column(name = "change_window_end_hour")
   private Integer changeWindowEndHour;
 
+  /**
+   * IANA zone the change window hours are read in, e.g. {@code Asia/Ho_Chi_Minh}.
+   *
+   * <p>Null means the server's own zone, which is what every window meant before this column
+   * existed. Storing the zone rather than converting the hours to UTC keeps the window correct
+   * across daylight saving: "09:00 to 17:00 local" stays those local hours all year, where fixed
+   * UTC hours would drift by one twice a year.
+   */
+  @Column(name = "change_window_timezone", length = 64)
+  private String changeWindowTimezone;
+
   @CreationTimestamp
   @Column(name = "created_at", nullable = false, updatable = false)
   private LocalDateTime createdAt;

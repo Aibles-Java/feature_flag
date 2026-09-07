@@ -25,7 +25,6 @@ import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.domain.enums.ImportConflictStrategy;
 import org.aibles.feature_flag.domain.enums.ImportOutcome;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CloneEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.ImportEnvironmentRequest;
 import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
@@ -129,7 +128,6 @@ class EnvironmentTransferServiceImplTest {
             });
     when(flagStateRepository.save(any(FlagEnvironmentState.class)))
         .thenAnswer(inv -> inv.getArgument(0));
-    doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
   }
 
   // ---------------------------------------------------------------- clone
@@ -213,8 +211,10 @@ class EnvironmentTransferServiceImplTest {
 
     service.clone(sourceEnvId, request);
 
-    verify(permissionService)
-        .requireRoleForEnvironment(sourceEnvId, MemberRole.OWNER, MemberRole.ADMIN);
+    // Two capabilities, asked separately: read the source, create the copy. ENV_CREATE is the
+    // narrower of the pair, so this lands where the old OWNER/ADMIN adapter did.
+    verify(permissionService).check(eq(Action.ENV_READ), any());
+    verify(permissionService).check(eq(Action.ENV_CREATE), any());
   }
 
   @Test
@@ -255,8 +255,8 @@ class EnvironmentTransferServiceImplTest {
         .containsExactly(
             tuple("banner-text", false, true, "hello", 30),
             tuple("legacy-cart", true, false, null, 100));
-    verify(permissionService)
-        .requireRoleForEnvironment(sourceEnvId, MemberRole.OWNER, MemberRole.ADMIN);
+    // ENV_EXPORT, not ENV_READ: an export dumps every flag state, and ENV_READ reaches VIEWER.
+    verify(permissionService).check(eq(Action.ENV_EXPORT), any());
   }
 
   /**
@@ -533,11 +533,10 @@ class EnvironmentTransferServiceImplTest {
     stubExistingFlags();
     service.importSnapshot(targetEnvId, importRequest(ImportConflictStrategy.SKIP));
 
-    // The pre-ABAC adapter named roles, which left the production rules unreachable; import is now
-    // authorized as the operations it actually performs.
+    // Authorized as the operations it actually performs, so the production rules can see them.
+    // The adapter this used to assert against no longer exists.
     verify(permissionService).check(eq(Action.FLAG_CREATE), any());
     verify(permissionService).check(eq(Action.FLAG_STATE_UPDATE), any());
-    verify(permissionService, never()).requireRoleForEnvironment(any(), any(MemberRole[].class));
   }
 
   // --------------------------------------------------------------- helpers
