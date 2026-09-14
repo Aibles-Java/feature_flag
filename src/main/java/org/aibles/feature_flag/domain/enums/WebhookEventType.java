@@ -21,5 +21,11 @@ public enum WebhookEventType {
   FLAG_STATE_CHANGED,
 
   /** An environment's SDK API key was rotated. Environment-scoped. Never carries the key. */
-  API_KEY_ROTATED
+  API_KEY_ROTATED,
+  /**
+   * An SDK API key crossed an expiry-warning threshold (30/7/1 days by default).
+   * Environment-scoped. Never carries the key. No migration needed: {@code event_type} is {@code
+   * VARCHAR(32)} with no CHECK constraint.
+   */
+  API_KEY_EXPIRING
 }

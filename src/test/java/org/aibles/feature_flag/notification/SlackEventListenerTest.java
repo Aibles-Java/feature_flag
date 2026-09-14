@@ -3,7 +3,9 @@ package org.aibles.feature_flag.notification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
+import org.aibles.feature_flag.notification.event.ApiKeyExpiringEvent;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
 import org.aibles.feature_flag.notification.event.FlagStateChangedEvent;
@@ -107,5 +109,51 @@ class SlackEventListenerTest {
         new FlagArchivedEvent(UUID.randomUUID(), "old-flag", "web", false, "dev@example.com"));
 
     assertThat(capture()).contains("unarchived");
+  }
+
+  private static ApiKeyExpiringEvent expiring(
+      String environmentName, LocalDateTime lastUsedAt, long daysLeft) {
+    return new ApiKeyExpiringEvent(
+        UUID.randomUUID(),
+        environmentName,
+        "checkout",
+        UUID.randomUUID(),
+        "nightly-batch",
+        "a3f9c1d2",
+        LocalDateTime.of(2026, 4, 1, 0, 0),
+        lastUsedAt,
+        daysLeft);
+  }
+
+  @Test
+  void apiKeyExpiring_includesKeyDeadlineAndLastUse() {
+    SlackEventListener listener = new SlackEventListener(slackNotifier);
+
+    listener.onApiKeyExpiring(expiring("staging", LocalDateTime.of(2026, 3, 24, 2, 0), 7));
+
+    String msg = capture();
+    assertThat(msg).contains("nightly-batch").contains("a3f9c1d2").contains("staging");
+    assertThat(msg).contains("checkout").contains("expires in 7 days").contains("2026-04-01 00:00");
+    assertThat(msg).contains("Last used 2026-03-24 02:00");
+    assertThat(msg).doesNotContain("🔴");
+  }
+
+  @Test
+  void apiKeyExpiring_neverUsedKey_saysSoAndUsesSingularDay() {
+    SlackEventListener listener = new SlackEventListener(slackNotifier);
+
+    listener.onApiKeyExpiring(expiring("staging", null, 1));
+
+    String msg = capture();
+    assertThat(msg).contains("expires in 1 day (").contains("Never used");
+  }
+
+  @Test
+  void apiKeyExpiring_production_usesCriticalSeverity() {
+    SlackEventListener listener = new SlackEventListener(slackNotifier);
+
+    listener.onApiKeyExpiring(expiring("production", null, 7));
+
+    assertThat(capture()).startsWith("🔴");
   }
 }
