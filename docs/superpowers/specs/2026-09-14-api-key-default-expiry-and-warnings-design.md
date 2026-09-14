@@ -4,7 +4,8 @@
   lifts its non-goal *"Notifying anyone that a key is about to expire (Slack / webhook)"*
 - **Branch:** `feature/api-key-lifecycle`
 - **Date:** 2026-09-14
-- **Status:** Draft — awaiting review
+- **Status:** Approved — implementation plan:
+  [`2026-09-14-api-key-default-expiry-and-warnings.md`](../plans/2026-09-14-api-key-default-expiry-and-warnings.md)
 
 ## Problem
 
@@ -121,7 +122,8 @@ that is already being retired is an edge case not worth a special rule.
 | Component | Responsibility |
 |---|---|
 | `ApiKeyProperties` (new) | `defaultTtl`, and nested `expiryWarning`: `enabled`, `cron`, `thresholdsDays` |
-| `ApiKeyExpiryConfig` (new) | `@EnableScheduling`; the startup channel check |
+| `ApiKeyExpiryConfig` (new) | `@EnableScheduling`, active only when warnings are enabled |
+| `ApiKeyExpiryChannelCheck` (new) | Startup `WARN` when no channel can deliver warnings |
 | `ApiKeyExpiryScheduler` (new) | `@Scheduled` entry point: loads candidates, picks the due threshold per key, calls the notifier, logs a summary |
 | `ApiKeyExpiryNotifier` (new, **separate bean**) | `@Transactional(REQUIRES_NEW)` per key: claims the threshold, publishes the event only if the claim succeeded |
 | `EnvironmentApiKeyRepository` (changed) | `findExpiryCandidates(now, horizon)` with `JOIN FETCH` of environment → project; `claimExpiryNotice(id, threshold, now)` |
@@ -212,10 +214,11 @@ Slack, following the existing message style and production heuristic:
 
 ```
 🔴 :key: API key "nightly-batch" (a3f9c1d2…) in *production* (checkout) expires in 7 days
-(2026-04-01 00:00). Last used 17 hours ago.
+(2026-04-01 00:00). Last used 2026-03-24 02:00.
 ```
 
-`lastUsedAt = NULL` renders as *"Never used"*. That line is what makes the message
+`lastUsedAt` is rendered as an absolute timestamp so the listener needs no clock;
+`lastUsedAt = NULL` renders as *"Never used."*. That line is what makes the message
 actionable: used hours ago means rotate now, used months ago means let it expire, never used
 means revoke it.
 
