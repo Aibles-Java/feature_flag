@@ -13,6 +13,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.aibles.feature_flag.config.ApiKeyProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.Organization;
@@ -83,7 +84,8 @@ class EnvironmentServiceImplTest {
             permissionService,
             eventPublisher,
             auditService,
-            clock);
+            clock,
+            new ApiKeyProperties(null, null));
     service =
         new EnvironmentServiceImpl(
             environmentRepository,

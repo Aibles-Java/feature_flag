@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.aibles.feature_flag.config.ApiKeyProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.enums.Action;
@@ -45,6 +46,7 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
   private final ApplicationEventPublisher eventPublisher;
   private final AuditService auditService;
   private final Clock clock;
+  private final ApiKeyProperties apiKeyProperties;
 
   @Override
   @Transactional
@@ -67,7 +69,7 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
 
     MintedKey minted =
         EnvironmentApiKeyFactory.mint(
-            env, request.getName(), request.getExpiresAt(), permissionService.currentUserId());
+            env, request.getName(), resolveExpiry(request, now), permissionService.currentUserId());
     EnvironmentApiKey saved = apiKeyRepository.save(minted.key());
 
     // before/after stay null: the ledger records that a key event happened, never the key.
@@ -80,6 +82,21 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
         null);
 
     return ApiKeySecretResponse.builder().key(toResponse(saved)).apiKey(minted.plaintext()).build();
+  }
+
+  /**
+   * The stored expiry for a new key: the caller's explicit deadline, {@code null} when the caller
+   * asked for a key that never expires, otherwise the configured default lifetime. The request DTO
+   * rejects {@code expiresAt} combined with {@code neverExpires} before this runs.
+   */
+  private LocalDateTime resolveExpiry(CreateApiKeyRequest request, LocalDateTime now) {
+    if (request.getExpiresAt() != null) {
+      return request.getExpiresAt();
+    }
+    if (request.isNeverExpires()) {
+      return null;
+    }
+    return now.plus(apiKeyProperties.defaultTtl());
   }
 
   @Override

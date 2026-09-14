@@ -13,11 +13,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.aibles.feature_flag.config.ApiKeyProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.Organization;
@@ -83,7 +85,8 @@ class EnvironmentApiKeyServiceImplTest {
             permissionService,
             eventPublisher,
             auditService,
-            fixedClock);
+            fixedClock,
+            new ApiKeyProperties(Duration.ofDays(90), null));
 
     organization = Organization.builder().id(ORG_ID).name("org").build();
     project = Project.builder().id(PROJECT_ID).organization(organization).name("proj").build();
@@ -179,6 +182,30 @@ class EnvironmentApiKeyServiceImplTest {
     when(apiKeyRepository.countActiveByEnvironmentId(eq(ENV_ID), eq(NOW))).thenReturn(9L);
 
     assertThatCode(() -> service.create(ENV_ID, request("ios", null))).doesNotThrowAnyException();
+  }
+
+  @Test
+  void createWithoutAnExpiryAppliesTheDefaultLifetime() {
+    service.create(ENV_ID, request("ios", null));
+
+    assertThat(captureSavedKey().getExpiresAt()).isEqualTo(NOW.plusDays(90));
+  }
+
+  @Test
+  void createWithNeverExpiresStoresNoExpiry() {
+    CreateApiKeyRequest request = request("ios-app", null);
+    request.setNeverExpires(true);
+
+    service.create(ENV_ID, request);
+
+    assertThat(captureSavedKey().getExpiresAt()).isNull();
+  }
+
+  @Test
+  void createWithAnExplicitExpiryStoresItUnchanged() {
+    service.create(ENV_ID, request("contractor", NOW.plusDays(14)));
+
+    assertThat(captureSavedKey().getExpiresAt()).isEqualTo(NOW.plusDays(14));
   }
 
   @Test
