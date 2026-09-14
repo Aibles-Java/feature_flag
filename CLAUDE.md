@@ -167,12 +167,12 @@ A key created through `POST .../api-keys` with neither `expiresAt` nor `neverExp
 after `app.api-key.default-ttl` (90 days); environment creation and cloning still mint a
 non-expiring `default` key. Rotation gives the new key a fresh lifetime of the same length as the
 old one (`now + (expiresAt − createdAt)`; never-expiring stays never-expiring) — inheriting the old
-deadline would make rotation useless against an expiring key. When a rotation has a grace period
-(`graceHours > 0`), the old key's `expires_at` is rewritten to the new deadline, and that key's
-`expiry_notice_sent_days` is cleared, re-arming its warnings for the new deadline. `ApiKeyExpiryScheduler` scans daily
+deadline would make rotation useless against an expiring key. `ApiKeyExpiryScheduler` scans daily
 and `ApiKeyExpiryNotifier` warns once per threshold (30/7/1 days) through Slack and the
 `API_KEY_EXPIRING` webhook event, claiming the threshold with a conditional UPDATE on
-`expiry_notice_sent_days` (migration `023`). Two rules that are easy to break:
+`expiry_notice_sent_days` (migration `023`). When a rotation has a grace period
+(`graceHours > 0`), the old key's `expires_at` is rewritten to the new deadline, and that key's
+`expiry_notice_sent_days` is cleared, re-arming its warnings for the new deadline. Two rules that are easy to break:
 
 1. **Publish the event inside the notifier's transaction.** The listeners are
    `@TransactionalEventListener(AFTER_COMMIT)` without `fallbackExecution`; an event published with
