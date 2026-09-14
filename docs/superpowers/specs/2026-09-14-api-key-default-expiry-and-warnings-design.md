@@ -78,8 +78,9 @@ without a working rotation are gap 3.
 (PR #121), and both have already run against shared local databases. `023` is the first number
 free across every open branch.
 
-The column never needs resetting: rotation creates a new row with a fresh `NULL`, and a key's
-expiry cannot be extended in place.
+Rotation creates the new key's row with a fresh `NULL`. A grace rotation also rewrites the
+**old** key's `expires_at`, so `rotate()` clears that key's `expiry_notice_sent_days` at the same
+time — its warnings are re-armed for the new deadline.
 
 ## Default expiry on create
 

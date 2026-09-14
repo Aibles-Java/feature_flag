@@ -63,8 +63,11 @@ public class EnvironmentApiKey {
 
   /**
    * Smallest expiry-warning threshold, in days, already sent for this key; {@code null} when none
-   * has been. Written only by the conditional UPDATE in {@code
-   * EnvironmentApiKeyRepository#claimExpiryNotice}, never through the entity.
+   * has been. Normally written only by the conditional UPDATE in {@code
+   * EnvironmentApiKeyRepository#claimExpiryNotice}, never through the entity — except that a grace
+   * rotation (see {@code EnvironmentApiKeyServiceImpl#rotate}) moves the old key's {@code
+   * expiresAt} forward and clears this field on the entity directly, re-arming its warnings for the
+   * new deadline.
    */
   @Column(name = "expiry_notice_sent_days")
   private Integer expiryNoticeSentDays;

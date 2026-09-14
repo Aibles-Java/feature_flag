@@ -317,6 +317,19 @@ class EnvironmentApiKeyServiceImplTest {
   }
 
   @Test
+  void rotateWithGraceReArmsExpiryWarningsForTheOldKeysNewDeadline() {
+    EnvironmentApiKey old = activeKey();
+    old.setExpiresAt(NOW.plusDays(5));
+    old.setExpiryNoticeSentDays(7);
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    service.rotate(ENV_ID, KEY_ID, grace(720));
+
+    assertThat(old.getExpiresAt()).isEqualTo(NOW.plusHours(720));
+    assertThat(old.getExpiryNoticeSentDays()).isNull();
+  }
+
+  @Test
   void rotateWithZeroGraceRevokesTheOldKeyImmediately() {
     EnvironmentApiKey old = activeKey();
     when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));

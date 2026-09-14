@@ -170,6 +170,8 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
       old.setRevokedAt(now);
     } else {
       old.setExpiresAt(now.plusHours(request.getGraceHours()));
+      // The deadline just moved, so any threshold already warned about is stale — re-arm it.
+      old.setExpiryNoticeSentDays(null);
     }
     apiKeyRepository.save(old);
 
