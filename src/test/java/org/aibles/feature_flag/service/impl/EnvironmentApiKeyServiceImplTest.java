@@ -394,18 +394,30 @@ class EnvironmentApiKeyServiceImplTest {
   }
 
   @Test
-  void rotateCarriesForwardTheOldKeysExpiresAtOntoTheFreshKey() {
-    // activeKey() alone leaves expiresAt null, which cannot distinguish "inherited correctly"
-    // from "hardcoded to null" — this pins the inheritance with a non-null deadline.
-    LocalDateTime futureExpiry = NOW.plusDays(30);
-    EnvironmentApiKey old = keyExpiringAt(futureExpiry);
+  void rotateGivesTheFreshKeyAFullLifetimeOfTheSameLength() {
+    // A 30-day key created 23 days ago, rotated with 7 days left. Inheriting the old deadline
+    // would give the replacement 7 days — the very expiry the operator is rotating to escape.
+    EnvironmentApiKey old = activeKey();
+    old.setCreatedAt(NOW.minusDays(23));
+    old.setExpiresAt(NOW.plusDays(7));
     when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
 
     service.rotate(ENV_ID, KEY_ID, grace(24));
 
     ArgumentCaptor<EnvironmentApiKey> captor = ArgumentCaptor.forClass(EnvironmentApiKey.class);
     verify(apiKeyRepository, times(2)).save(captor.capture());
-    assertThat(captor.getAllValues().get(0).getExpiresAt()).isEqualTo(futureExpiry);
+    assertThat(captor.getAllValues().get(0).getExpiresAt()).isEqualTo(NOW.plusDays(30));
+  }
+
+  @Test
+  void rotatingANeverExpiringKeyYieldsANeverExpiringKey() {
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(activeKey()));
+
+    service.rotate(ENV_ID, KEY_ID, grace(24));
+
+    ArgumentCaptor<EnvironmentApiKey> captor = ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository, times(2)).save(captor.capture());
+    assertThat(captor.getAllValues().get(0).getExpiresAt()).isNull();
   }
 
   @Test

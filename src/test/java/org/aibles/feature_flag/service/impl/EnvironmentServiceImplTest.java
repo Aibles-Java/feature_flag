@@ -203,6 +203,30 @@ class EnvironmentServiceImplTest {
   }
 
   @Test
+  void legacyRotateGivesTheFreshKeyAFullLifetimeOfTheSameLength() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    EnvironmentApiKey theOnlyKey =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(env)
+            .name("default")
+            .keyHash(ApiKeyHasher.hash("old-key"))
+            .createdAt(NOW.minusDays(83))
+            .expiresAt(NOW.plusDays(7))
+            .build();
+    when(apiKeyRepository.findActiveByEnvironmentId(eq(envId), any()))
+        .thenReturn(List.of(theOnlyKey));
+    when(apiKeyRepository.findById(theOnlyKey.getId())).thenReturn(Optional.of(theOnlyKey));
+    when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
+
+    service.rotateApiKey(envId);
+
+    ArgumentCaptor<EnvironmentApiKey> captor = ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository, times(2)).save(captor.capture());
+    assertThat(captor.getAllValues().get(0).getExpiresAt()).isEqualTo(NOW.plusDays(90));
+  }
+
+  @Test
   void legacyRotateRefusesWhenTheEnvironmentHasSeveralActiveKeys() {
     when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
     EnvironmentApiKey keyA =

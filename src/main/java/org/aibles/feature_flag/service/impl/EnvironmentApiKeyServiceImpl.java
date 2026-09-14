@@ -1,6 +1,7 @@
 package org.aibles.feature_flag.service.impl;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -162,7 +163,7 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
     LocalDateTime now = LocalDateTime.now(clock);
     MintedKey minted =
         EnvironmentApiKeyFactory.mint(
-            env, old.getName(), old.getExpiresAt(), permissionService.currentUserId());
+            env, old.getName(), freshExpiry(old, now), permissionService.currentUserId());
     EnvironmentApiKey fresh = apiKeyRepository.save(minted.key());
 
     if (request.getGraceHours() == 0) {
@@ -188,6 +189,19 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
         null);
 
     return ApiKeySecretResponse.builder().key(toResponse(fresh)).apiKey(minted.plaintext()).build();
+  }
+
+  /**
+   * A rotated key gets a fresh lifetime of the same length as the key it replaces — a 30-day key
+   * rotates into a 30-day key, a never-expiring key into a never-expiring key. Inheriting the old
+   * deadline instead would make rotation useless against an expiring key: the replacement would die
+   * on the same day the expiry warning was about.
+   */
+  private static LocalDateTime freshExpiry(EnvironmentApiKey old, LocalDateTime now) {
+    if (old.getExpiresAt() == null) {
+      return null;
+    }
+    return now.plus(Duration.between(old.getCreatedAt(), old.getExpiresAt()));
   }
 
   private Environment findEnvironment(UUID id) {
