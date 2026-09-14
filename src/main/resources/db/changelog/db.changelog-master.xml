@@ -6,5 +6,6 @@
 
     <include file="db/changelog/db.changelog-core.xml"/>
     <include file="db/changelog/migrations/020-migrate-api-keys-to-key-table.xml"/>
+    <include file="db/changelog/migrations/023-add-api-key-expiry-notice.xml"/>
 
 </databaseChangeLog>

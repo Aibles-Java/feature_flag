@@ -61,6 +61,14 @@ public class EnvironmentApiKey {
   @Column(name = "last_used_at")
   private LocalDateTime lastUsedAt;
 
+  /**
+   * Smallest expiry-warning threshold, in days, already sent for this key; {@code null} when none
+   * has been. Written only by the conditional UPDATE in {@code
+   * EnvironmentApiKeyRepository#claimExpiryNotice}, never through the entity.
+   */
+  @Column(name = "expiry_notice_sent_days")
+  private Integer expiryNoticeSentDays;
+
   /** Nulled rather than cascaded: the key outlives the person who minted it. */
   @Column(name = "created_by")
   private UUID createdBy;
