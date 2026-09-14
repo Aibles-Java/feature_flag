@@ -131,7 +131,7 @@ defaults**, so prod can never fall back to dev values. `config/JwtProperties` (t
 is missing, an unresolved `${...}` placeholder, shorter than 512 bits (64 UTF-8 bytes), or
 contains the `change-me` placeholder marker.
 
-DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–020`, included via `db.changelog-core.xml` for 001–019 plus `020` on top — see below). Never modify a changeset that has already run; always add a new one.
+DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–020` and `023`, included via `db.changelog-core.xml` for 001–019 plus `020` and `023` on top — see below; `021`/`022` belong to `feature/invite-member-by-email`). Never modify a changeset that has already run; always add a new one.
 
 ## API Key generation
 
@@ -161,6 +161,27 @@ default) revokes the old key immediately, reproducing the pre-lifecycle hard cut
 `POST /api/v1/environments/{envId}/api-key/rotate` still works when the environment has exactly one
 active key; with zero or several it returns 409 naming the key-level endpoint instead of guessing
 which key "the" key is.
+
+**Default lifetime and expiry warnings** (`docs/superpowers/specs/2026-09-14-api-key-default-expiry-and-warnings-design.md`).
+A key created through `POST .../api-keys` with neither `expiresAt` nor `neverExpires: true` expires
+after `app.api-key.default-ttl` (90 days); environment creation and cloning still mint a
+non-expiring `default` key. Rotation gives the new key a fresh lifetime of the same length as the
+old one (`now + (expiresAt − createdAt)`; never-expiring stays never-expiring) — inheriting the old
+deadline would make rotation useless against an expiring key. When a rotation has a grace period
+(`graceHours > 0`), the old key's `expires_at` is rewritten to the new deadline, and that key's
+`expiry_notice_sent_days` is cleared, re-arming its warnings for the new deadline. `ApiKeyExpiryScheduler` scans daily
+and `ApiKeyExpiryNotifier` warns once per threshold (30/7/1 days) through Slack and the
+`API_KEY_EXPIRING` webhook event, claiming the threshold with a conditional UPDATE on
+`expiry_notice_sent_days` (migration `023`). Two rules that are easy to break:
+
+1. **Publish the event inside the notifier's transaction.** The listeners are
+   `@TransactionalEventListener(AFTER_COMMIT)` without `fallbackExecution`; an event published with
+   no active transaction is dropped silently.
+2. **Keep the notifier a separate bean from the scheduler.** A self-invoked `@Transactional` method
+   runs with no transaction and falls into rule 1. `ApiKeyExpiryWarningIntegrationTest` pins both.
+
+API key expiry is enforced, unlike flag expiry, which is only reported (`decisions/0028`) — the
+difference is intentional.
 
 ## Outbound webhooks (issue #36)
 

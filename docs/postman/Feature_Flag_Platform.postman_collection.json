@@ -826,6 +826,7 @@
               "const body = pm.response.json();",
               "pm.test('Has apiKey (64 chars)', () => pm.expect(body.apiKey).to.have.lengthOf(64));",
               "pm.test('keyPrefix is 8 chars', () => pm.expect(body.key.keyPrefix).to.have.lengthOf(8));",
+              "pm.test('No expiresAt sent → default lifetime applied', () => pm.expect(body.key.expiresAt).to.be.a('string'));",
               "pm.collectionVariables.set('stagingSecondKeyId', body.key.id);",
               "pm.collectionVariables.set('stagingSecondApiKey', body.apiKey);"
             ]}

@@ -92,6 +92,6 @@ src/main/resources/
   role) — and applies the production and change-window rules, with one documented exception
   (`WINDOW_EXEMPT`, currently just `ENV_KEY_REVOKE_PRODUCTION`). See `ABAC.md`.
 - DB schema is Liquibase-owned (`ddl-auto=validate`) — never modify an already-run changeset, always add a new one under `db/changelog/migrations/`.
-- `ApiKeyGenerator` uses `SecureRandom` → 32 bytes → 64-char hex string; `EnvironmentApiKeyFactory.mint(...)` wraps it as the single place that mints an `EnvironmentApiKey` row (environment creation, environment cloning, and the `/api-keys` create/rotate endpoints).
+- `ApiKeyGenerator` uses `SecureRandom` → 32 bytes → 64-char hex string; `EnvironmentApiKeyFactory.mint(...)` wraps it as the single place that mints an `EnvironmentApiKey` row (environment creation, environment cloning, and the `/api-keys` create/rotate endpoints). A key created via `POST /api-keys` without `expiresAt` or `neverExpires` gets `app.api-key.default-ttl` (90 days); rotation gives the new key a fresh lifetime of the same length; `ApiKeyExpiryScheduler` + `ApiKeyExpiryNotifier` warn once per threshold (30/7/1 days) through Slack and the `API_KEY_EXPIRING` webhook event.
 
 See `CLAUDE.md` for full development conventions and workflow gates.

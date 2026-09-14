@@ -423,7 +423,7 @@ Vấn đề DB bị lộ vẫn được giữ nguyên cách xử lý cũ: key **
 - `EnvironmentApiKeyServiceImpl` — create/list/revoke/rotate; mỗi thao tác qua `PermissionService.check(...)` rồi ghi audit (`before`/`after` cố định `null` — ledger chỉ ghi *có sự kiện xảy ra*, không ghi key).
 - `ApiKeyAuthenticationFilter` — principal giờ là `EnvironmentApiKey` (không còn là `Environment` trực tiếp); lấy `Environment` qua `((EnvironmentApiKey) auth.getPrincipal()).getEnvironment()`. Ba lý do 401 tách biệt (xem bảng lỗi bên dưới) nhưng dùng chung 1 counter, để không biến metric thành "oracle" tiết lộ key nào tồn tại.
 - Endpoint environment-level cũ (`POST /environments/{id}/api-key/rotate`) **vẫn còn** — dùng khi environment chỉ có đúng 1 key active; nếu 0 hoặc ≥2 key active thì trả **409**, chỉ tên endpoint mới thay vì tự đoán "cái key" là key nào.
-- Rotate mới (endpoint theo key, `POST .../api-keys/{keyId}/rotate`) nhận `graceHours` (mặc định `0`, tối đa `720` = 30 ngày): key mới mang cùng `name` với key cũ; key cũ được set `expires_at = now + graceHours` thay vì bị revoke ngay — **đây là trọng tâm của tính năng**, cho phép redeploy một fleet SDK dần dần mà không downtime. `graceHours=0` thì key cũ bị revoke ngay lập tức, giống hệt hành vi cutover cũ.
+- Rotate mới (endpoint theo key, `POST .../api-keys/{keyId}/rotate`) nhận `graceHours` (mặc định `0`, tối đa `720` = 30 ngày): key mới mang cùng `name` với key cũ; key cũ được set `expires_at = now + graceHours` thay vì bị revoke ngay — **đây là trọng tâm của tính năng**, cho phép redeploy một fleet SDK dần dần mà không downtime. `graceHours=0` thì key cũ bị revoke ngay lập tức, giống hệt hành vi cutover cũ. Key mới được **vòng đời mới dài bằng vòng đời key cũ** (`now + (expiresAt − createdAt)`): key 30 ngày rotate ra key 30 ngày, key không hết hạn rotate ra key không hết hạn — không thừa hưởng ngày chết của key cũ.
 
 ### Request
 
@@ -485,7 +485,9 @@ curl -s -X POST $BASE/api/v1/environments/$ENV_ID/api-keys \
 }
 ```
 
-`name` **không cần unique** — trong lúc grace period, key cũ và key mới của cùng một lần rotate cùng mang một tên; phân biệt bằng `keyPrefix` + `createdAt`. `expiresAt` là tuỳ chọn (phải ở tương lai); bỏ trống nghĩa là không bao giờ hết hạn.
+`name` **không cần unique** — trong lúc grace period, key cũ và key mới của cùng một lần rotate cùng mang một tên; phân biệt bằng `keyPrefix` + `createdAt`. `expiresAt` là tuỳ chọn (phải ở tương lai); **bỏ trống thì key hết hạn sau 90 ngày** (`app.api-key.default-ttl`). Muốn key không bao giờ hết hạn phải gửi rõ `"neverExpires": true`; gửi kèm `expiresAt` → 400. Key tạo kèm lúc tạo/clone environment vẫn không hết hạn.
+
+**Cảnh báo trước khi hết hạn.** Mỗi ngày 09:00 (giờ server) job quét key còn **30 / 7 / 1 ngày**, mỗi mốc gửi đúng một lần qua Slack và webhook event `API_KEY_EXPIRING` (payload có `keyName`, `keyPrefix`, `expiresAt`, `lastUsedAt`, `daysLeft` — không bao giờ có key hay hash). Nếu cả Slack lẫn webhook đều tắt, app log `WARN` lúc khởi động: key vẫn chết đúng hạn nhưng không ai được báo.
 
 **3.3 Danh sách key của environment (→ 200, phân trang, KHÔNG có plaintext lẫn hash)**
 
