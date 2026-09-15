@@ -1,59 +1,61 @@
 # Handoff
 
-*Ephemeral — overwritten by `/save-memory` at the end of each session. Read this first.*
-
-**Last updated:** 2026-09-03
-
 ## Current WIP
 
-Branch **`feature/role`** (PR #87), worked in a git worktree at
-`C:\Users\ACER\Desktop\aibless\feature_flag-role` so the main checkout could stay on
-`feature/issue-38-env-clone-import-export`. Three commits, tree clean, `./mvnw test`
-**470 tests / 0 failures**, `spotless:check` clean.
+Two branches, both committed, tested and **not yet pushed**. Neither has a PR.
 
-- `42ee946` **merge `origin/develop`** — the branch was 39 behind. Five conflicts, all unions
-  (`AuditAction`, `db.changelog-master.xml`, `docs/adr/README.md`, `MEMORY.md`, `HANDOFF.md`);
-  the four service impls auto-merged. Migrations renumbered `013–017` → **`014–018`** (filenames
-  *and* `changeSet id`s) because develop took `013` for flag hygiene; memory decision
-  `0023-abac-branch-merge` → **`0034`** because develop took `0023` for the Trivy pin.
-- `5080e4c` **production protection generalised** — `PRODUCTION_ELEVATED` table, three new
-  OWNER-only actions, rule D on all of them, `check()` resolves which prod envs an action touches.
-- `1c546ec` **import routed through the PDP** — the fourth bypass, found by the code-reviewer
-  agent after `5080e4c` was already committed.
+**`feature/api-key-hardening`** (2 commits off `develop`)
+- `cd3db5b docs:` — syncs `docs/architecture-design-v1.md` §4/§6/§7 with the code. It
+  claimed API keys were stored in plaintext (hashed since #24), ~192 bits of entropy (it
+  is 256), two filter chains (three since #29), a single 24h JWT (access 15m + refresh
+  14d), and pagination as a v2 concern (shipped in #33).
+- `ab9f200 fix:` — the three defects in [[0036-sdk-api-key-auth-hardening]].
+  New file `security/ratelimit/SdkIpRateLimitFilter.java`; `SecurityConfig`,
+  `ApiKeyAuthenticationFilter`, `RateLimitService`, `RateLimitProperties`,
+  `application.properties` modified. 478 tests pass, spotless clean, security review
+  found no HIGH/MEDIUM.
 
-Docs updated in the same commits: ADR-0006 amendment (2026-09-03), `docs/ABAC.md`
-§4/§5/§10/§11/§12, `CLAUDE.md` permission section.
+**`feature/env-create-backfills-flag-states`** (1 commit off `develop`)
+- `601e5e1 fix:` — `EnvironmentServiceImpl.create()` now backfills a state row per
+  existing flag, plus migration `019` to repair existing data. See
+  [[flag-environment-state-invariant-has-two-sides]]. 472 tests pass.
 
 ## Context to Load
 
-- [[0035-production-protection-covers-every-production-reaching-action]] — what was decided,
-  what was rejected, and the strictest-wins sharp edge.
-- [[abac-role-adapters-bypass-attribute-rules]] — read before touching any `check(...)` call
-  site or trusting that an attribute rule is enforced.
-- [[0034-abac-branch-merge-and-audit-mapping]] — the earlier merge of this branch.
-- `docs/ABAC.md` §12 — the authoritative open-gaps list, kept in the repo rather than here.
+- `decisions/0036-sdk-api-key-auth-hardening.md`
+- `conventions/short-circuiting-filter-hides-everything-after-it.md`
+- `conventions/flag-environment-state-invariant-has-two-sides.md`
+- `conventions/spring-security-filter-order-anchor.md` (why the new filter anchors on
+  `LogoutFilter`)
 
 ## Next steps
 
-1. **PR #87's body still describes the pre-merge state.** It needs a note about the two security
-   commits and the new 403s: an ADMIN archiving a flag in a project that has a `PRODUCTION`
-   environment, rotating a production key, or importing a snapshot into production.
-2. **Decide the strictest-wins sharp edge.** Disjoint change windows across two production
-   environments block archiving around the clock. Recoverable by an OWNER (`ENV_UPDATE` is not
-   window-guarded) but not by a custom role holding `FLAG_ARCHIVE_PRODUCTION` alone. The
-   alternative — apply rule D only when the call site names a single environment — is ~5 lines.
-3. **Convert the remaining `requireRole*` call sites**: `EnvironmentTransferServiceImpl.clone`
-   and `.export`, `FlagHygieneServiceImpl.list`, eight in `WebhookSubscriptionServiceImpl`. The
-   webhook ones deserve the first look — subscribing to a production environment streams every
-   production flag change to an arbitrary URL on ADMIN authority alone.
-4. **Tests are still the gap before merge** (unchanged from the previous handoff): no
-   `ProjectMemberControllerTest` / `CustomRoleControllerTest`, no repository test for
-   `PermissionGrantRepository` / `CustomRoleRepository`, no `@SpringBootTest` for Scenario A
-   (project-scoped access) or B (production protection). `listGrants` / `list` have no test.
-5. Still open from before: `ORG_READ` / `MEMBER_READ` (`OrganizationServiceImpl.get` and
-   `listMembers` gate on `isMember`), no `updateMemberRole`, grants orphaned when a project or
-   org is deleted.
+1. **Push the two branches and open PRs** against `develop`. The user also asked for a PR
+   on the pre-existing `feature/api-key-lifecycle` (11 commits unpushed, 28 ahead of
+   develop). That branch is stacked on `feat/api-key-table` (PR #123) and
+   `docs/api-key-design` (PR #122) — **base its PR on `feat/api-key-table`, not
+   `develop`**, or the diff swallows both open PRs.
 
-Housekeeping: three untracked files in the *main* checkout belong to the user, not any branch —
-`.cgcignore`, `docs/demo/`, `docs/main-flows.md`; do not commit them. The worktree can be removed
-with `git worktree remove ../feature_flag-role` once the branch is merged.
+2. **Resolve the collision before either side merges.** `feature/api-key-lifecycle`
+   rewrites `ApiKeyAuthenticationFilter` for the new `environment_api_key` table and still
+   has all three defects: unguarded `touchLastUsedAt`, `APPLICATION_JSON_VALUE` +
+   `ProblemDetail` through a bare mapper, and no pre-auth IP rate limit. Whichever merges
+   second must re-apply the fixes by hand — they conflict on the same file.
+
+3. **Three review findings still open**, all in `EnvironmentServiceImpl`, none started:
+   - `create()` accepts `type` and the change window behind `ENV_CREATE` (ADMIN), while
+     `update()` gates the same attributes on OWNER-only `ENV_MANAGE_PROTECTION`. An ADMIN
+     can create a `PRODUCTION` env with a 1-hour change window, and because
+     `productionEnvironments` resolves *every* prod env under the project for
+     project-scoped archive, that blocks archive/unarchive project-wide 23 hours a day —
+     for OWNERs too.
+   - `update()` renames without the `existsByProjectIdAndName` check that `create()` and
+     `clone()` both do, so a duplicate name returns 500 (no `DataIntegrityViolationException`
+     handler in `GlobalExceptionHandler`) instead of the 409 the create path returns.
+   - A change window cannot be cleared once set: `update()` skips null fields and
+     `isChangeWindowComplete()` rejects sending one half. Only `start == end` (zero-width,
+     treated as unrestricted) neutralises it, which is undiscoverable from the API.
+
+4. Migration `019`'s SQL is **unverified against real data** — it runs on an empty H2 in
+   CI, proving only that the syntax is valid. Run it against a local Postgres with a
+   project that has flags and a late-created environment before trusting it.
