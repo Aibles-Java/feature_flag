@@ -4,6 +4,8 @@ import java.util.Objects;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.FeatureFlag;
+import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
@@ -17,6 +19,8 @@ import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
+import org.aibles.feature_flag.repository.FeatureFlagRepository;
+import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EnvironmentService;
 import org.aibles.feature_flag.util.ApiKeyGenerator;
@@ -36,6 +40,8 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   private final PermissionService permissionService;
   private final ApplicationEventPublisher eventPublisher;
   private final AuditService auditService;
+  private final FeatureFlagRepository featureFlagRepository;
+  private final FlagEnvironmentStateRepository flagStateRepository;
 
   @Override
   @Transactional
@@ -62,6 +68,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
             .apiKeyHash(ApiKeyHasher.hash(plaintextKey))
             .build();
     Environment saved = environmentRepository.save(env);
+    backfillFlagStates(project, saved);
     // Audit the non-secret view only — never the plaintext key.
     auditService.record(
         AuditEntityType.ENVIRONMENT,
@@ -162,6 +169,33 @@ public class EnvironmentServiceImpl implements EnvironmentService {
         null,
         null);
     return toSecretResponse(saved, plaintextKey);
+  }
+
+  /**
+   * Gives every flag already in the project a state row in the new environment.
+   *
+   * <p>Mirror image of {@code FeatureFlagServiceImpl.create()}, which does the same in the other
+   * direction for every existing environment. The invariant both sides maintain is that each (flag,
+   * environment) pair has exactly one row: the SDK reads flags <em>through</em> that table, so a
+   * flag with no row for this environment is simply absent from {@code GET /api/v1/sdk/flags} and
+   * 404s on the single-flag endpoint — silently, with no error anywhere to explain it. The admin
+   * API cannot rescue it either, since updating a state requires the row to exist.
+   *
+   * <p>Archived flags are included. They are still flags in the project, and skipping them would
+   * reopen the same gap the moment one is unarchived.
+   *
+   * <p>New rows start disabled. An environment never inherits another environment's values —
+   * copying state is what {@code EnvironmentTransferServiceImpl.clone()} is for.
+   */
+  private void backfillFlagStates(Project project, Environment environment) {
+    for (FeatureFlag flag : featureFlagRepository.findAllByProjectId(project.getId())) {
+      flagStateRepository.save(
+          FlagEnvironmentState.builder()
+              .featureFlag(flag)
+              .environment(environment)
+              .enabled(false)
+              .build());
+    }
   }
 
   private Environment findById(UUID id) {
