@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Repairs the data left behind by the bug fixed in EnvironmentServiceImpl.create():
+      creating an environment did not create a FlagEnvironmentState for the flags the
+      project already had, so every such (flag, environment) pair is missing its row.
+
+      The consequence was silent: the SDK reads flags *through* this table, so those flags
+      simply did not appear in GET /api/v1/sdk/flags for the new environment, and the admin
+      API could not toggle them (updating a state requires the row to exist). The service
+      fix only protects environments created from now on — without this backfill, every
+      environment already created after its project had flags stays broken.
+
+      Safe to re-run: the LEFT JOIN ... IS NULL only inserts pairs that have no row, and
+      uq_flag_states_flag_env (migration 007) would reject a duplicate anyway.
+
+      Archived flags are included deliberately, matching the service: they are still flags in
+      the project, and skipping them would reopen the gap the moment one is unarchived.
+
+      Defaults come from the table itself (007/008): enabled=false, rollout_percent=100,
+      created_at/updated_at=now(). New rows start disabled — a repair must never turn a flag
+      ON in an environment nobody has configured.
+    -->
+    <changeSet id="019-backfill-missing-flag-environment-states" author="dev">
+        <sql>
+            INSERT INTO flag_environment_states (feature_flag_id, environment_id)
+            SELECT f.id, e.id
+            FROM feature_flags f
+            JOIN environments e ON e.project_id = f.project_id
+            LEFT JOIN flag_environment_states s
+                   ON s.feature_flag_id = f.id AND s.environment_id = e.id
+            WHERE s.id IS NULL
+        </sql>
+        <!--
+          Not reversible: the inserted rows are indistinguishable from legitimately created
+          ones, so a rollback would have to guess which to delete. Deleting flag state is
+          destructive and this migration only ever adds rows that should have existed all
+          along, so an empty rollback is the safe contract.
+        -->
+        <rollback/>
+    </changeSet>
+
+</databaseChangeLog>
