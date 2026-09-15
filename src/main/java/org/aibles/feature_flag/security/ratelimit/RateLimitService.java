@@ -5,6 +5,8 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
 import java.time.Duration;
+import java.util.EnumMap;
+import java.util.Map;
 import org.springframework.stereotype.Service;
 
 /**
@@ -25,21 +27,34 @@ import org.springframework.stereotype.Service;
 public class RateLimitService {
 
   public enum Scope {
+    /** Per-IP, on the unauthenticated {@code /api/v1/auth/**} endpoints. */
     AUTH,
-    SDK
+    /** Per-environment, on {@code /api/v1/sdk/**} once the API key has authenticated. */
+    SDK,
+    /** Per-IP, on {@code /api/v1/sdk/**} before the API key is authenticated. */
+    SDK_IP
   }
 
   /** Idle buckets are kept for this multiple of the refill period before eviction. */
   private static final int IDLE_EVICTION_FACTOR = 2;
 
   private final RateLimitProperties properties;
-  private final Cache<String, Bucket> authBuckets;
-  private final Cache<String, Bucket> sdkBuckets;
+
+  /**
+   * One bucket cache and one limit per scope. Keyed by scope rather than held in named fields so
+   * that adding a scope cannot silently fall through to another scope's bucket — the bug that let
+   * {@code SDK_IP} share {@code SDK}'s buckets when it was first introduced.
+   */
+  private final Map<Scope, RateLimitProperties.Limit> limits = new EnumMap<>(Scope.class);
+
+  private final Map<Scope, Cache<String, Bucket>> buckets = new EnumMap<>(Scope.class);
 
   public RateLimitService(RateLimitProperties properties) {
     this.properties = properties;
-    this.authBuckets = buildCache(properties.getAuth());
-    this.sdkBuckets = buildCache(properties.getSdk());
+    limits.put(Scope.AUTH, properties.getAuth());
+    limits.put(Scope.SDK, properties.getSdk());
+    limits.put(Scope.SDK_IP, properties.getSdkIp());
+    limits.forEach((scope, limit) -> buckets.put(scope, buildCache(limit)));
   }
 
   public boolean isEnabled() {
@@ -50,10 +65,8 @@ public class RateLimitService {
    * Attempts to consume one token for {@code key} in {@code scope}; the probe reports the verdict.
    */
   public ConsumptionProbe tryConsume(Scope scope, String key) {
-    Cache<String, Bucket> buckets = scope == Scope.AUTH ? authBuckets : sdkBuckets;
-    RateLimitProperties.Limit limit =
-        scope == Scope.AUTH ? properties.getAuth() : properties.getSdk();
-    Bucket bucket = buckets.get(key, k -> newBucket(limit));
+    RateLimitProperties.Limit limit = limits.get(scope);
+    Bucket bucket = buckets.get(scope).get(key, k -> newBucket(limit));
     return bucket.tryConsumeAndReturnRemaining(1);
   }
 
