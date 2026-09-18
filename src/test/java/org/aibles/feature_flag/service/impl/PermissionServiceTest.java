@@ -443,6 +443,128 @@ class PermissionServiceTest {
     verify(environmentRepository, never()).findAllByProjectId(any(UUID.class));
   }
 
+  // ── check(): API key lifecycle actions (create/revoke, and rule D's one exception) ───
+
+  @Test
+  void adminCannotCreateAKeyOnAProductionEnvironment() {
+    // Issuing a new production credential changes what production SDKs can do, so it is
+    // elevated for the same reason archiving a flag is.
+    stubProjectRole(MemberRole.ADMIN);
+    Environment prod = production(null, null);
+
+    assertThatThrownBy(
+            () ->
+                permissionService.check(
+                    Action.ENV_KEY_CREATE,
+                    PermissionService.ResourceRef.environment(projectId, prod)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("requires elevated permission");
+  }
+
+  @Test
+  void ownerCanCreateAProductionKeyInsideTheChangeWindow() {
+    stubProjectRole(MemberRole.OWNER);
+    givenClockHour(10);
+    Environment prod = production(9, 17);
+
+    assertThatCode(
+            () ->
+                permissionService.check(
+                    Action.ENV_KEY_CREATE,
+                    PermissionService.ResourceRef.environment(projectId, prod)))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void ownerCannotCreateAProductionKeyOutsideTheChangeWindow() {
+    stubProjectRole(MemberRole.OWNER);
+    givenClockHour(20);
+    Environment prod = production(9, 17);
+
+    assertThatThrownBy(
+            () ->
+                permissionService.check(
+                    Action.ENV_KEY_CREATE,
+                    PermissionService.ResourceRef.environment(projectId, prod)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("change window");
+  }
+
+  @Test
+  void adminCannotRevokeAProductionKey() {
+    // Revoking is an off-switch for production SDKs, so it stays OWNER-gated.
+    stubProjectRole(MemberRole.ADMIN);
+    Environment prod = production(null, null);
+
+    assertThatThrownBy(
+            () ->
+                permissionService.check(
+                    Action.ENV_KEY_REVOKE,
+                    PermissionService.ResourceRef.environment(projectId, prod)))
+        .isInstanceOf(UnauthorizedException.class);
+  }
+
+  @Test
+  void ownerCanRevokeAProductionKeyOutsideTheChangeWindow() {
+    // THE test that pins the rule D exception. A key leaked at 03:00 must be withdrawable
+    // at 03:00: revocation only ever reduces access, so the window prevents no attack while
+    // the delay it imposes is exactly what an attacker holding a leaked key wants.
+    stubProjectRole(MemberRole.OWNER);
+    givenClockHour(3);
+    Environment prod = production(9, 17);
+
+    assertThatCode(
+            () ->
+                permissionService.check(
+                    Action.ENV_KEY_REVOKE,
+                    PermissionService.ResourceRef.environment(projectId, prod)))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void theWindowExemptionDoesNotLeakToKeyCreation() {
+    // Guards against someone later adding ENV_KEY_CREATE_PRODUCTION to WINDOW_EXEMPT.
+    stubProjectRole(MemberRole.OWNER);
+    givenClockHour(3);
+    Environment prod = production(9, 17);
+
+    assertThatThrownBy(
+            () ->
+                permissionService.check(
+                    Action.ENV_KEY_CREATE,
+                    PermissionService.ResourceRef.environment(projectId, prod)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("change window");
+  }
+
+  @Test
+  void keyActionsOnANonProductionEnvironmentNeedOnlyAdmin() {
+    stubProjectRole(MemberRole.ADMIN);
+    Environment dev = developmentEnvironment();
+
+    assertThatCode(
+            () -> {
+              permissionService.check(
+                  Action.ENV_KEY_CREATE, PermissionService.ResourceRef.environment(projectId, dev));
+              permissionService.check(
+                  Action.ENV_KEY_REVOKE, PermissionService.ResourceRef.environment(projectId, dev));
+            })
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void viewerCanDoNeither() {
+    stubProjectRole(MemberRole.VIEWER);
+    Environment dev = developmentEnvironment();
+
+    assertThatThrownBy(
+            () ->
+                permissionService.check(
+                    Action.ENV_KEY_CREATE,
+                    PermissionService.ResourceRef.environment(projectId, dev)))
+        .isInstanceOf(UnauthorizedException.class);
+  }
+
   // ── helpers ─────────────────────────────────────────────────────────────────────────
 
   private OrganizationMember member(MemberRole role) {
@@ -476,6 +598,23 @@ class PermissionServiceTest {
 
   private Environment production(Integer start, Integer end) {
     return environment(EnvType.PRODUCTION, start, end);
+  }
+
+  private Environment developmentEnvironment() {
+    return environment(EnvType.DEVELOPMENT, null, null);
+  }
+
+  /**
+   * Rebuilds {@link #permissionService} against a clock fixed at the given local hour (same date as
+   * the class-level clock), so change-window tests can exercise hours other than 10 without
+   * touching the shared field other tests rely on.
+   */
+  private void givenClockHour(int hour) {
+    Clock hourClock =
+        Clock.fixed(Instant.parse(String.format("2026-07-02T%02d:30:00Z", hour)), ZoneOffset.UTC);
+    permissionService =
+        new PermissionService(
+            memberRepository, projectRepository, environmentRepository, grantRepository, hourClock);
   }
 
   private void stubProjectEnvironments(Environment... environments) {

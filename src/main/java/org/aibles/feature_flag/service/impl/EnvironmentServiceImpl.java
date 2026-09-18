@@ -2,29 +2,32 @@ package org.aibles.feature_flag.service.impl;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.EnvType;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
+import org.aibles.feature_flag.dto.request.RotateApiKeyRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
+import org.aibles.feature_flag.dto.response.ApiKeySecretResponse;
 import org.aibles.feature_flag.dto.response.EnvironmentResponse;
 import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
-import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
+import org.aibles.feature_flag.service.EnvironmentApiKeyService;
 import org.aibles.feature_flag.service.EnvironmentService;
 import org.aibles.feature_flag.util.EnvironmentApiKeyFactory;
 import org.aibles.feature_flag.util.EnvironmentApiKeyFactory.MintedKey;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -38,7 +41,10 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   private final EnvironmentApiKeyRepository apiKeyRepository;
   private final ProjectRepository projectRepository;
   private final PermissionService permissionService;
-  private final ApplicationEventPublisher eventPublisher;
+  // NOT EnvironmentApiKeyServiceImpl injecting this class back: that would be a circular bean
+  // dependency. This is a one-way dependency onto the key service, used only by the legacy
+  // env-level rotate endpoint below.
+  private final EnvironmentApiKeyService apiKeyService;
   private final AuditService auditService;
   private final Clock clock;
 
@@ -151,35 +157,29 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   @Transactional
   public EnvironmentSecretResponse rotateApiKey(UUID id) {
     Environment env = findById(id);
+    // Authorize before resolving or revealing anything below: an unauthorized caller must not
+    // learn how many active keys this environment holds (or that it has any at all) from the
+    // 409 message that follows.
     permissionService.check(
         Action.ENV_ROTATE_KEY,
         PermissionService.ResourceRef.environment(env.getProject().getId(), env));
-    LocalDateTime now = LocalDateTime.now(clock);
-    apiKeyRepository
-        .findActiveByEnvironmentId(id, now)
-        .forEach(existing -> existing.setRevokedAt(now));
-    MintedKey minted =
-        EnvironmentApiKeyFactory.mint(
-            env,
-            EnvironmentApiKeyFactory.DEFAULT_KEY_NAME,
-            null,
-            permissionService.currentUserId());
-    apiKeyRepository.save(minted.key());
-    eventPublisher.publishEvent(
-        new ApiKeyRotatedEvent(
-            env.getId(),
-            env.getName(),
-            env.getProject().getName(),
-            permissionService.currentUserEmail()));
-    // Record the rotation event only — never the key (before/after intentionally null).
-    auditService.record(
-        AuditEntityType.API_KEY,
-        id,
-        AuditAction.ROTATE_API_KEY,
-        env.getProject().getOrganization().getId(),
-        null,
-        null);
-    return toSecretResponse(env, minted.plaintext());
+    List<EnvironmentApiKey> active =
+        apiKeyRepository.findActiveByEnvironmentId(id, LocalDateTime.now(clock));
+    // "The" key is only meaningful while there is exactly one. With several, the caller has
+    // to say which — silently picking one would revoke a credential they did not name.
+    if (active.size() != 1) {
+      throw new DuplicateResourceException(
+          "Environment has "
+              + active.size()
+              + " active API keys; use POST /api/v1/environments/{envId}/api-keys/{keyId}/rotate");
+    }
+    // apiKeyService.rotate() re-checks ENV_ROTATE_KEY below — intentional duplication, not an
+    // oversight: it is a pure predicate re-run on an already-loaded environment, and removing
+    // either check would leave a path whose safety depends on the other method never being
+    // called directly.
+    ApiKeySecretResponse rotated =
+        apiKeyService.rotate(id, active.get(0).getId(), new RotateApiKeyRequest());
+    return toSecretResponse(env, rotated.getApiKey());
   }
 
   private Environment findById(UUID id) {

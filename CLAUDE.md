@@ -70,14 +70,25 @@ effectiveActions(user, org)     = actionsForRole(org role)      // grants never 
   `CustomRole` (an org-scoped named set of `Action`s). Grants only **add** capability; an org
   OWNER/ADMIN is never downgraded by a narrow grant.
 - Two attribute rules layer on top of the action check. Any action in `PRODUCTION_ELEVATED`
-  (`FLAG_STATE_UPDATE`, `FLAG_ARCHIVE`, `ENV_ROTATE_KEY`, `ENV_DELETE`) that reaches a
-  `PRODUCTION` environment is rewritten to its OWNER-only `*_PRODUCTION` counterpart, and must
-  fall inside that environment's optional change window. **Archiving counts** — archived flags
-  are filtered out of every SDK response, so leaving it unguarded made the rule bypassable; any
-  new action that changes production behaviour has to be added to that table.
+  (`FLAG_STATE_UPDATE`, `FLAG_ARCHIVE`, `ENV_ROTATE_KEY`, `ENV_DELETE`, `ENV_KEY_CREATE`,
+  `ENV_KEY_REVOKE`) that reaches a `PRODUCTION` environment is rewritten to its OWNER-only
+  `*_PRODUCTION` counterpart, and must fall inside that environment's optional change window
+  (rule D). **Archiving counts** — archived flags are filtered out of every SDK response, so
+  leaving it unguarded made the rule bypassable; any new action that changes production
+  behaviour has to be added to that table.
 - The environments an action is measured against: the one the call site names
   (`ResourceRef.environment(...)`), or — for project-scoped archive/unarchive — every production
   environment under the project, where the strictest change window wins.
+- **One exception to rule D:** `ENV_KEY_REVOKE_PRODUCTION` is in `PermissionService.WINDOW_EXEMPT`
+  — revoking a production API key still requires OWNER (rule B is untouched) but skips the change
+  window. Revocation is monotonically restrictive (it can only remove access, never grant it), so
+  the window blocks no attack while its delay is exactly what an attacker holding a leaked key
+  wants — a key leaked at 03:00 must be withdrawable at 03:00. Rotating a production key
+  (`ENV_ROTATE_KEY_PRODUCTION`) is deliberately **not** exempt: it issues a new credential, which
+  is a planned change and stays fully windowed. This is the first exception to rule D — see
+  `docs/ABAC.md` and `docs/adr/ADR-0006-abac-authorization-model.md`, and the pinning test
+  `PermissionServiceTest.ownerCanRevokeAProductionKeyOutsideTheChangeWindow` — before adding a
+  second one.
 
 Call sites use `check(Action, ResourceRef)`. The older `requireRole(...)` /
 `requireRoleForProject(...)` / `requireRoleForEnvironment(...)` methods are **kept as adapters** so
@@ -120,11 +131,57 @@ defaults**, so prod can never fall back to dev values. `config/JwtProperties` (t
 is missing, an unresolved `${...}` placeholder, shorter than 512 bits (64 UTF-8 bytes), or
 contains the `change-me` placeholder marker.
 
-DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–011` and `013–017`; `012` is reserved by the in-flight webhooks branch). Never modify a changeset that has already run; always add a new one.
+DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–020` and `023`, included via `db.changelog-core.xml` for 001–019 plus `020` and `023` on top — see below; `021`/`022` belong to `feature/invite-member-by-email`). Never modify a changeset that has already run; always add a new one.
 
 ## API Key generation
 
-`ApiKeyGenerator` uses `SecureRandom` → 32 bytes → `HexFormat.of().formatHex()` → 64-char hex string. This runs on environment creation, on `POST /api/v1/environments/{id}/api-key/rotate`, and on `POST /api/v1/environments/{id}/clone` (a clone always mints its own key — the source's is never copied).
+An environment holds SDK keys as rows in `environment_api_key` (migration `019`), not a single
+`environments.api_key_hash` column — that column and `environments.last_used_at` were dropped in
+migration `020` after their data was backfilled into the new table (the hash is **copied**, never
+recomputed, so every key already deployed keeps authenticating across the migration). An
+environment can hold several concurrently-valid keys (cap: 10 active), each with its own optional
+`expires_at` and its own `revoked_at` (soft revoke — the row is never deleted).
+
+`ApiKeyGenerator` is unchanged: `SecureRandom` → 32 bytes → `HexFormat.of().formatHex()` → 64-char
+hex string. `EnvironmentApiKeyFactory.mint(...)` is the single construction point built on top of
+it — it generates the plaintext, hashes it, and derives an 8-char `key_prefix` (stored alongside
+the hash so an operator can tell rows apart once the plaintext is gone) — and it is the only place
+all three minting call sites go through: environment creation (`EnvironmentServiceImpl.create()`),
+environment cloning (`EnvironmentTransferServiceImpl.clone()` — a clone always mints its own key,
+never copies the source's), and `POST /api/v1/environments/{envId}/api-keys` (create). A plaintext
+key is returned exactly once, at mint time; every read endpoint returns the hash-and-plaintext-free
+view.
+
+Key lifecycle (create / list / revoke / rotate) lives under
+`/api/v1/environments/{envId}/api-keys` and is authorized through the ABAC actions `ENV_KEY_CREATE`
+and `ENV_KEY_REVOKE` (see the permission-model section above). `POST .../{keyId}/rotate` supports a
+`graceHours` grace period: the old key keeps authenticating until the deadline instead of dying the
+instant the call returns, so an SDK fleet can be redeployed with no downtime; `graceHours=0` (the
+default) revokes the old key immediately, reproducing the pre-lifecycle hard cutover. The legacy
+`POST /api/v1/environments/{envId}/api-key/rotate` still works when the environment has exactly one
+active key; with zero or several it returns 409 naming the key-level endpoint instead of guessing
+which key "the" key is.
+
+**Default lifetime and expiry warnings** (`docs/superpowers/specs/2026-09-14-api-key-default-expiry-and-warnings-design.md`).
+A key created through `POST .../api-keys` with neither `expiresAt` nor `neverExpires: true` expires
+after `app.api-key.default-ttl` (90 days); environment creation and cloning still mint a
+non-expiring `default` key. Rotation gives the new key a fresh lifetime of the same length as the
+old one (`now + (expiresAt − createdAt)`; never-expiring stays never-expiring) — inheriting the old
+deadline would make rotation useless against an expiring key. `ApiKeyExpiryScheduler` scans daily
+and `ApiKeyExpiryNotifier` warns once per threshold (30/7/1 days) through Slack and the
+`API_KEY_EXPIRING` webhook event, claiming the threshold with a conditional UPDATE on
+`expiry_notice_sent_days` (migration `023`). When a rotation has a grace period
+(`graceHours > 0`), the old key's `expires_at` is rewritten to the new deadline, and that key's
+`expiry_notice_sent_days` is cleared, re-arming its warnings for the new deadline. Two rules that are easy to break:
+
+1. **Publish the event inside the notifier's transaction.** The listeners are
+   `@TransactionalEventListener(AFTER_COMMIT)` without `fallbackExecution`; an event published with
+   no active transaction is dropped silently.
+2. **Keep the notifier a separate bean from the scheduler.** A self-invoked `@Transactional` method
+   runs with no transaction and falls into rule 1. `ApiKeyExpiryWarningIntegrationTest` pins both.
+
+API key expiry is enforced, unlike flag expiry, which is only reported (`decisions/0028`) — the
+difference is intentional.
 
 ## Outbound webhooks (issue #36)
 
@@ -218,7 +275,7 @@ Expiry is reported, **never** auto-enforced — see `decisions/0028`.
 **Sensitive areas (extra care):**
 - `security/` and JWT config — two-filter-chain auth design (SDK vs Admin), order matters
 - `src/main/resources/db/changelog/migrations/` — never modify an already-run changeset, always add a new one
-- `ApiKeyGenerator` / API key rotation endpoint (`SecureRandom`-based)
+- `ApiKeyGenerator` / `EnvironmentApiKeyFactory` / API key create-rotate-revoke endpoints (`SecureRandom`-based; revocation is soft, `revoked_at` only)
 
 **Test isolation:**
 - Tests use H2; local/integration runs use PostgreSQL via `docker compose up -d`
