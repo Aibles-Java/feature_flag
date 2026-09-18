@@ -115,12 +115,7 @@ class FlagEnvironmentStateRepositoryTest {
       project = persist(Project.builder().organization(org).name("Proj").build());
 
       env =
-          persist(
-              Environment.builder()
-                  .project(project)
-                  .name("env-" + System.nanoTime())
-                  .apiKeyHash("key-" + System.nanoTime())
-                  .build());
+          persist(Environment.builder().project(project).name("env-" + System.nanoTime()).build());
     }
 
     FeatureFlag flag(String key, boolean archived) {

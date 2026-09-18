@@ -10,8 +10,10 @@ import static org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppC
 
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
@@ -58,6 +60,7 @@ class RateLimitIntegrationTest {
   @Autowired private OrganizationRepository organizationRepository;
   @Autowired private ProjectRepository projectRepository;
   @Autowired private EnvironmentRepository environmentRepository;
+  @Autowired private EnvironmentApiKeyRepository apiKeyRepository;
 
   private MockMvc mockMvc;
 
@@ -144,11 +147,14 @@ class RateLimitIntegrationTest {
     // Store only the SHA-256 hash (issue #24); the plaintext key is what the SDK sends in the
     // header.
     String apiKey = "ratelimit-key-" + unique;
-    environmentRepository.save(
-        Environment.builder()
-            .project(project)
-            .name("env-" + unique)
-            .apiKeyHash(ApiKeyHasher.hash(apiKey))
+    Environment env =
+        environmentRepository.save(
+            Environment.builder().project(project).name("env-" + unique).build());
+    apiKeyRepository.save(
+        EnvironmentApiKey.builder()
+            .environment(env)
+            .name("default")
+            .keyHash(ApiKeyHasher.hash(apiKey))
             .build());
     return apiKey;
   }

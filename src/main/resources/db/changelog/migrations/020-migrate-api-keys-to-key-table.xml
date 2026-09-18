@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Moves every environment's key into environment_api_key and drops the old columns.
+      Because the hash is COPIED rather than recomputed, every key already deployed in the
+      field keeps authenticating across this migration. Getting that wrong logs out every
+      SDK client in production, so ApiKeyBackfillTest seeds a pre-migration row and asserts
+      it survives. That fixture lives in a test-only changelog under src/test/resources —
+      never here: a context attribute would NOT have confined it, because Liquibase runs a
+      context-tagged changeset whenever the runtime context set is empty, which it is in
+      every configuration in this repo.
+    -->
+
+    <changeSet id="020-1-backfill-keys" author="dev">
+        <!--
+          id is left to its defaultValueComputed default, exactly as 016 does, so this statement
+          contains no engine-specific UUID function and runs unchanged on PostgreSQL and H2.
+          key_prefix is empty: the plaintext was never stored, so no prefix is recoverable.
+        -->
+        <sql>
+            INSERT INTO environment_api_key
+                (environment_id, name, key_hash, key_prefix, last_used_at)
+            SELECT id, 'default', api_key_hash, '', last_used_at FROM environments
+        </sql>
+        <rollback>
+            <!--
+              name = 'default' is NOT a safe marker: EnvironmentApiKeyFactory.DEFAULT_KEY_NAME is
+              also 'default', so every key minted by create()/rotateApiKey()/clone() after this
+              migration ran is named 'default' too, and a name-only delete would destroy live
+              credentials the backfill never inserted. key_prefix = '' is the real marker: the
+              backfill writes an empty prefix because the plaintext was never recoverable, while
+              EnvironmentApiKeyFactory.mint() always derives a real 8-character prefix from the
+              plaintext it hands back. So only rows the backfill actually inserted are removed.
+            -->
+            <sql>DELETE FROM environment_api_key WHERE name = 'default' AND key_prefix = ''</sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="020-2-drop-environment-key-columns" author="dev">
+        <dropUniqueConstraint tableName="environments"
+                              constraintName="uq_environments_api_key_hash"/>
+        <dropColumn tableName="environments" columnName="api_key_hash"/>
+        <dropColumn tableName="environments" columnName="last_used_at"/>
+        <rollback>
+            <addColumn tableName="environments">
+                <column name="api_key_hash" type="VARCHAR(64)"/>
+                <column name="last_used_at" type="TIMESTAMPTZ"/>
+            </addColumn>
+            <!--
+              Restore the data before re-imposing the constraints, matched by the same
+              key_prefix = '' marker 020-1's rollback uses to identify backfilled rows. Each
+              environment has at most one such row (the backfill inserts exactly one per
+              environment), so this correlated subquery cannot return more than one row.
+
+              Deliberate design point: an environment created after 020 ran has no backfilled
+              row, so its api_key_hash stays NULL here and the addNotNullConstraint below aborts
+              the rollback for it. That is intended — such an environment's live key genuinely
+              cannot be moved back into a one-key-per-environment schema, and failing loudly beats
+              a rollback that reports success while leaving credentials unrecoverable. Do not add
+              a fallback that picks an arbitrary key to paper over this.
+            -->
+            <sql>
+                UPDATE environments e
+                SET api_key_hash = (
+                        SELECT k.key_hash FROM environment_api_key k
+                        WHERE k.environment_id = e.id AND k.key_prefix = ''
+                    ),
+                    last_used_at = (
+                        SELECT k.last_used_at FROM environment_api_key k
+                        WHERE k.environment_id = e.id AND k.key_prefix = ''
+                    )
+            </sql>
+            <addNotNullConstraint tableName="environments"
+                                  columnName="api_key_hash"
+                                  columnDataType="VARCHAR(64)"/>
+            <addUniqueConstraint tableName="environments"
+                                 columnNames="api_key_hash"
+                                 constraintName="uq_environments_api_key_hash"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

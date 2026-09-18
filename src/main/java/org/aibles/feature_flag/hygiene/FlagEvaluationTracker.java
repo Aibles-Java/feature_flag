@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>Writing on every read would put an UPDATE in front of every SDK evaluation, so there are two
  * layers of throttling — the same shape {@code ApiKeyAuthenticationFilter} uses for {@code
- * environments.last_used_at}:
+ * environment_api_key.last_used_at}:
  *
  * <ol>
  *   <li>An in-memory Caffeine set of recently-stamped keys, expiring after the throttle window.
