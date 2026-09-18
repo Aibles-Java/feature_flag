@@ -28,7 +28,6 @@ import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.repository.WebhookDeliveryAttemptRepository;
 import org.aibles.feature_flag.repository.WebhookSubscriptionRepository;
-import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.aibles.feature_flag.util.SecretCipher;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -110,11 +109,7 @@ class WebhookDeliveryIntegrationTest {
         projectRepository.save(Project.builder().organization(org).name("web").build());
     environment =
         environmentRepository.save(
-            Environment.builder()
-                .project(project)
-                .name("production")
-                .apiKeyHash(ApiKeyHasher.hash(UUID.randomUUID().toString()))
-                .build());
+            Environment.builder().project(project).name("production").build());
   }
 
   @AfterEach

@@ -28,12 +28,13 @@ import org.aibles.feature_flag.dto.response.ImportResultResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.InvalidRequestException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.service.EnvironmentTransferService;
-import org.aibles.feature_flag.util.ApiKeyGenerator;
-import org.aibles.feature_flag.util.ApiKeyHasher;
+import org.aibles.feature_flag.util.EnvironmentApiKeyFactory;
+import org.aibles.feature_flag.util.EnvironmentApiKeyFactory.MintedKey;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,6 +44,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class EnvironmentTransferServiceImpl implements EnvironmentTransferService {
 
   private final EnvironmentRepository environmentRepository;
+  private final EnvironmentApiKeyRepository apiKeyRepository;
   private final FeatureFlagRepository featureFlagRepository;
   private final FlagEnvironmentStateRepository flagStateRepository;
   private final PermissionService permissionService;
@@ -63,15 +65,20 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
 
     // A clone is a new environment, so it gets its own key — copying the source's would silently
     // widen the blast radius of a leaked key across two environments.
-    String plaintextKey = ApiKeyGenerator.generate();
     Environment target =
         environmentRepository.save(
             Environment.builder()
                 .project(project)
                 .name(request.getName())
                 .description(request.getDescription())
-                .apiKeyHash(ApiKeyHasher.hash(plaintextKey))
                 .build());
+    MintedKey minted =
+        EnvironmentApiKeyFactory.mint(
+            target,
+            EnvironmentApiKeyFactory.DEFAULT_KEY_NAME,
+            null,
+            permissionService.currentUserId());
+    apiKeyRepository.save(minted.key());
 
     for (FlagEnvironmentState state :
         flagStateRepository.findAllByEnvironmentIdOrderByFlagKey(sourceEnvironmentId)) {
@@ -100,7 +107,7 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
         .name(target.getName())
         .description(target.getDescription())
         .projectId(project.getId())
-        .apiKey(plaintextKey)
+        .apiKey(minted.plaintext())
         .createdAt(target.getCreatedAt())
         .build();
   }

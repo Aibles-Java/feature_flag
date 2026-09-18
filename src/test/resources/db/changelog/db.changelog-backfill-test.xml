@@ -4,7 +4,15 @@
                    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
 
+    <!--
+      Used ONLY by ApiKeyBackfillTest (via spring.liquibase.change-log), never by
+      db.changelog-master.xml. Runs core (001-019), then the test-only seed fixture — inserted
+      while environments.api_key_hash still exists — then 020 (the real backfill + column drop),
+      so the test can assert the seeded pre-migration key survives the cutover.
+    -->
+
     <include file="db/changelog/db.changelog-core.xml"/>
+    <include file="db/changelog/020-0-seed-backfill-fixture.xml"/>
     <include file="db/changelog/migrations/020-migrate-api-keys-to-key-table.xml"/>
 
 </databaseChangeLog>
