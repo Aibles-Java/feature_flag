@@ -62,6 +62,55 @@ jobs:
           path: target/site/jacoco/
           if-no-files-found: warn
 
+  # SCA gate — Trivy filesystem mode scans the SDK module's built JAR and pom.xml
+  # for HIGH/CRITICAL CVEs in Java dependencies (SR-08, G1 evidence).
+  #
+  # Why Trivy fs (not OWASP dependency-check):
+  #   * Trivy is already configured in this repo (image-scan gate above) and reuses
+  #     the same .trivyignore allowlist, so triaged exceptions are consistent.
+  #   * Trivy fs is fast (<30 s), needs no NVD API key, and runs without Docker.
+  #   * OWASP dependency-check requires a Maven plugin addition (more pom churn)
+  #     and an NVD API key secret; Trivy fs adds only a GHA step.
+  #
+  # The job builds the SDK module first (mvnw package -pl feature-flag-sdk) to
+  # produce the JAR, then Trivy scans the feature-flag-sdk/ directory
+  # (pom.xml + target/*.jar). It exits 1 on any HIGH/CRITICAL finding not covered
+  # by .trivyignore, blocking publish. Skipped on workflow_dispatch.
+  sca-sdk:
+    name: SCA — SDK dependencies (Trivy fs)
+    needs: test
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build SDK module (produces JAR for scanning)
+        run: >-
+          ./mvnw --batch-mode --no-transfer-progress
+          -pl feature-flag-sdk
+          package -DskipTests
+
+      - name: Scan SDK dependencies with Trivy (filesystem mode)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: feature-flag-sdk
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
   # SonarQube analysis — merged in from the former standalone sonar.yml so it is
   # gated behind `test` and only starts once the build + tests are green (a red
   # build no longer triggers a redundant Sonar run). It is intentionally kept
@@ -173,22 +222,24 @@ jobs:
   # cache so the second build is fast, not a full rebuild.
   publish:
     name: Publish Docker image (GHCR)
-    # Gated on `test`, `sonar` AND `scan`: a red build, a failed Sonar/Quality
-    # Gate, OR a HIGH/CRITICAL Trivy finding now blocks the image from shipping.
+    # Gated on `test`, `sonar`, `scan` AND `sca-sdk`: a red build, a failed
+    # Sonar/Quality Gate, a HIGH/CRITICAL image CVE, OR a HIGH/CRITICAL SDK
+    # dependency CVE now blocks the image from shipping.
     # `sonar` is SKIPPED on tag pushes (its `if` excludes tags) and on fork PRs —
     # a skipped dependency would normally skip `publish` too, which would break
     # releases, so the `if` uses `!cancelled()` + explicit result checks to allow
     # `sonar == skipped` while still blocking on `sonar == failure/cancelled`.
-    # `scan` runs on every push (only skipped on workflow_dispatch, where publish
-    # is itself gated out), so it is required to be an explicit `success` here.
+    # `scan` and `sca-sdk` run on every push (only skipped on workflow_dispatch,
+    # where publish is itself gated out), so both are required to be `success`.
     # `needs.test` must be an explicit `success` check because `!cancelled()`
     # drops the implicit gate.
-    needs: [test, sonar, scan]
+    needs: [test, sonar, scan, sca-sdk]
     if: >-
       ${{ !cancelled()
         && needs.test.result == 'success'
         && (needs.sonar.result == 'success' || needs.sonar.result == 'skipped')
         && needs.scan.result == 'success'
+        && needs.sca-sdk.result == 'success'
         && github.event_name == 'push'
         && (github.ref == 'refs/heads/develop'
           || github.ref == 'refs/heads/main'
