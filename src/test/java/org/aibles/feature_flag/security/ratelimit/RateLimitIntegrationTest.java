@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup;
 
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
@@ -76,7 +77,7 @@ class RateLimitIntegrationTest {
 
   @Test
   void authLoginIsRateLimitedPerIpWith429AndRetryAfter() throws Exception {
-    String clientIp = "203.0.113." + (int) (UUID.randomUUID().getLeastSignificantBits() & 0xFF);
+    String clientIp = uniqueTestIp();
     String body = "{\"email\":\"nobody@example.com\",\"password\":\"whatever\"}";
 
     // First `capacity` requests are not rate-limited (they fail auth, but never with 429).
@@ -180,9 +181,15 @@ class RateLimitIntegrationTest {
     mockMvc.perform(get(SDK_ENDPOINT).with(from(clientIp))).andExpect(status().isTooManyRequests());
   }
 
-  /** A source IP unique to one test method, so the shared in-memory buckets never collide. */
+  private static final AtomicInteger NEXT_TEST_IP = new AtomicInteger(1);
+
+  /**
+   * A source IP unique to one test method, so the shared in-memory buckets never collide. A counter
+   * rather than a random octet: three random picks from 256 collide ~1% of the time, and a shared
+   * bucket makes the invalid-key test see its 429 early.
+   */
   private static String uniqueTestIp() {
-    return "203.0.113." + (int) (UUID.randomUUID().getLeastSignificantBits() & 0xFF);
+    return "203.0.113." + NEXT_TEST_IP.getAndIncrement();
   }
 
   private static RequestPostProcessor from(String clientIp) {
