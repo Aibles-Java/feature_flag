@@ -23,6 +23,7 @@ import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EnvironmentService;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.ApiKeyGenerator;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.springframework.context.ApplicationEventPublisher;
@@ -39,6 +40,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   private final ProjectRepository projectRepository;
   private final PermissionService permissionService;
   private final ApplicationEventPublisher eventPublisher;
+  private final EvaluationCacheService evaluationCacheService;
   private final AuditService auditService;
   private final FeatureFlagRepository featureFlagRepository;
   private final FlagEnvironmentStateRepository flagStateRepository;
@@ -141,6 +143,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     UUID orgId = env.getProject().getOrganization().getId();
     EnvironmentResponse before = toResponse(env);
     environmentRepository.deleteById(id);
+    evaluationCacheService.evictAfterCommit(id);
     auditService.record(AuditEntityType.ENVIRONMENT, id, AuditAction.DELETE, orgId, before, null);
   }
 
