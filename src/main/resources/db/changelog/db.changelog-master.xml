@@ -24,5 +24,6 @@
     <include file="db/changelog/migrations/018-add-environment-change-window.xml"/>
     <include file="db/changelog/migrations/021-allow-member-role.xml"/>
     <include file="db/changelog/migrations/022-add-change-window-timezone.xml"/>
+    <include file="db/changelog/migrations/024-backfill-missing-flag-environment-states.xml"/>
 
 </databaseChangeLog>
