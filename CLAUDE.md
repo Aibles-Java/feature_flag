@@ -120,11 +120,19 @@ defaults**, so prod can never fall back to dev values. `config/JwtProperties` (t
 is missing, an unresolved `${...}` placeholder, shorter than 512 bits (64 UTF-8 bytes), or
 contains the `change-me` placeholder marker.
 
-DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–011` and `013–017`; `012` is reserved by the in-flight webhooks branch). Never modify a changeset that has already run; always add a new one.
+DB schema is managed entirely by Liquibase. `db.changelog-master.xml` includes `db.changelog-core.xml` (001–019), then `020`, `021`, `022` and `024`. `021`/`022`/`024` reached production before `019`/`020`; that is fine because Liquibase identifies a changeset by id/author/path, not by its number. `023` is reserved for the API key expiry notices (phase 2 of the key lifecycle). Migration numbers are claimed on long-lived branches, so check open PRs before picking one. Never modify a changeset that has already run; always add a new one. A test-only changelog (`src/test/resources/db/changelog/db.changelog-backfill-test.xml`) mirrors the master order around a seed fixture, so a new changeset has to be added there too.
 
 ## API Key generation
 
-`ApiKeyGenerator` uses `SecureRandom` → 32 bytes → `HexFormat.of().formatHex()` → 64-char hex string. This runs on environment creation, on `POST /api/v1/environments/{id}/api-key/rotate`, and on `POST /api/v1/environments/{id}/clone` (a clone always mints its own key — the source's is never copied).
+An environment's SDK keys are rows in `environment_api_key` (migration `019`). Migration `020` copied every `environments.api_key_hash` into that table and then dropped the column together with `environments.last_used_at`. The hash is **copied, never recomputed**, so every key already deployed keeps authenticating (`ApiKeyBackfillTest` pins this). Each row has its own optional `expires_at`, its own `revoked_at` (a soft revoke; the row is never deleted) and a throttled `last_used_at`.
+
+`ApiKeyGenerator` is unchanged: `SecureRandom` → 32 bytes → `HexFormat.of().formatHex()` → 64-char hex string. `EnvironmentApiKeyFactory.mint(...)` is the single construction point. It generates the plaintext, hashes it and derives an 8-char `key_prefix`. Every minting path goes through it: environment creation, `POST /api/v1/environments/{id}/api-key/rotate` (which revokes the active key and mints a new one) and `POST /api/v1/environments/{id}/clone` (a clone always mints its own key; the source's is never copied). The plaintext is returned exactly once, at mint time.
+
+`ApiKeyAuthenticationFilter` resolves the key row and rejects unknown, revoked and expired keys (all counted under one metric). It sets an `ApiKeyAuthenticationToken` carrying the key, and code resolves the environment from that token. Two #127 rules still hold:
+- every rejection answers with the explicit problem+json 401 body;
+- a failed `last_used_at` stamp is logged, never turned into a 500.
+
+Phase 2 (create/list/revoke endpoints, grace-period rotation, default expiry and expiry warnings, migration `023`) lives on `feat/api-key-table` and is not merged yet.
 
 ## Outbound webhooks (issue #36)
 
