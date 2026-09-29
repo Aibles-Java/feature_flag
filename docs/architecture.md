@@ -84,5 +84,6 @@ src/main/resources/
   role) — and applies the production and change-window rules. See `ABAC.md`.
 - DB schema is Liquibase-owned (`ddl-auto=validate`) — never modify an already-run changeset, always add a new one under `db/changelog/migrations/`.
 - `ApiKeyGenerator` uses `SecureRandom` → 32 bytes → 64-char hex string; runs on environment creation and key rotation.
+- SDK evaluation is served from a per-instance Caffeine cache of pre-rollout `FlagStateSnapshot`s keyed by environment id (issue #30, `EvaluationCacheService`). Any code that writes `flag_environment_states` or a flag's `archived` must call `evictAfterCommit(envId)` for every affected environment, or SDKs read stale state until the TTL (`app.evaluation-cache.ttl`) expires.
 
 See `CLAUDE.md` for full development conventions and workflow gates.

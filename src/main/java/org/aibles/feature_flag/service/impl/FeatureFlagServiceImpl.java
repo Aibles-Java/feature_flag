@@ -26,6 +26,7 @@ import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.service.FeatureFlagService;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
@@ -43,6 +44,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   private final FlagEnvironmentStateRepository flagStateRepository;
   private final PermissionService permissionService;
   private final ApplicationEventPublisher eventPublisher;
+  private final EvaluationCacheService evaluationCacheService;
   private final FeatureFlagMetrics metrics;
   private final AuditService auditService;
 
@@ -73,13 +75,13 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             .build();
     flag = featureFlagRepository.save(flag);
 
-    // Auto-create FlagEnvironmentState for all existing environments in the project
     List<Environment> environments =
         environmentRepository.findAllByProjectId(request.getProjectId());
     for (Environment env : environments) {
       FlagEnvironmentState state =
           FlagEnvironmentState.builder().featureFlag(flag).environment(env).enabled(false).build();
       flagStateRepository.save(state);
+      evaluationCacheService.evictAfterCommit(env.getId());
     }
 
     eventPublisher.publishEvent(
@@ -153,6 +155,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     FeatureFlagResponse before = toResponse(flag);
     flag.setArchived(true);
     FeatureFlagResponse after = toResponse(featureFlagRepository.save(flag));
+    evictAllEnvironmentsForProject(flag.getProject().getId());
     eventPublisher.publishEvent(
         new FlagArchivedEvent(
             flag.getProject().getId(),
@@ -175,6 +178,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     FeatureFlagResponse before = toResponse(flag);
     flag.setArchived(false);
     FeatureFlagResponse after = toResponse(featureFlagRepository.save(flag));
+    evictAllEnvironmentsForProject(flag.getProject().getId());
     eventPublisher.publishEvent(
         new FlagArchivedEvent(
             flag.getProject().getId(),
@@ -245,6 +249,8 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         before,
         response);
 
+    evaluationCacheService.evictAfterCommit(environmentId);
+
     eventPublisher.publishEvent(
         new FlagStateChangedEvent(
             state.getEnvironment().getId(),
@@ -258,6 +264,12 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             permissionService.currentUserEmail()));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.STATE_UPDATED);
     return response;
+  }
+
+  private void evictAllEnvironmentsForProject(UUID projectId) {
+    environmentRepository
+        .findAllByProjectId(projectId)
+        .forEach(env -> evaluationCacheService.evictAfterCommit(env.getId()));
   }
 
   private FeatureFlag findById(UUID id) {
