@@ -31,6 +31,7 @@ import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.service.EnvironmentTransferService;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.ApiKeyGenerator;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.springframework.stereotype.Service;
@@ -46,6 +47,7 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
   private final FlagEnvironmentStateRepository flagStateRepository;
   private final PermissionService permissionService;
   private final AuditService auditService;
+  private final EvaluationCacheService evaluationCacheService;
 
   @Override
   @Transactional
@@ -176,6 +178,11 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
 
     boolean changed = result.getSummary().getCreated() > 0 || result.getSummary().getUpdated() > 0;
     if (!dryRun && changed) {
+      // Every environment, not just the target: a CREATED entry also writes a default state row
+      // into each sibling environment, which their cached snapshots would otherwise miss until TTL.
+      environmentRepository
+          .findAllByProjectId(project.getId())
+          .forEach(env -> evaluationCacheService.evictAfterCommit(env.getId()));
       auditService.record(
           AuditEntityType.ENVIRONMENT,
           environmentId,

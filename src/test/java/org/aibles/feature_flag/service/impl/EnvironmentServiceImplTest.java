@@ -26,6 +26,7 @@ import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,7 @@ class EnvironmentServiceImplTest {
   @Mock ProjectRepository projectRepository;
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
+  @Mock EvaluationCacheService evaluationCacheService;
   @Mock AuditService auditService;
 
   EnvironmentServiceImpl service;
@@ -65,6 +67,7 @@ class EnvironmentServiceImplTest {
             projectRepository,
             permissionService,
             eventPublisher,
+            evaluationCacheService,
             auditService);
     Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
@@ -188,6 +191,7 @@ class EnvironmentServiceImplTest {
     service.delete(envId);
 
     verify(environmentRepository).deleteById(envId);
+    verify(evaluationCacheService).evictAfterCommit(envId);
   }
 
   // --- ABAC: protection attributes are OWNER-only (rules B/D cannot be stripped by an ADMIN) ---
