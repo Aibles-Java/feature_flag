@@ -43,7 +43,7 @@ Two details the fix had to get right:
   state is what `clone()` is for.
 
 A service-layer fix only protects environments created from then on, so migration
-`019-backfill-missing-flag-environment-states.xml` repairs existing data with
+`024-backfill-missing-flag-environment-states.xml` repairs existing data with
 `INSERT … SELECT … LEFT JOIN … WHERE s.id IS NULL` (idempotent, never enables anything,
 empty rollback because inserted rows are indistinguishable from legitimate ones). Its SQL
 logic is **not** covered by a test — it runs against an empty H2 in CI, which proves only
