@@ -2,6 +2,11 @@ package org.aibles.feature_flag.sdk;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.lang.annotation.Annotation;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.aibles.feature_flag.sdk.exception.FlagTypeMismatchException;
 import org.aibles.feature_flag.sdk.exception.InvalidApiKeyException;
 import org.aibles.feature_flag.sdk.exception.SdkConfigurationException;
@@ -239,5 +244,62 @@ class SdkConfigAndExceptionTest {
             .build();
     assertDoesNotThrow(client::close);
     assertDoesNotThrow(client::close);
+  }
+
+  // -------------------------------------------------------------------------
+  // H-3: DCR-1 Jackson serialization must not expose the API key
+  // -------------------------------------------------------------------------
+
+  @Test
+  @DisplayName("H-3: Jackson serialization of SdkConfig does not contain the API key literal")
+  void jacksonSerializationDoesNotExposeApiKey() throws Exception {
+    String syntheticKey =
+        "syn-jackson-test-key-abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+    SdkConfig cfg =
+        SdkConfig.builder()
+            .serverUrl("https://flags.internal")
+            .apiKey(syntheticKey)
+            .cacheTtlSeconds(60)
+            .build();
+
+    String json = new ObjectMapper().writeValueAsString(cfg);
+
+    assertFalse(
+        json.contains(syntheticKey),
+        "Jackson-serialized SdkConfig must NOT contain the raw API key. Got: " + json);
+  }
+
+  // -------------------------------------------------------------------------
+  // H-4: DCR-1 SdkConfig must not bear @ToString / @Data / @Value Lombok annotations
+  //
+  // Lombok is not on this module's classpath (zero Spring runtime deps). A
+  // reflection test against the simple annotation names is sufficient and
+  // avoids adding ArchUnit as a dependency (decision: keep dep footprint minimal).
+  // -------------------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "H-4: SdkConfig bears no @ToString, @Data, or @Value Lombok annotation"
+          + " — Lombok redaction bypass guard (DCR-1 / LLD §6.1)")
+  void sdkConfigHasNoLombokRedactionBypassAnnotation() {
+    // Use simple annotation names to avoid a compile dependency on Lombok.
+    // If Lombok is ever added to the classpath and @ToString/@Data/@Value is
+    // placed on SdkConfig, this test will catch it.
+    Set<String> forbiddenSimpleNames = Set.of("ToString", "Data", "Value");
+
+    Set<String> actualSimpleNames =
+        Arrays.stream(SdkConfig.class.getAnnotations())
+            .map(Annotation::annotationType)
+            .map(Class::getSimpleName)
+            .collect(Collectors.toSet());
+
+    Set<String> violations = new java.util.HashSet<>(actualSimpleNames);
+    violations.retainAll(forbiddenSimpleNames);
+
+    assertTrue(
+        violations.isEmpty(),
+        "SdkConfig must not bear @ToString, @Data, or @Value annotations (Lombok redaction"
+            + " bypass). Found: "
+            + violations);
   }
 }

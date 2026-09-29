@@ -1,6 +1,8 @@
 package org.aibles.feature_flag.sdk.internal;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import java.util.function.Consumer;
+import org.aibles.feature_flag.sdk.exception.InvalidApiKeyException;
 import org.aibles.feature_flag.sdk.exception.SdkConfigurationException;
 
 /**
@@ -42,6 +44,12 @@ public final class SdkConfig {
   /** HTTP read (response) timeout in milliseconds. */
   private final int readTimeoutMs;
 
+  /**
+   * SR-02: callback invoked synchronously when HTTP 401 is received. Never serialised; never
+   * logged; never included in toString(). May be null (no-op).
+   */
+  @JsonIgnore private final Consumer<InvalidApiKeyException> onAuthFailure;
+
   private SdkConfig(Builder builder) {
     this.serverUrl = builder.serverUrl;
     this.apiKey = builder.apiKey;
@@ -49,6 +57,7 @@ public final class SdkConfig {
     this.maxStaleSeconds = builder.maxStaleSeconds;
     this.connectTimeoutMs = builder.connectTimeoutMs;
     this.readTimeoutMs = builder.readTimeoutMs;
+    this.onAuthFailure = builder.onAuthFailure;
   }
 
   public String getServerUrl() {
@@ -78,6 +87,12 @@ public final class SdkConfig {
 
   public int getReadTimeoutMs() {
     return readTimeoutMs;
+  }
+
+  /** Returns the auth-failure hook (SR-02). May be null (no-op). Never logged, never serialised. */
+  @JsonIgnore
+  public Consumer<InvalidApiKeyException> getOnAuthFailure() {
+    return onAuthFailure;
   }
 
   /**
@@ -119,6 +134,9 @@ public final class SdkConfig {
     private int connectTimeoutMs = 5000;
     private int readTimeoutMs = 10000;
 
+    /** SR-02: optional auth-failure hook. Null means no-op. */
+    private Consumer<InvalidApiKeyException> onAuthFailure = null;
+
     private Builder() {}
 
     public Builder serverUrl(String serverUrl) {
@@ -152,6 +170,15 @@ public final class SdkConfig {
     }
 
     /**
+     * SR-02: registers the auth-failure callback (invoked on HTTP 401 before throw). Null is
+     * accepted and treated as a no-op.
+     */
+    public Builder onAuthFailure(Consumer<InvalidApiKeyException> onAuthFailure) {
+      this.onAuthFailure = onAuthFailure;
+      return this;
+    }
+
+    /**
      * Validates and builds the {@link SdkConfig}.
      *
      * @throws SdkConfigurationException if any constraint is violated
@@ -161,13 +188,32 @@ public final class SdkConfig {
       return new SdkConfig(this);
     }
 
+    /**
+     * Builds the {@link SdkConfig} without scheme validation. <strong>FOR TEST USE ONLY.</strong>
+     * This method skips the {@code https://} scheme check so that unit tests may point the client
+     * at plain-HTTP loopback servers. Never call from production code — production callers must use
+     * {@link #build()}.
+     *
+     * @return a new {@link SdkConfig} with {@code apiKey} and {@code serverUrl} validated for
+     *     non-blank only
+     */
+    public SdkConfig buildUnchecked() {
+      if (apiKey == null || apiKey.isBlank()) {
+        throw new IllegalArgumentException("apiKey must not be blank (buildUnchecked)");
+      }
+      if (serverUrl == null || serverUrl.isBlank()) {
+        throw new IllegalArgumentException("serverUrl must not be blank (buildUnchecked)");
+      }
+      return new SdkConfig(this);
+    }
+
     private void validate() throws SdkConfigurationException {
       if (serverUrl == null || serverUrl.isBlank()) {
         throw new SdkConfigurationException("serverUrl must not be blank");
       }
       try {
         java.net.URI parsed = new java.net.URI(serverUrl);
-        if (!"https".equals(parsed.getScheme()) || parsed.getHost() == null) {
+        if (!"https".equalsIgnoreCase(parsed.getScheme()) || parsed.getHost() == null) {
           throw new SdkConfigurationException(
               "serverUrl must be a valid https:// URL with a non-blank host"
                   + " — http:// and malformed URLs are not permitted (DE-01 TLS control)");

@@ -99,7 +99,17 @@ class TlsEnforcementTest {
             .build();
     JdkFlagHttpClient client = new JdkFlagHttpClient(config);
 
-    // SSLHandshakeException (or an IOException wrapping it): SDK refuses TLS 1.1.
+    // H-1 NON-VACUOUS PROOF: assert the SDK's own SSLParameters pinning is in place.
+    // If the sslParameters.setProtocols() call is removed from buildHttpClient(), this
+    // assertion fails (returns an empty array), proving the test is not relying on JDK defaults.
+    String[] protocols = client.configuredProtocols();
+    assertArrayEquals(
+        new String[] {"TLSv1.3", "TLSv1.2"},
+        protocols,
+        "JdkFlagHttpClient must pin exactly [TLSv1.3, TLSv1.2] — removing setProtocols() fails here");
+
+    // BEHAVIOURAL ASSERTION: SSLHandshakeException (or an IOException wrapping it): SDK refuses
+    // TLS 1.1. This assertion is kept alongside the configuration proof above.
     assertThrows(
         IOException.class,
         () -> client.fetchOne("checkout-v2", null),

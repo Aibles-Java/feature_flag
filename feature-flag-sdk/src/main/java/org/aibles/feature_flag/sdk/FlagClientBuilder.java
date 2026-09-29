@@ -1,5 +1,7 @@
 package org.aibles.feature_flag.sdk;
 
+import java.util.function.Consumer;
+import org.aibles.feature_flag.sdk.exception.InvalidApiKeyException;
 import org.aibles.feature_flag.sdk.exception.SdkConfigurationException;
 import org.aibles.feature_flag.sdk.internal.SdkConfig;
 
@@ -25,6 +27,12 @@ public final class FlagClientBuilder {
   private int maxStaleSeconds = 0;
   private int connectTimeoutMs = 5000;
   private int readTimeoutMs = 10000;
+
+  /**
+   * SR-02: optional callback invoked synchronously when the server returns HTTP 401. Default no-op.
+   * Set via {@link #onAuthFailure(Consumer)}.
+   */
+  private Consumer<InvalidApiKeyException> onAuthFailure = null;
 
   public FlagClientBuilder serverUrl(String serverUrl) {
     this.serverUrl = serverUrl;
@@ -57,6 +65,19 @@ public final class FlagClientBuilder {
   }
 
   /**
+   * Registers a callback that is invoked (synchronously, before {@link
+   * org.aibles.feature_flag.sdk.exception.InvalidApiKeyException} is thrown) when the flag server
+   * returns HTTP 401 (SR-02). Intended for alerting / key-refresh logic. The default is a no-op.
+   *
+   * @param onAuthFailure callback receiving the exception; must not be {@code null}
+   * @return this builder
+   */
+  public FlagClientBuilder onAuthFailure(Consumer<InvalidApiKeyException> onAuthFailure) {
+    this.onAuthFailure = onAuthFailure;
+    return this;
+  }
+
+  /**
    * Validates configuration and builds the {@link FlagClient}.
    *
    * @throws SdkConfigurationException if any configuration constraint is violated
@@ -70,6 +91,7 @@ public final class FlagClientBuilder {
             .maxStaleSeconds(maxStaleSeconds)
             .connectTimeoutMs(connectTimeoutMs)
             .readTimeoutMs(readTimeoutMs)
+            .onAuthFailure(onAuthFailure)
             .build();
     return new FlagClient(config);
   }

@@ -51,11 +51,13 @@
       <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
-    <!-- Minimal SLF4J binding for tests (no-op keeps test output clean). -->
+    <!-- Logback Classic as the test SLF4J binding (replaces slf4j-simple).
+         Needed for M-2 log-capture tests (ListAppender). Only one SLF4J
+         binding may be on the test classpath; slf4j-simple is removed. -->
     <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-simple</artifactId>
-      <version>${slf4j.version}</version>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>1.5.18</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
