@@ -2,58 +2,54 @@
 
 *Ephemeral — overwritten by `/save-memory` at the end of each session. Read this first.*
 
-**Last updated:** 2026-09-03
-
 ## Current WIP
 
-Branch **`feature/role`** (PR #87), worked in a git worktree at
-`C:\Users\ACER\Desktop\aibless\feature_flag-role` so the main checkout could stay on
-`feature/issue-38-env-clone-import-export`. Three commits, tree clean, `./mvnw test`
-**470 tests / 0 failures**, `spotless:check` clean.
+Feature `client-sdk` — building a **Feature Flag Client SDK** for external backend apps, WITHOUT
+modifying this app's server code. Work is on a **git worktree** at
+`.claude/worktrees/agent-a7cb0859c34b7699c`, branch **`feature/client-sdk`** (renamed from the
+worktree branch), 5 commits ahead of `develop`:
 
-- `42ee946` **merge `origin/develop`** — the branch was 39 behind. Five conflicts, all unions
-  (`AuditAction`, `db.changelog-master.xml`, `docs/adr/README.md`, `MEMORY.md`, `HANDOFF.md`);
-  the four service impls auto-merged. Migrations renumbered `013–017` → **`014–018`** (filenames
-  *and* `changeSet id`s) because develop took `013` for flag hygiene; memory decision
-  `0023-abac-branch-merge` → **`0034`** because develop took `0023` for the Trivy pin.
-- `5080e4c` **production protection generalised** — `PRODUCTION_ELEVATED` table, three new
-  OWNER-only actions, rule D on all of them, `check()` resolves which prod envs an action touches.
-- `1c546ec` **import routed through the PDP** — the fourth bypass, found by the code-reviewer
-  agent after `5080e4c` was already committed.
+- `538bb83` scaffold + TLS enforcement tests (G1 evidence)
+- `93864df` resolve 1st code-review CRIT/HIGH; SDK tests gate CI
+- `5522fa1` full SDK impl (cache, retry, coercion, diagnostics, FlagClient facade)
+- `461abcc` resolve merged 2nd-round code+security review (5 HIGH + should-fixes)
+- `9d4c9d1` cap fetchOne response body before parse (HF-4 completion)
 
-Docs updated in the same commits: ADR-0006 amendment (2026-09-03), `docs/ABAC.md`
-§4/§5/§10/§11/§12, `CLAUDE.md` permission section.
+State: **136 tests green, coverage ~86%, Spotless clean, BUILD SUCCESS**, verified independently.
+Only `feature-flag-sdk/` + `.github/workflows/workflow.yml` changed — NO app code touched.
+Module is standalone (build: `./mvnw -f feature-flag-sdk/pom.xml verify`).
 
-## Context to Load
+SDK has passed 2 full independent review rounds (code + security, SoD) + 1 final re-review; all
+CRITICAL/HIGH closed. `feature-flag-sdk/README.md` has the integration guide.
 
-- [[0035-production-protection-covers-every-production-reaching-action]] — what was decided,
-  what was rejected, and the strictest-wins sharp edge.
-- [[abac-role-adapters-bypass-attribute-rules]] — read before touching any `check(...)` call
-  site or trusting that an attribute rule is enforced.
-- [[0034-abac-branch-merge-and-audit-mapping]] — the earlier merge of this branch.
-- `docs/ABAC.md` §12 — the authoritative open-gaps list, kept in the repo rather than here.
+## Immediate next step: OPEN THE PR
 
-## Next steps
+The user approved pushing + opening the PR. Branch is already renamed to `feature/client-sdk`.
+Steps:
+1. This `/save-memory` run satisfies the pre-push memory gate (memory files change alongside code).
+   Commit the memory changes (they live in the MAIN checkout — the gate checks the pushing repo).
+2. Push `feature/client-sdk` to origin.
+3. Open PR into `develop` using the `create-pr` skill (repo's 6-section format). Reviewer ≠ author
+   (SoD — a human reviews/merges; AI does not self-merge).
 
-1. **PR #87's body still describes the pre-merge state.** It needs a note about the two security
-   commits and the new 403s: an ADMIN archiving a flag in a project that has a `PRODUCTION`
-   environment, rotating a production key, or importing a snapshot into production.
-2. **Decide the strictest-wins sharp edge.** Disjoint change windows across two production
-   environments block archiving around the clock. Recoverable by an OWNER (`ENV_UPDATE` is not
-   window-guarded) but not by a custom role holding `FLAG_ARCHIVE_PRODUCTION` alone. The
-   alternative — apply rule D only when the call site names a single environment — is ~5 lines.
-3. **Convert the remaining `requireRole*` call sites**: `EnvironmentTransferServiceImpl.clone`
-   and `.export`, `FlagHygieneServiceImpl.list`, eight in `WebhookSubscriptionServiceImpl`. The
-   webhook ones deserve the first look — subscribing to a production environment streams every
-   production flag change to an arbitrary URL on ADMIN authority alone.
-4. **Tests are still the gap before merge** (unchanged from the previous handoff): no
-   `ProjectMemberControllerTest` / `CustomRoleControllerTest`, no repository test for
-   `PermissionGrantRepository` / `CustomRoleRepository`, no `@SpringBootTest` for Scenario A
-   (project-scoped access) or B (production protection). `listGrants` / `list` have no test.
-5. Still open from before: `ORG_READ` / `MEMBER_READ` (`OrganizationServiceImpl.get` and
-   `listMembers` gate on `isMember`), no `updateMemberRole`, grants orphaned when a project or
-   org is deleted.
+## Context to load first
 
-Housekeeping: three untracked files in the *main* checkout belong to the user, not any branch —
-`.cgcignore`, `docs/demo/`, `docs/main-flows.md`; do not commit them. The worktree can be removed
-with `git worktree remove ../feature_flag-role` once the branch is merged.
+- `decisions/0036-client-sdk-standalone-module.md` — the whole SDK build + contracts.
+- `conventions/sdk-must-match-live-server-contract.md` — why identifier is a query param; build cmd.
+- `docs/sdk/` — PRD, HLD, LLD, 7 ADRs, OpenAPI, threat-model, security-review, walkthrough notes.
+- `.chapter-forge/sdlc-state.json` + `.chapter-forge/memory/episodic/gate-log.jsonl` — SDLC state
+  and the full review→fix loop history (iterations 1–8).
+
+## After the PR — Gate G1 (still pending, HUMAN authority)
+
+SDK code is clean, but Gate G1 (design) still needs human sign-off. Remaining G1 blockers are all
+human/cross-team (not Maker-closeable):
+- Risk/Compliance sign-off (data-residency / AI-tooling).
+- Architect architecture-review record + sign-off; Security to lift conditions + approve ADRs
+  (still `PROPOSED`).
+- Server-side ticket: `EvaluationController` to accept `X-Flag-Identifier` header (deferred v2).
+
+## Planned later-phase update
+
+Move `identifier` from query param → `X-Flag-Identifier` header (needs coordinated server change).
+Tracked in README "Known deviation" and decision 0036.
