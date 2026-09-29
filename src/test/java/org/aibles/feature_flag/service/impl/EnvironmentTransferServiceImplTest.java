@@ -38,6 +38,7 @@ import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,7 @@ class EnvironmentTransferServiceImplTest {
   @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock PermissionService permissionService;
   @Mock AuditService auditService;
+  @Mock EvaluationCacheService evaluationCacheService;
 
   EnvironmentTransferServiceImpl service;
 
@@ -86,7 +88,8 @@ class EnvironmentTransferServiceImplTest {
             featureFlagRepository,
             flagStateRepository,
             permissionService,
-            auditService);
+            auditService,
+            evaluationCacheService);
 
     Organization org = Organization.builder().id(orgId).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
@@ -329,6 +332,7 @@ class EnvironmentTransferServiceImplTest {
     verify(flagStateRepository, never()).save(any());
     verify(featureFlagRepository, never()).save(any());
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
+    verify(evaluationCacheService, never()).evictAfterCommit(any());
     assertThat(targetStates.get(0).isEnabled()).isFalse();
   }
 
@@ -411,6 +415,22 @@ class EnvironmentTransferServiceImplTest {
   }
 
   @Test
+  void import_evictsTheEvaluationCacheOfEveryEnvironmentInTheProject() {
+    // A created flag also writes a default state row into each sibling environment, so evicting
+    // only the target would leave the siblings' SDK responses missing the flag until the TTL.
+    FlagEnvironmentState existing = state(stringFlag, targetEnv, false, "old", 100);
+    stubExistingFlags(stringFlag);
+    stubTargetStates(List.of(existing));
+
+    service.importSnapshot(
+        targetEnvId,
+        importRequest(ImportConflictStrategy.OVERWRITE, entry(stringFlag, true, "new", 25)));
+
+    verify(evaluationCacheService).evictAfterCommit(targetEnvId);
+    verify(evaluationCacheService).evictAfterCommit(sourceEnvId);
+  }
+
+  @Test
   void import_reportsUnchangedWhenStateAlreadyMatches() {
     FlagEnvironmentState existing = state(stringFlag, targetEnv, true, "same", 40);
     stubExistingFlags(stringFlag);
@@ -423,8 +443,9 @@ class EnvironmentTransferServiceImplTest {
 
     assertThat(result.getSummary().getUnchanged()).isEqualTo(1);
     verify(flagStateRepository, never()).save(any());
-    // Nothing changed, so there is nothing to audit.
+    // Nothing changed, so there is nothing to audit — and no cached snapshot to invalidate.
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
+    verify(evaluationCacheService, never()).evictAfterCommit(any());
   }
 
   @Test

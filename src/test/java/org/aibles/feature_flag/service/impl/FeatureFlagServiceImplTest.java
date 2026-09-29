@@ -31,6 +31,7 @@ import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,6 +55,7 @@ class FeatureFlagServiceImplTest {
   @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
+  @Mock EvaluationCacheService evaluationCacheService;
   @Mock AuditService auditService;
 
   FeatureFlagServiceImpl service;
@@ -71,6 +73,7 @@ class FeatureFlagServiceImplTest {
             flagStateRepository,
             permissionService,
             eventPublisher,
+            evaluationCacheService,
             new FeatureFlagMetrics(new SimpleMeterRegistry()),
             auditService);
     Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
@@ -120,6 +123,8 @@ class FeatureFlagServiceImplTest {
     List<UUID> savedEnvIds =
         captor.getAllValues().stream().map(s -> s.getEnvironment().getId()).toList();
     assertThat(savedEnvIds).containsExactlyInAnyOrder(env1Id, env2Id);
+    verify(evaluationCacheService).evictAfterCommit(env1Id);
+    verify(evaluationCacheService).evictAfterCommit(env2Id);
   }
 
   @Test
@@ -191,6 +196,7 @@ class FeatureFlagServiceImplTest {
   @Test
   void archive_setsArchivedTrue() {
     UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
     FeatureFlag flag =
         FeatureFlag.builder()
             .id(flagId)
@@ -200,16 +206,19 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
+    Environment env =
+        Environment.builder().id(envId).name("prod").project(project).apiKeyHash("k").build();
 
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(featureFlagRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
+    when(environmentRepository.findAllByProjectId(projectId)).thenReturn(List.of(env));
     when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
 
     service.archive(flagId);
 
     assertThat(flag.isArchived()).isTrue();
     verify(featureFlagRepository).save(flag);
+    verify(evaluationCacheService).evictAfterCommit(envId);
 
     ArgumentCaptor<FlagArchivedEvent> captor = ArgumentCaptor.forClass(FlagArchivedEvent.class);
     verify(eventPublisher).publishEvent(captor.capture());
@@ -223,6 +232,7 @@ class FeatureFlagServiceImplTest {
   @Test
   void unarchive_setsArchivedFalse() {
     UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
     FeatureFlag flag =
         FeatureFlag.builder()
             .id(flagId)
@@ -232,13 +242,18 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(true)
             .build();
+    Environment env =
+        Environment.builder().id(envId).name("prod").project(project).apiKeyHash("k").build();
 
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(featureFlagRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    when(environmentRepository.findAllByProjectId(projectId)).thenReturn(List.of(env));
+    when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
 
     service.unarchive(flagId);
 
     assertThat(flag.isArchived()).isFalse();
+    verify(evaluationCacheService).evictAfterCommit(envId);
 
     ArgumentCaptor<FlagArchivedEvent> captor = ArgumentCaptor.forClass(FlagArchivedEvent.class);
     verify(eventPublisher).publishEvent(captor.capture());
@@ -373,6 +388,7 @@ class FeatureFlagServiceImplTest {
     assertThat(result.getValue()).isEqualTo("true");
     assertThat(result.getRolloutPercent())
         .isEqualTo(50); // unchanged since request.rolloutPercent is null
+    verify(evaluationCacheService).evictAfterCommit(envId);
   }
 
   @Test
