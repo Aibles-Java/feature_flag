@@ -1,8 +1,9 @@
 # Architecture & Solution Design Document
 ## Feature Flag Management Platform
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** 2026-06-27
+**Last synced with code:** 2026-09-15 (sections 4, 6 and 7)
 **Status:** Current (v1) — v2 Roadmap included
 
 ---
@@ -177,7 +178,7 @@ The Feature Flag Management Platform is a self-hosted service similar to Flagsmi
 │ project_id FK            │   │ project_id FK                │
 │ name                     │   │ name                         │
 │ description              │   │ key UNIQUE per project ←SDK  │
-│ api_key UNIQUE (64 hex)  │   │ description                  │
+│ api_key_hash UNIQUE(64)  │   │ description                  │
 │ created_at / updated_at  │   │ value_type (BOOL/STR/INT/JSON│
 │ UNIQUE (project_id, name)│   │ archived (default=false)     │
 └────────────┬─────────────┘   │ created_at / updated_at      │
@@ -208,7 +209,7 @@ The Feature Flag Management Platform is a self-hosted service similar to Flagsmi
 | `FlagEnvironmentState` always exists per (flag, env) pair | Auto-created on flag creation |
 | Organization member roles | `CHECK` constraint on `role` column |
 | Flag value types | `CHECK` constraint on `value_type` column |
-| Unique API key per environment | `UNIQUE` index on `environments.api_key` |
+| Unique API key per environment | `UNIQUE` index on `environments.api_key_hash` (the SHA-256 hash — plaintext is never stored, see §6.4) |
 | Cascade deletes | FK constraints with `ON DELETE CASCADE` |
 
 ### Value Types
@@ -306,20 +307,30 @@ All repositories extend `JpaRepository<Entity, UUID>`. Notable custom queries:
 
 ## 6. Security Architecture
 
-### 6.1 Dual Security Filter Chain
+### 6.1 Three Security Filter Chains
 
-Spring Security allows multiple `SecurityFilterChain` beans ordered by priority. This project uses order to route SDK vs Admin traffic to completely separate authentication mechanisms.
+Spring Security allows multiple `SecurityFilterChain` beans ordered by priority. This project uses order to route management, SDK and Admin traffic to completely separate authentication mechanisms. The management chain (`@Order(0)`, issue #29) has the highest precedence so `/actuator/**` never falls through to the JWT admin chain.
 
 ```
 Incoming Request
        │
        ▼
 ┌─────────────────────────────────────────────────┐
+│ Chain 0 — Management (order=0, /actuator/**)    │
+│                                                 │
+│  /actuator/health + /health/** → permitAll      │
+│  everything else → HTTP Basic, role METRICS     │
+│  (isolated in-memory scraper account, built     │
+│   disabled when app.metrics.password is blank)  │
+└────────────────────────────────┬────────────────┘
+                                 │ (no match → falls through)
+                                 ▼
+┌─────────────────────────────────────────────────┐
 │ Chain 1 — SDK (order=1, matches /api/v1/sdk/**) │
 │                                                 │
 │  ApiKeyAuthenticationFilter                     │
 │    reads X-Environment-Key header               │
-│    → EnvironmentRepository.findByApiKey()       │
+│    → EnvironmentRepository.findByApiKeyHash()   │
 │    → sets ApiKeyAuthenticationToken principal   │
 │    → Environment object available in controller │
 └────────────────────────────────┬────────────────┘
@@ -346,38 +357,82 @@ Incoming Request
 |---|---|
 | Algorithm | HMAC-SHA256 |
 | Secret | Min 512-bit (64 chars) configured via `app.jwt.secret` |
-| Expiration | 24 hours (`app.jwt.expiration-ms=86400000`) |
+| Access token expiration | 15 minutes (`app.jwt.access-expiration-ms=900000`) |
+| Refresh token expiration | 14 days (`app.jwt.refresh-expiration-ms=1209600000`) |
 | Subject claim | User UUID |
 | Extra claim | `email` |
-| Storage | Client-side only (stateless) |
+| Storage | Access token client-side only (stateless); refresh tokens persisted **hashed** in `refresh_tokens` so a token family can be revoked |
+
+The secret is validated at startup by `config/JwtProperties` in **every** profile — startup aborts
+when it is missing, is an unresolved `${...}` placeholder, is shorter than 512 bits (64 UTF-8
+bytes), or still carries the `change-me` marker.
 
 ### 6.3 Permission Matrix
 
-| Operation | OWNER | ADMIN | VIEWER |
-|---|---|---|---|
-| Read flags / projects / envs | ✓ | ✓ | ✓ |
-| Create / update flags | ✓ | ✓ | ✗ |
-| Enable / disable flag state | ✓ | ✓ | ✗ |
-| Create / update environments | ✓ | ✓ | ✗ |
-| Rotate API key | ✓ | ✓ | ✗ |
-| Invite VIEWER members | ✓ | ✓ | ✗ |
-| Invite ADMIN/OWNER members | ✓ | ✗ | ✗ |
-| Delete org / project / env | ✓ | ✗ | ✗ |
-| Archive flag | ✓ | ✓ | ✗ |
-| Remove members | ✓ | ✗ | ✗ |
+| Operation | OWNER | ADMIN | VIEWER | MEMBER |
+|---|---|---|---|---|
+| See the org and its member list | ✓ | ✓ | ✓ | ✓ |
+| Read flags / projects / envs | ✓ | ✓ | ✓ | granted projects only |
+| Create / update flags | ✓ | ✓ | ✗ | via grant |
+| Enable / disable flag state, archive flag (non-production env) | ✓ | ✓ | ✗ | via grant |
+| Create / update environments | ✓ | ✓ | ✗ | via grant |
+| Export / clone an environment | ✓ | ✓ | ✗ | via grant |
+| Rotate API key (non-production env) | ✓ | ✓ | ✗ | via grant |
+| Manage webhooks (non-production env) | ✓ | ✓ | ✗ | via grant |
+| Any PRODUCTION-reaching action (flag state, archive, rotate key, env delete, webhooks) | ✓ | ✗ | ✗ | ✗ |
+| Change an environment's protection (type, change-window hours or timezone) | ✓ | ✗ | ✗ | ✗ |
+| Invite members (never above the inviter's own role) | ✓ | ✓ | ✗ | ✗ |
+| Remove members (never the last OWNER) | ✓ | ✓ | ✗ | ✗ |
+| Manage project grants / custom roles | ✓ | ✓ | ✗ | ✗ |
+| Delete org / project / env | ✓ | ✗ | ✗ | ✗ |
+
+MEMBER (PR #121) is org membership with **no** project reach of its own: a MEMBER sees only the
+projects a `PermissionGrant` gives them, and "via grant" means the capability comes from that
+grant, never from the MEMBER role. A grant can raise any role on one project, but only ever adds
+capability and is never read at org scope.
 
 **Rules:**
-- ADMIN cannot promote another user to OWNER
+- ADMIN cannot invite or promote anyone above ADMIN
 - The last OWNER of an organization cannot be removed
 - Permission checks are performed in the **Service layer**, not controllers
+- Authorization is ABAC, not plain RBAC: call sites use `permissionService.check(Action, ResourceRef)`
+  and the effective action set is `org role actions ∪ PROJECT-scoped PermissionGrant actions`
+  (a grant carries a built-in role or a `CustomRole`, and only ever **adds** capability)
+- Any action in `PRODUCTION_ELEVATED` (`FLAG_STATE_UPDATE`, `FLAG_ARCHIVE`, `ENV_ROTATE_KEY`,
+  `ENV_DELETE`, `WEBHOOK_MANAGE`) that reaches a `PRODUCTION` environment is rewritten to its OWNER-only
+  `*_PRODUCTION` counterpart and must additionally fall inside that environment's optional
+  change window
+
+See `docs/ABAC.md` and `docs/adr/ADR-0006-abac-authorization-model.md`.
 
 ### 6.4 API Key Security
 
-- Generated using `SecureRandom` (cryptographically secure)
-- 32 bytes → 64-char lowercase hex string (~192 bits of entropy)
-- Stored in plaintext in DB (lookup by value is required for SDK auth)
-- Rotatable at any time via `POST /api/v1/environments/{id}/api-key/rotate`
-- Unique constraint prevents accidental collision
+- Generated using `SecureRandom` (`util/ApiKeyGenerator`): 32 bytes → 64-char lowercase hex
+  string — **256 bits** of entropy
+- **Hashed at rest; the plaintext is never stored** (issue #24). Only the unsalted SHA-256 hex
+  digest is persisted, in `environments.api_key_hash`. `util/ApiKeyHasher.hash()` is called by both
+  the write path (`EnvironmentServiceImpl.create` / `rotateApiKey`) and the read path
+  (`ApiKeyAuthenticationFilter`), so there is no bypass gap.
+- **Why unsalted SHA-256 and not bcrypt/argon2.** The key is already a 256-bit high-entropy random
+  value, so brute force and rainbow tables are infeasible; a slow/salted hash would buy nothing and
+  would break the O(1) indexed `findByApiKeyHash` lookup on the SDK hot path. Salting and slow
+  hashing are for low-entropy secrets (passwords).
+- **One-time reveal.** The plaintext is returned exactly once — on create and on rotate — via the
+  dedicated `EnvironmentSecretResponse`. `EnvironmentResponse` (get / list / update) carries no key
+  field at all. A lost key cannot be recovered; rotate instead.
+- Rotatable at any time via `POST /api/v1/environments/{id}/api-key/rotate`. Rotation publishes an
+  `ApiKeyRotatedEvent` (Slack / webhook consumers) and writes an audit record of the **event only**
+  — never the key. On a PRODUCTION environment it requires OWNER and a change window (§6.3).
+- A clone (`POST /api/v1/environments/{id}/clone`) always mints its own fresh key — the source
+  environment's key is never copied.
+- `environments.last_used_at` records the last successful SDK authentication, throttled to at most
+  one write per 5 minutes (in-memory check plus a `WHERE last_used_at < :threshold` guard on the
+  bulk update) so the evaluation path does not take a DB write per request.
+- `UNIQUE` on `api_key_hash` prevents accidental collision.
+
+Migration `009-hash-api-keys.xml` backfilled existing rows in place with
+`encode(digest(api_key,'sha256'),'hex')` (Postgres / pgcrypto, byte-identical to `ApiKeyHasher`)
+and then dropped the plaintext column, so live SDK keys kept working across the change.
 
 ---
 
@@ -387,7 +442,12 @@ Incoming Request
 
 - **RESTful resources** — nouns in URLs, HTTP verbs for actions
 - **Consistent response format** — `ProblemDetail` (RFC 7807) for errors
-- **Pagination** — not yet implemented (v2 concern)
+- **Pagination** — offset-based on every admin list endpoint (issue #33): `page` / `size` / `sort`
+  bound from Spring Data `Pageable`, default size 20, hard maximum 100, default sort `createdAt,id`.
+  Responses are wrapped in a `PageResponse<T>` envelope (`content`, `page`, `size`,
+  `totalElements`, `totalPages`). The SDK evaluation endpoint is deliberately **not** paginated —
+  an SDK needs the whole flag set for its environment in one call. See
+  `docs/adr/ADR-0003-pagination-strategy.md`.
 - **Versioning** — URI versioning (`/api/v1/`)
 - **Soft delete** — flags are archived, not hard-deleted (SDK stability)
 
@@ -402,11 +462,11 @@ POST   /api/v1/auth/login       → 200 AuthResponse
 #### Organizations (JWT)
 ```
 POST   /api/v1/organisations                          → 201 OrganizationResponse
-GET    /api/v1/organisations                          → 200 OrganizationResponse[]
+GET    /api/v1/organisations                          → 200 PageResponse<OrganizationResponse>
 GET    /api/v1/organisations/{orgId}                  → 200 OrganizationResponse
 PUT    /api/v1/organisations/{orgId}                  → 200 OrganizationResponse
 DELETE /api/v1/organisations/{orgId}                  → 204
-GET    /api/v1/organisations/{orgId}/members          → 200 MemberResponse[]
+GET    /api/v1/organisations/{orgId}/members          → 200 PageResponse<MemberResponse>
 POST   /api/v1/organisations/{orgId}/members          → 201 MemberResponse
 DELETE /api/v1/organisations/{orgId}/members/{userId} → 204
 ```
@@ -414,7 +474,7 @@ DELETE /api/v1/organisations/{orgId}/members/{userId} → 204
 #### Projects (JWT)
 ```
 POST   /api/v1/projects                  → 201 ProjectResponse
-GET    /api/v1/projects?organisationId=  → 200 ProjectResponse[]
+GET    /api/v1/projects?organisationId=  → 200 PageResponse<ProjectResponse>
 GET    /api/v1/projects/{projectId}      → 200 ProjectResponse
 PUT    /api/v1/projects/{projectId}      → 200 ProjectResponse
 DELETE /api/v1/projects/{projectId}      → 204
@@ -422,12 +482,12 @@ DELETE /api/v1/projects/{projectId}      → 204
 
 #### Environments (JWT)
 ```
-POST   /api/v1/environments                       → 201 EnvironmentResponse
-GET    /api/v1/environments?projectId=            → 200 EnvironmentResponse[]
+POST   /api/v1/environments                       → 201 EnvironmentSecretResponse
+GET    /api/v1/environments?projectId=            → 200 PageResponse<EnvironmentResponse>
 GET    /api/v1/environments/{envId}               → 200 EnvironmentResponse
 PUT    /api/v1/environments/{envId}               → 200 EnvironmentResponse
 DELETE /api/v1/environments/{envId}               → 204
-POST   /api/v1/environments/{envId}/api-key/rotate → 200 EnvironmentResponse
+POST   /api/v1/environments/{envId}/api-key/rotate → 200 EnvironmentSecretResponse
 POST   /api/v1/environments/{envId}/clone         → 201 EnvironmentSecretResponse
 GET    /api/v1/environments/{envId}/export        → 200 EnvironmentSnapshotResponse
 POST   /api/v1/environments/{envId}/import        → 200 ImportResultResponse
@@ -452,19 +512,43 @@ snapshot whose `schemaVersion` is unsupported, or which repeats a flag key, is r
 #### Feature Flags (JWT)
 ```
 POST   /api/v1/flags                                          → 201 FeatureFlagResponse
-GET    /api/v1/flags?projectId=                               → 200 FeatureFlagResponse[]
+GET    /api/v1/flags?projectId=                               → 200 PageResponse<FeatureFlagResponse>
 GET    /api/v1/flags/{flagId}                                 → 200 FeatureFlagResponse
 PUT    /api/v1/flags/{flagId}                                 → 200 FeatureFlagResponse
 DELETE /api/v1/flags/{flagId}                                 → 204 (archives)
+POST   /api/v1/flags/{flagId}/unarchive                       → 204
+GET    /api/v1/flags/archived?projectId=                      → 200 PageResponse<FeatureFlagResponse>
 GET    /api/v1/flags/{flagId}/environments/{envId}            → 200 FlagStateResponse
 PUT    /api/v1/flags/{flagId}/environments/{envId}            → 200 FlagStateResponse
 ```
 
 #### SDK Evaluation (API Key)
 ```
-GET    /api/v1/sdk/flags              → 200 FlagEvaluationResponse[]
-GET    /api/v1/sdk/flags/{flagKey}    → 200 FlagEvaluationResponse
+GET    /api/v1/sdk/flags?identifier=              → 200 FlagEvaluationResponse[]
+GET    /api/v1/sdk/flags/{flagKey}?identifier=    → 200 FlagEvaluationResponse
 ```
+
+`identifier` is optional — a stable caller identity (user id, device id, …) used to bucket the
+caller for flags on a partial rollout. Omitting it returns a partially-rolled-out flag as fully
+**on**, so a rollout percentage is **not** an access-control mechanism. See
+`docs/adr/ADR-0004-percentage-rollout-contract.md`.
+
+**Caching (issue #30).** Both SDK endpoints read a per-instance Caffeine cache of the environment's
+pre-rollout flag states, keyed by environment id (`EvaluationCacheService`,
+`app.evaluation-cache.max-size` / `ttl`, default 1000 entries / 5 min). Rollout is still evaluated
+per request on top of the cached entry, so one entry serves every `identifier`. Every write that
+changes an environment's flag states (state update, flag create/archive/unarchive, snapshot import,
+environment delete) evicts the affected environments **after commit**. `ShallowEtagHeaderFilter`
+adds an `ETag` to both SDK endpoints (`/api/v1/sdk/flags`, `/api/v1/sdk/flags/*`), so a poll with a matching `If-None-Match` gets `304`.
+
+**Rate limits.** Two limits apply to the SDK chain: per source IP **before** the API key is checked
+(`app.rate-limit.sdk-ip`, default 600/min — the only ceiling on anonymous key probing, issue #128),
+then per environment once the key has authenticated (`app.rate-limit.sdk`, default 300/min).
+Exceeding either returns `429` with `Retry-After`.
+
+> The inventory above covers the v1 core resources. Later issues added further admin endpoint
+> groups — audit log, custom roles, project permission grants, flag hygiene and webhook
+> subscriptions. Swagger UI (`/swagger-ui.html`) is the authoritative, always-current inventory.
 
 ### 7.3 SDK Evaluation Response
 
@@ -476,13 +560,15 @@ The SDK API is intentionally minimal — it only exposes what client application
     "flagKey": "new-checkout-flow",
     "enabled": true,
     "value": "v2",
-    "valueType": "STRING"
+    "valueType": "STRING",
+    "rolloutPercent": 100
   },
   {
     "flagKey": "dark-mode",
     "enabled": false,
     "value": null,
-    "valueType": "BOOLEAN"
+    "valueType": "BOOLEAN",
+    "rolloutPercent": 0
   }
 ]
 ```
@@ -589,7 +675,7 @@ Layer caching on dependencies keeps rebuild times fast when only source code cha
 
 ### 9.2 Auto-Provisioning of FlagEnvironmentState
 
-**Decision:** When a flag is created, `FlagEnvironmentState` rows are auto-created for all existing environments in the project (defaulting to `enabled=false`).
+**Decision:** When a flag is created, `FlagEnvironmentState` rows are auto-created for all existing environments in the project (defaulting to `enabled=false`). The reverse direction holds too: when an **environment** is created, it gets a disabled row for every flag already in the project, archived ones included (`EnvironmentServiceImpl.create()`, PR #129; migration `024` backfilled environments created before that fix). A clone copies the source's rows instead, and an import creates any row that is missing.
 
 **Rationale:** Guarantees that every `(flag, environment)` pair always has exactly one state row. This simplifies queries (no LEFT JOIN checking for null state) and prevents runtime errors when SDKs request flag state.
 
@@ -698,6 +784,10 @@ flag_enabled = bucket < rollout_percentage
 Allow specific users to always see a flag as enabled/disabled regardless of segment or rollout rules. Useful for internal testers and account-level exceptions.
 
 ### 12.4 Redis Evaluation Cache
+
+> An **in-process** Caffeine cache already ships (issue #30, see §7.2 SDK Evaluation). What remains
+> for v2 is a shared cache: eviction is per instance, so with several instances a write only evicts
+> the instance that handled it and the others serve stale state until their TTL expires.
 
 Cache `getAllFlags(environmentId)` results in Redis with a short TTL (e.g., 30s). Eliminates per-request DB queries for high-throughput SDK evaluation.
 
