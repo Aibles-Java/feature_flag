@@ -369,29 +369,37 @@ bytes), or still carries the `change-me` marker.
 
 ### 6.3 Permission Matrix
 
-| Operation | OWNER | ADMIN | VIEWER |
-|---|---|---|---|
-| Read flags / projects / envs | ✓ | ✓ | ✓ |
-| Create / update flags | ✓ | ✓ | ✗ |
-| Enable / disable flag state | ✓ | ✓ | ✗ |
-| Create / update environments | ✓ | ✓ | ✗ |
-| Rotate API key (non-production env) | ✓ | ✓ | ✗ |
-| Any PRODUCTION-reaching action (rotate key, flag state, archive, env delete) | ✓ | ✗ | ✗ |
-| Invite VIEWER members | ✓ | ✓ | ✗ |
-| Invite ADMIN/OWNER members | ✓ | ✗ | ✗ |
-| Delete org / project / env | ✓ | ✗ | ✗ |
-| Archive flag | ✓ | ✓ | ✗ |
-| Remove members | ✓ | ✗ | ✗ |
+| Operation | OWNER | ADMIN | VIEWER | MEMBER |
+|---|---|---|---|---|
+| See the org and its member list | ✓ | ✓ | ✓ | ✓ |
+| Read flags / projects / envs | ✓ | ✓ | ✓ | granted projects only |
+| Create / update flags | ✓ | ✓ | ✗ | via grant |
+| Enable / disable flag state, archive flag (non-production env) | ✓ | ✓ | ✗ | via grant |
+| Create / update environments | ✓ | ✓ | ✗ | via grant |
+| Export / clone an environment | ✓ | ✓ | ✗ | via grant |
+| Rotate API key (non-production env) | ✓ | ✓ | ✗ | via grant |
+| Manage webhooks (non-production env) | ✓ | ✓ | ✗ | via grant |
+| Any PRODUCTION-reaching action (flag state, archive, rotate key, env delete, webhooks) | ✓ | ✗ | ✗ | ✗ |
+| Change an environment's protection (type, change-window hours or timezone) | ✓ | ✗ | ✗ | ✗ |
+| Invite members (never above the inviter's own role) | ✓ | ✓ | ✗ | ✗ |
+| Remove members (never the last OWNER) | ✓ | ✓ | ✗ | ✗ |
+| Manage project grants / custom roles | ✓ | ✓ | ✗ | ✗ |
+| Delete org / project / env | ✓ | ✗ | ✗ | ✗ |
+
+MEMBER (PR #121) is org membership with **no** project reach of its own: a MEMBER sees only the
+projects a `PermissionGrant` gives them, and "via grant" means the capability comes from that
+grant, never from the MEMBER role. A grant can raise any role on one project, but only ever adds
+capability and is never read at org scope.
 
 **Rules:**
-- ADMIN cannot promote another user to OWNER
+- ADMIN cannot invite or promote anyone above ADMIN
 - The last OWNER of an organization cannot be removed
 - Permission checks are performed in the **Service layer**, not controllers
 - Authorization is ABAC, not plain RBAC: call sites use `permissionService.check(Action, ResourceRef)`
   and the effective action set is `org role actions ∪ PROJECT-scoped PermissionGrant actions`
   (a grant carries a built-in role or a `CustomRole`, and only ever **adds** capability)
 - Any action in `PRODUCTION_ELEVATED` (`FLAG_STATE_UPDATE`, `FLAG_ARCHIVE`, `ENV_ROTATE_KEY`,
-  `ENV_DELETE`) that reaches a `PRODUCTION` environment is rewritten to its OWNER-only
+  `ENV_DELETE`, `WEBHOOK_MANAGE`) that reaches a `PRODUCTION` environment is rewritten to its OWNER-only
   `*_PRODUCTION` counterpart and must additionally fall inside that environment's optional
   change window
 
@@ -667,7 +675,7 @@ Layer caching on dependencies keeps rebuild times fast when only source code cha
 
 ### 9.2 Auto-Provisioning of FlagEnvironmentState
 
-**Decision:** When a flag is created, `FlagEnvironmentState` rows are auto-created for all existing environments in the project (defaulting to `enabled=false`).
+**Decision:** When a flag is created, `FlagEnvironmentState` rows are auto-created for all existing environments in the project (defaulting to `enabled=false`). The reverse direction holds too: when an **environment** is created, it gets a disabled row for every flag already in the project, archived ones included (`EnvironmentServiceImpl.create()`, PR #129; migration `024` backfilled environments created before that fix). A clone copies the source's rows instead, and an import creates any row that is missing.
 
 **Rationale:** Guarantees that every `(flag, environment)` pair always has exactly one state row. This simplifies queries (no LEFT JOIN checking for null state) and prevents runtime errors when SDKs request flag state.
 
