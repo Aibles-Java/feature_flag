@@ -53,8 +53,7 @@ class EvaluationServiceImplTest {
             new FeatureFlagMetrics(new SimpleMeterRegistry()),
             evaluationTracker);
     project = Project.builder().id(projectId).name("proj").build();
-    environment =
-        Environment.builder().id(envId).project(project).name("prod").apiKeyHash("key").build();
+    environment = Environment.builder().id(envId).project(project).name("prod").build();
   }
 
   /** Simulates cache hit: getOrLoad returns the provided list, loader never invoked. */

@@ -74,13 +74,7 @@ class EvaluationCacheIntegrationTest {
             Organization.builder().name("TestOrg-" + suffix).slug("test-org-" + suffix).build());
     Project project =
         projectRepository.save(Project.builder().organization(org).name("TestProj").build());
-    env =
-        environmentRepository.save(
-            Environment.builder()
-                .project(project)
-                .name("prod")
-                .apiKeyHash("hash-" + UUID.randomUUID())
-                .build());
+    env = environmentRepository.save(Environment.builder().project(project).name("prod").build());
     flag =
         featureFlagRepository.save(
             FeatureFlag.builder()

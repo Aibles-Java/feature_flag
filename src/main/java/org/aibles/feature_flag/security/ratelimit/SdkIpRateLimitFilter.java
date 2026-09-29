@@ -12,7 +12,7 @@ import jakarta.servlet.http.HttpServletRequest;
  * {@code doFilter}, so it could never observe a failed attempt; and even if it did, its {@code
  * resolveKey} has no principal to key on and returns {@code null} (no limit). The result was that
  * authenticated SDK traffic was capped while anonymous key-probing was not, each attempt still
- * costing a SHA-256 and an indexed {@code findByApiKeyHash} lookup. This filter closes that gap,
+ * costing a SHA-256 and an indexed {@code findByKeyHash} lookup. This filter closes that gap,
  * mirroring how {@code AuthRateLimitFilter} caps the unauthenticated {@code /api/v1/auth/**}
  * endpoints on the admin chain.
  *

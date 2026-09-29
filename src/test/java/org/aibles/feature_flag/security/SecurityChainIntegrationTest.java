@@ -9,11 +9,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.entity.User;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
@@ -47,6 +50,7 @@ class SecurityChainIntegrationTest {
   @Autowired private OrganizationRepository organizationRepository;
   @Autowired private ProjectRepository projectRepository;
   @Autowired private EnvironmentRepository environmentRepository;
+  @Autowired private EnvironmentApiKeyRepository apiKeyRepository;
 
   private MockMvc mockMvc;
 
@@ -145,13 +149,13 @@ class SecurityChainIntegrationTest {
 
   @Test
   void sdkEndpointAcceptsValidApiKeyAuthenticatedAgainstStoredHash() throws Exception {
-    // Persist an environment storing only the SHA-256 hash of the key, then present the
-    // plaintext in the header. The API-key filter must authenticate against the hash at rest
+    // Persist an environment_api_key row storing only the SHA-256 hash of the key, then present
+    // the plaintext in the header. The API-key filter must authenticate against the hash at rest
     // and hand off to the SDK controller — i.e. it must NOT reject with the filter's 401.
     // (We assert on "not rejected" rather than 200 because the evaluation query itself hits
     // an unrelated H2-only quirk with the reserved-word `key` column — see #24 PR notes.)
     String plaintextKey = "sdk-plaintext-" + UUID.randomUUID();
-    persistEnvironmentWithApiKeyHash(ApiKeyHasher.hash(plaintextKey));
+    persistEnvironmentWithKeyHash(ApiKeyHasher.hash(plaintextKey));
 
     // Authentication succeeded: the request got past the API-key filter (no 401).
     assertThat(statusFor(plaintextKey)).isNotEqualTo(HttpStatus.UNAUTHORIZED.value());
@@ -160,19 +164,28 @@ class SecurityChainIntegrationTest {
   @Test
   void rotatingApiKeyInvalidatesOldKeyAndAcceptsNewOne() throws Exception {
     // The core rotation guarantee, exercised end-to-end through the real SDK auth path
-    // (findByApiKeyHash): once the stored hash is replaced, the old plaintext can no longer
-    // authenticate and only the new plaintext does. (The service's rotate logic itself is
-    // unit-tested in EnvironmentServiceImplTest; here we drive the actual filter.)
+    // (findByKeyHash + revocation check): once the old row is revoked and a new row minted,
+    // the old plaintext can no longer authenticate and only the new plaintext does. (The
+    // service's rotate logic itself is unit-tested in EnvironmentServiceImplTest; here we
+    // drive the actual filter.)
     String oldKey = "old-" + UUID.randomUUID();
     String newKey = "new-" + UUID.randomUUID();
-    Environment env = persistEnvironmentWithApiKeyHash(ApiKeyHasher.hash(oldKey));
+    Environment env = persistEnvironmentWithKeyHash(ApiKeyHasher.hash(oldKey));
 
     // Before rotation the old key authenticates.
     assertThat(statusFor(oldKey)).isNotEqualTo(HttpStatus.UNAUTHORIZED.value());
 
-    // Rotate: the stored hash is replaced with the new key's hash (as rotateApiKey does).
-    env.setApiKeyHash(ApiKeyHasher.hash(newKey));
-    environmentRepository.save(env);
+    // Rotate: the old row is revoked and a new row is minted (as rotateApiKey does).
+    EnvironmentApiKey oldRow =
+        apiKeyRepository.findByKeyHash(ApiKeyHasher.hash(oldKey)).orElseThrow();
+    oldRow.setRevokedAt(LocalDateTime.now());
+    apiKeyRepository.save(oldRow);
+    apiKeyRepository.save(
+        EnvironmentApiKey.builder()
+            .environment(env)
+            .name("default")
+            .keyHash(ApiKeyHasher.hash(newKey))
+            .build());
 
     // The old key is now rejected; the new key authenticates.
     assertThat(statusFor(oldKey)).isEqualTo(HttpStatus.UNAUTHORIZED.value());
@@ -210,8 +223,11 @@ class SecurityChainIntegrationTest {
         .getStatus();
   }
 
-  /** Builds a minimal Org → Project → Environment chain so the SDK filter can resolve the key. */
-  private Environment persistEnvironmentWithApiKeyHash(String apiKeyHash) {
+  /**
+   * Builds a minimal Org → Project → Environment → EnvironmentApiKey chain so the SDK filter can
+   * resolve the key.
+   */
+  private Environment persistEnvironmentWithKeyHash(String keyHash) {
     String unique = UUID.randomUUID().toString();
     Organization org =
         organizationRepository.save(
@@ -219,12 +235,12 @@ class SecurityChainIntegrationTest {
     Project project =
         projectRepository.save(
             Project.builder().organization(org).name("project-" + unique).build());
-    return environmentRepository.save(
-        Environment.builder()
-            .project(project)
-            .name("env-" + unique)
-            .apiKeyHash(apiKeyHash)
-            .build());
+    Environment env =
+        environmentRepository.save(
+            Environment.builder().project(project).name("env-" + unique).build());
+    apiKeyRepository.save(
+        EnvironmentApiKey.builder().environment(env).name("default").keyHash(keyHash).build());
+    return env;
   }
 
   // --- Cross-chain isolation ----------------------------------------------

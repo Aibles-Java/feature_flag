@@ -1,5 +1,7 @@
 package org.aibles.feature_flag.service.impl;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -18,14 +20,15 @@ import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EnvironmentService;
 import org.aibles.feature_flag.service.EvaluationCacheService;
-import org.aibles.feature_flag.util.ApiKeyGenerator;
-import org.aibles.feature_flag.util.ApiKeyHasher;
+import org.aibles.feature_flag.util.EnvironmentApiKeyFactory;
+import org.aibles.feature_flag.util.EnvironmentApiKeyFactory.MintedKey;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -37,11 +40,13 @@ import org.springframework.transaction.annotation.Transactional;
 public class EnvironmentServiceImpl implements EnvironmentService {
 
   private final EnvironmentRepository environmentRepository;
+  private final EnvironmentApiKeyRepository apiKeyRepository;
   private final ProjectRepository projectRepository;
   private final PermissionService permissionService;
   private final ApplicationEventPublisher eventPublisher;
   private final EvaluationCacheService evaluationCacheService;
   private final AuditService auditService;
+  private final Clock clock;
   private final FeatureFlagRepository featureFlagRepository;
   private final FlagEnvironmentStateRepository flagStateRepository;
 
@@ -58,7 +63,6 @@ public class EnvironmentServiceImpl implements EnvironmentService {
             .findById(request.getProjectId())
             .orElseThrow(() -> new ResourceNotFoundException("Project", request.getProjectId()));
 
-    String plaintextKey = ApiKeyGenerator.generate();
     Environment env =
         Environment.builder()
             .project(project)
@@ -68,9 +72,15 @@ public class EnvironmentServiceImpl implements EnvironmentService {
             .changeWindowStartHour(request.getChangeWindowStartHour())
             .changeWindowEndHour(request.getChangeWindowEndHour())
             .changeWindowTimezone(request.getChangeWindowTimezone())
-            .apiKeyHash(ApiKeyHasher.hash(plaintextKey))
             .build();
     Environment saved = environmentRepository.save(env);
+    MintedKey minted =
+        EnvironmentApiKeyFactory.mint(
+            saved,
+            EnvironmentApiKeyFactory.DEFAULT_KEY_NAME,
+            null,
+            permissionService.currentUserId());
+    apiKeyRepository.save(minted.key());
     backfillFlagStates(project, saved);
     // Audit the non-secret view only — never the plaintext key.
     auditService.record(
@@ -80,7 +90,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
         project.getOrganization().getId(),
         null,
         toResponse(saved));
-    return toSecretResponse(saved, plaintextKey);
+    return toSecretResponse(saved, minted.plaintext());
   }
 
   @Override
@@ -163,24 +173,32 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     permissionService.check(
         Action.ENV_ROTATE_KEY,
         PermissionService.ResourceRef.environment(env.getProject().getId(), env));
-    String plaintextKey = ApiKeyGenerator.generate();
-    env.setApiKeyHash(ApiKeyHasher.hash(plaintextKey));
-    Environment saved = environmentRepository.save(env);
+    LocalDateTime now = LocalDateTime.now(clock);
+    apiKeyRepository
+        .findActiveByEnvironmentId(id, now)
+        .forEach(existing -> existing.setRevokedAt(now));
+    MintedKey minted =
+        EnvironmentApiKeyFactory.mint(
+            env,
+            EnvironmentApiKeyFactory.DEFAULT_KEY_NAME,
+            null,
+            permissionService.currentUserId());
+    apiKeyRepository.save(minted.key());
     eventPublisher.publishEvent(
         new ApiKeyRotatedEvent(
-            saved.getId(),
-            saved.getName(),
-            saved.getProject().getName(),
+            env.getId(),
+            env.getName(),
+            env.getProject().getName(),
             permissionService.currentUserEmail()));
     // Record the rotation event only — never the key (before/after intentionally null).
     auditService.record(
         AuditEntityType.API_KEY,
         id,
         AuditAction.ROTATE_API_KEY,
-        saved.getProject().getOrganization().getId(),
+        env.getProject().getOrganization().getId(),
         null,
         null);
-    return toSecretResponse(saved, plaintextKey);
+    return toSecretResponse(env, minted.plaintext());
   }
 
   /**

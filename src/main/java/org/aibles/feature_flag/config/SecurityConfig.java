@@ -1,9 +1,10 @@
 package org.aibles.feature_flag.config;
 
+import java.time.Clock;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
-import org.aibles.feature_flag.repository.EnvironmentRepository;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.security.ApiKeyAuthenticationFilter;
 import org.aibles.feature_flag.security.CustomUserDetailsService;
 import org.aibles.feature_flag.security.JwtAuthenticationFilter;
@@ -49,9 +50,10 @@ public class SecurityConfig {
 
   private final JwtTokenProvider jwtTokenProvider;
   private final CustomUserDetailsService userDetailsService;
-  private final EnvironmentRepository environmentRepository;
+  private final EnvironmentApiKeyRepository apiKeyRepository;
   private final RateLimitService rateLimitService;
   private final FeatureFlagMetrics metrics;
+  private final Clock clock;
 
   /**
    * Allowed CORS origins for the browser SPA, supplied as a comma-separated list. Externalized so
@@ -128,7 +130,7 @@ public class SecurityConfig {
   @Order(1)
   public SecurityFilterChain sdkFilterChain(HttpSecurity http) throws Exception {
     ApiKeyAuthenticationFilter apiKeyFilter =
-        new ApiKeyAuthenticationFilter(environmentRepository, metrics);
+        new ApiKeyAuthenticationFilter(apiKeyRepository, metrics, clock);
     SdkIpRateLimitFilter sdkIpRateLimitFilter = new SdkIpRateLimitFilter(rateLimitService);
     SdkRateLimitFilter sdkRateLimitFilter = new SdkRateLimitFilter(rateLimitService);
 
@@ -145,7 +147,8 @@ public class SecurityConfig {
         .addFilterAfter(sdkIpRateLimitFilter, LogoutFilter.class)
         .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
         // Anchor after the standard UsernamePasswordAuthenticationFilter, which sits after
-        // apiKeyFilter — so the Environment principal is already resolved when we key the limiter.
+        // apiKeyFilter — so the EnvironmentApiKey principal is already resolved when we key the
+        // limiter.
         .addFilterAfter(sdkRateLimitFilter, UsernamePasswordAuthenticationFilter.class);
 
     return http.build();

@@ -1,0 +1,962 @@
+<title>Onward Feature Flags</title>
+
+<style>
+  /* ─────────────────────────────────────────────────────────────────────────
+     Deliberately single-theme. This is a projection deck: it is shown on a
+     beamer or shared screen, where a dark ground holds up and a light one
+     blows out. Every colour is therefore painted explicitly from a token so
+     the page never borrows the host's ground.
+
+     Palette is taken from the product itself rather than invented — the app's
+     own slate #0F172A shell, its #2563EB primary, and the environment
+     traffic-light (prod / staging / dev) that the Environments page already
+     uses. Neutrals are biased toward the blue, never pure grey.
+     ───────────────────────────────────────────────────────────────────────── */
+  :root {
+    --ground:      #0B1220;
+    --ground-deep: #070C16;
+    --surface:     #131C2E;
+    --surface-2:   #1B2740;
+    --line:        #24314D;
+    --ink:         #E9EEF9;
+    --ink-dim:     #A8B7D2;
+    --ink-mute:    #6F82A3;
+
+    --brand:       #2563EB;
+    --brand-lift:  #60A5FA;
+
+    --prod:        #F0524D;
+    --staging:     #F0A93B;
+    --dev:         #22C08A;
+
+    --font-display: "Segoe UI Variable Display", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-body:    "Segoe UI Variable Text", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono:    ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+
+    --stage-w: 1280px;
+    --stage-h: 720px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--ground-deep);
+    color: var(--ink);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* ── Stage: fixed 16:9, scaled to fit whatever viewport it lands in ─────── */
+  #viewport {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(1200px 700px at 18% -10%, #16233c 0%, transparent 60%),
+      var(--ground-deep);
+  }
+
+  #stage {
+    width: var(--stage-w);
+    height: var(--stage-h);
+    position: relative;
+    transform-origin: center center;
+    background: var(--ground);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 40px 120px rgba(0,0,0,.55);
+  }
+
+  /* ── Slides ─────────────────────────────────────────────────────────────── */
+  .slide {
+    position: absolute;
+    inset: 0;
+    padding: 56px 64px 64px 88px;
+    display: none;
+    grid-template-rows: auto 1fr;
+    gap: 26px;
+  }
+  .slide.is-active { display: grid; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .slide.is-active > * { animation: rise .38s cubic-bezier(.2,.7,.3,1) both; }
+    .slide.is-active > *:nth-child(2) { animation-delay: .06s; }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: none; }
+    }
+  }
+
+  /* Vertical switch rail — the toggle metaphor, used as the deck's spine */
+  .rail {
+    position: absolute;
+    left: 34px; top: 56px; bottom: 56px;
+    width: 3px;
+    background: var(--line);
+    border-radius: 2px;
+  }
+  .rail::after {
+    content: "";
+    position: absolute;
+    left: -3.5px;
+    width: 10px;
+    height: 42px;
+    border-radius: 6px;
+    background: var(--brand);
+    box-shadow: 0 0 22px rgba(37,99,235,.75);
+    transition: top .42s cubic-bezier(.2,.7,.3,1);
+    top: var(--rail-pos, 0%);
+  }
+  @media (prefers-reduced-motion: reduce) { .rail::after { transition: none; } }
+
+  /* ── Type ───────────────────────────────────────────────────────────────── */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--brand-lift);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .eyebrow::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, var(--line), transparent);
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: 60px;
+    line-height: 1.02;
+    letter-spacing: -.03em;
+    font-weight: 700;
+    margin: 0;
+    text-wrap: balance;
+  }
+  h2 {
+    font-family: var(--font-display);
+    font-size: 38px;
+    line-height: 1.1;
+    letter-spacing: -.02em;
+    font-weight: 700;
+    margin: 8px 0 0;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: 18px;
+    line-height: 1.55;
+    color: var(--ink-dim);
+    max-width: 62ch;
+    margin: 0;
+  }
+  p { margin: 0; }
+  strong { color: var(--ink); font-weight: 650; }
+  code, .mono { font-family: var(--font-mono); }
+
+  .body { min-height: 0; overflow: hidden; }
+
+  /* ── Reusable pieces ────────────────────────────────────────────────────── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; height: 100%; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .stack  { display: flex; flex-direction: column; gap: 16px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card h3 {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 650;
+    margin: 0;
+    letter-spacing: -.01em;
+  }
+  .card p { font-size: 14.5px; line-height: 1.5; color: var(--ink-dim); }
+
+  .tag {
+    align-self: flex-start;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+  .t-prod { color: var(--prod); }
+  .t-stag { color: var(--staging); }
+  .t-dev  { color: var(--dev); }
+  .t-brand{ color: var(--brand-lift); }
+
+  .stat { display: flex; flex-direction: column; gap: 2px; }
+  .stat .n {
+    font-family: var(--font-display);
+    font-size: 40px;
+    font-weight: 700;
+    letter-spacing: -.03em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .stat .k {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+  }
+
+  ul.ticks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 11px; }
+  ul.ticks li {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    gap: 12px;
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+  }
+  ul.ticks li::before {
+    content: "";
+    width: 7px; height: 7px;
+    margin-top: 8px;
+    margin-left: 5px;
+    border-radius: 2px;
+    background: var(--brand);
+  }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size: 14px; align-items: baseline; }
+  .kv dt { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-mute); }
+  .kv dd { margin: 0; color: var(--ink-dim); }
+
+  /* Toggle switch drawn in CSS — the subject's own instrument */
+  .switch {
+    width: 46px; height: 26px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    position: relative;
+    flex-shrink: 0;
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--ink-mute);
+  }
+  .switch.on { background: rgba(34,192,138,.18); border-color: rgba(34,192,138,.5); }
+  .switch.on::after { left: 23px; background: var(--dev); box-shadow: 0 0 12px rgba(34,192,138,.8); }
+
+  .flagrow {
+    display: flex; align-items: center; gap: 14px;
+    padding: 11px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  .flagrow .key { font-family: var(--font-mono); font-size: 13.5px; flex: 1; color: var(--ink); }
+  .flagrow .env { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; }
+
+  /* Pipeline / flow */
+  .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; align-items: stretch; }
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    padding: 15px 14px;
+    display: flex; flex-direction: column; gap: 7px;
+    position: relative;
+  }
+  .step .num {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .16em;
+    color: var(--brand-lift);
+  }
+  .step h4 { margin: 0; font-size: 14.5px; font-weight: 650; font-family: var(--font-display); letter-spacing: -.01em; }
+  .step p { font-size: 12.5px; line-height: 1.45; color: var(--ink-mute); }
+
+  /* Diagram container: wide content scrolls inside itself, never the page */
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+    height: 100%;
+    overflow: auto;
+    display: grid;
+    place-items: center;
+  }
+  .mermaid { width: 100%; }
+  .mermaid svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+
+  /* Title slide */
+  .title-slide { grid-template-rows: 1fr auto; padding-left: 88px; }
+  .brandmark { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
+  .brandmark .logo {
+    width: 46px; height: 46px; border-radius: 13px;
+    background: var(--brand);
+    display: grid; place-items: center;
+    box-shadow: 0 8px 30px rgba(37,99,235,.45);
+  }
+  .brandmark .wordmark { font-family: var(--font-display); font-weight: 700; font-size: 19px; letter-spacing: -.01em; }
+  .brandmark .sub { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .24em; color: var(--ink-mute); text-transform: uppercase; }
+
+  .meta-strip {
+    display: flex; gap: 34px; align-items: flex-end;
+    border-top: 1px solid var(--line);
+    padding-top: 18px;
+  }
+
+  /* ── Chrome: progress, counter, hint ────────────────────────────────────── */
+  #progress {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+    background: transparent;
+  }
+  #progress i {
+    display: block; height: 100%;
+    background: linear-gradient(90deg, var(--brand), var(--brand-lift));
+    transition: width .38s cubic-bezier(.2,.7,.3,1);
+  }
+  @media (prefers-reduced-motion: reduce) { #progress i { transition: none; } }
+
+  #counter {
+    position: absolute; right: 26px; bottom: 20px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .16em;
+    color: var(--ink-mute);
+    font-variant-numeric: tabular-nums;
+  }
+
+  #hint {
+    position: fixed; left: 50%; bottom: 16px;
+    transform: translateX(-50%);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: .12em;
+    color: #4A5B79;
+    text-transform: uppercase;
+    transition: opacity .5s;
+  }
+  #hint kbd {
+    font-family: inherit;
+    border: 1px solid #2B3A57;
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--ink-mute);
+  }
+
+  :focus-visible { outline: 2px solid var(--brand-lift); outline-offset: 3px; }
+</style>
+
+<div id="viewport">
+  <div id="stage">
+
+    <div class="rail" id="rail"></div>
+
+    <!-- ══ 1 ══════════════════════════════════════════════════════════════ -->
+    <section class="slide title-slide is-active">
+      <div>
+        <div class="brandmark">
+          <div class="logo">
+            <svg width="26" height="26" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <path d="M14 44 L28 34 L38 40 L50 22" stroke="white" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M40 22 L50 22 L50 32" stroke="#22C08A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div>
+            <div class="wordmark">Onward</div>
+            <div class="sub">Feature Flags</div>
+          </div>
+        </div>
+
+        <h1>Bật tính năng<br>mà không cần deploy lại.</h1>
+        <p class="lede" style="margin-top:20px">
+          Nền tảng feature flag self-hosted: quản lý flag theo Organization → Project →
+          Environment, với Admin API bảo vệ bằng JWT và SDK API đánh giá flag bằng API key.
+        </p>
+      </div>
+
+      <div class="meta-strip">
+        <div class="stat"><span class="n">Java 21</span><span class="k">Spring Boot 4.1</span></div>
+        <div class="stat"><span class="n">React 19</span><span class="k">Vite · TypeScript</span></div>
+        <div class="stat"><span class="n">9</span><span class="k">JPA entities</span></div>
+        <div class="stat"><span class="n">26</span><span class="k">REST endpoints</span></div>
+        <div class="stat"><span class="n">255</span><span class="k">tests passing</span></div>
+      </div>
+    </section>
+
+    <!-- ══ 2 ══════════════════════════════════════════════════════════════ -->
+    <section class="slide">
+      <div>
+        <div class="eyebrow">Khái niệm</div>
+        <h2>Feature flag là gì?</h2>
+      </div>
+      <div class="body grid-2">
+        <div class="stack">
+          <p class="lede">
+            Một <strong>công tắc điều khiển từ xa</strong> đặt trong code. Tính năng vẫn được
+            deploy lên production, nhưng <strong>bật hay tắt</strong> lại do cấu hình quyết định —
+            không cần build lại, không cần deploy lại.
+          </p>
+          <div class="card" style="background:var(--ground-deep)">
+            <div class="tag t-brand">Ý tưởng cốt lõi</div>
+            <h3 style="font-size:19px">Tách <em>deploy</em> khỏi <em>release</em></h3>
+            <p>
+              <strong>Deploy</strong> là đưa code lên server — việc của kỹ thuật.
+              <strong>Release</strong> là cho người dùng thấy tính năng — việc của sản phẩm.
+              Feature flag khiến hai việc này không còn phải xảy ra cùng lúc.
+            </p>
+          </div>
+          <div class="kv">
+            <dt>Không có flag</dt><dd>Muốn tắt tính năng lỗi → phải revert code và deploy lại (tính bằng chục phút).</dd>
+            <dt>Có flag</dt><dd>Tắt bằng một request. Người dùng hết chịu ảnh hưởng trong vài giây.</dd>
+          </div>
+        </div>
+
+        <div class="stack" style="justify-content:center">
+          <div style="font-family:var(--font-mono); font-size:11px; letter-spacing:.16em; color:var(--ink-mute); text-transform:uppercase">
+            Cùng một flag, khác nhau theo môi trường
+          </div>
+          <div class="flagrow">
+            <span class="switch on"></span>
+            <span class="key">new-checkout</span>
+            <span class="env" style="color:var(--dev)">development</span>
+          </div>
+          <div class="flagrow">
+            <span class="switch on"></span>
+            <span class="key">new-checkout</span>
+            <span class="env" style="color:var(--staging)">staging</span>
+          </div>
+          <div class="flagrow">
+            <span class="switch"></span>
+            <span class="key">new-checkout</span>
+            <span class="env" style="color:var(--prod)">production</span>
+          </div>
+          <p style="font-size:13.5px; color:var(--ink-mute); line-height:1.5; margin-top:6px">
+            Cùng một dòng code đang chạy ở cả ba nơi. Chỉ có <strong>trạng thái</strong> là khác —
+            đó chính là bảng <code>flag_environment_states</code>.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 3 ══════════════════════════════════════════════════════════════ -->
+    <section class="slide">
+      <div>
+        <div class="eyebrow">Giá trị</div>
+        <h2>Bốn việc chỉ làm được khi có flag</h2>
+      </div>
+      <div class="body">
+        <div class="grid-4" style="height:100%">
+          <div class="card">
+            <div class="tag t-prod">Kill switch</div>
+            <h3>Tắt khẩn cấp</h3>
+            <p>Tính năng mới gây lỗi lúc 2 giờ sáng? Tắt flag thay vì rollback. Không cần đánh thức cả team.</p>
+          </div>
+          <div class="card">
+            <div class="tag t-stag">Canary</div>
+            <h3>Mở dần theo %</h3>
+            <p>Cho 1% người dùng thấy trước, theo dõi số liệu, rồi mới mở rộng. Trường <code>rolloutPercent</code> đã có sẵn trong schema.</p>
+          </div>
+          <div class="card">
+            <div class="tag t-dev">Trunk-based</div>
+            <h3>Merge sớm, giấu kỹ</h3>
+            <p>Code chưa xong vẫn merge vào nhánh chính sau flag tắt. Không còn nhánh sống hàng tháng rồi conflict.</p>
+          </div>
+          <div class="card">
+            <div class="tag t-brand">Thử nghiệm</div>
+            <h3>A/B testing</h3>
+            <p>Hai phiên bản chạy song song trên cùng một bản build, chia nhóm người dùng để đo hiệu quả thật.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 4 ══════════════════════════════════════════════════════════════ -->
+    <section class="slide">
+      <div>
+        <div class="eyebrow">Kiến trúc</div>
+        <h2>Hai API, hai cơ chế xác thực</h2>
+      </div>
+      <div class="body grid-2">
+        <div class="stack">
+          <div class="card">
+            <div class="tag t-brand">Admin API · JWT</div>
+            <h3>Dành cho con người</h3>
+            <p>
+              Giao diện quản trị gọi <code>/api/v1/**</code> với Bearer token. Access token sống
+              15 phút, refresh token 14 ngày và <strong>xoay vòng mỗi lần dùng</strong> — dùng lại
+              token cũ bị coi là dấu hiệu bị đánh cắp và thu hồi cả family.
+            </p>
+          </div>
+          <div class="card">
+            <div class="tag t-dev">SDK API · API key</div>
+            <h3>Dành cho ứng dụng</h3>
+            <p>
+              Ứng dụng gọi <code>/api/v1/sdk/flags</code> kèm header
+              <code>X-Environment-Key</code>. Key định danh <strong>một environment</strong>, nên
+              response chính là trạng thái flag của đúng môi trường đó.
+            </p>
+          </div>
+          <p style="font-size:13.5px;color:var(--ink-mute);line-height:1.5">
+            Hai chuỗi filter tách biệt hoàn toàn: principal của chuỗi này không bao giờ lọt sang
+            chuỗi kia — và điều đó được ArchUnit canh ở mức bytecode.
+          </p>
+        </div>
+
+        <div class="stack">
+          <div style="font-family:var(--font-mono); font-size:11px; letter-spacing:.16em; color:var(--ink-mute); text-transform:uppercase">
+            Phân cấp dữ liệu
+          </div>
+          <div class="card" style="gap:14px">
+            <div style="display:flex;align-items:center;gap:12px">
+              <span style="width:9px;height:9px;border-radius:3px;background:var(--brand)"></span>
+              <strong>Organization</strong>
+              <span style="color:var(--ink-mute);font-size:13px">— ranh giới tenant, có thành viên & vai trò</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding-left:22px">
+              <span style="width:9px;height:9px;border-radius:3px;background:var(--brand-lift)"></span>
+              <strong>Project</strong>
+              <span style="color:var(--ink-mute);font-size:13px">— một sản phẩm / một hệ thống</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding-left:44px">
+              <span style="width:9px;height:9px;border-radius:3px;background:var(--dev)"></span>
+              <strong>Environment</strong>
+              <span style="color:var(--ink-mute);font-size:13px">— dev / staging / prod, mỗi nơi một API key</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding-left:44px">
+              <span style="width:9px;height:9px;border-radius:3px;background:var(--staging)"></span>
+              <strong>FeatureFlag</strong>
+              <span style="color:var(--ink-mute);font-size:13px">— thuộc Project, không thuộc Environment</span>
+            </div>
+          </div>
+          <div class="card" style="border-color:rgba(37,99,235,.4)">
+            <h3>Bất biến quan trọng nhất</h3>
+            <p>
+              Tạo một flag mới sẽ <strong>tự sinh state cho mọi environment đang có</strong>.
+              Nhờ vậy một flag luôn có đúng một dòng trạng thái trên mỗi môi trường — không bao
+              giờ có khoảng trống để SDK đọc phải <code>null</code>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 5 ══════════════════════════════════════════════════════════════ -->
+    <section class="slide">
+      <div>
+        <div class="eyebrow">Mô hình dữ liệu</div>
+        <h2>Class diagram</h2>
+      </div>
+      <div class="body">
+        <div class="diagram">
+<pre class="mermaid">
+%%{init: {"theme":"base","themeVariables":{
+  "primaryColor":"#1B2740","primaryTextColor":"#E9EEF9","primaryBorderColor":"#3A4C74",
+  "lineColor":"#5C7099","secondaryColor":"#131C2E","tertiaryColor":"#131C2E",
+  "background":"#131C2E","mainBkg":"#1B2740","nodeBorder":"#3A4C74",
+  "fontFamily":"ui-monospace, Consolas, monospace","fontSize":"13px",
+  "classText":"#E9EEF9"
+}} }%%
+classDiagram
+  direction LR
+
+  class User {
+    +UUID id
+    +String email
+    +String passwordHash
+    +boolean enabled
+  }
+  class Organization {
+    +UUID id
+    +String name
+    +String slug
+  }
+  class OrganizationMember {
+    +UUID id
+    +MemberRole role
+  }
+  class Project {
+    +UUID id
+    +String name
+    +String description
+  }
+  class Environment {
+    +UUID id
+    +String name
+    +String apiKeyHash
+    +LocalDateTime lastUsedAt
+  }
+  class FeatureFlag {
+    +UUID id
+    +String name
+    +String key
+    +FlagValueType valueType
+    +boolean archived
+  }
+  class FlagEnvironmentState {
+    +UUID id
+    +boolean enabled
+    +String value
+    +int rolloutPercent
+  }
+  class AuditLog {
+    +UUID id
+    +UUID actorUserId
+    +AuditAction action
+    +AuditEntityType entityType
+    +Map beforeState
+    +Map afterState
+  }
+  class RefreshToken {
+    +UUID id
+    +UUID userId
+    +UUID familyId
+    +String tokenHash
+    +LocalDateTime revokedAt
+  }
+
+  Organization "1" o-- "*" OrganizationMember
+  User "1" o-- "*" OrganizationMember
+  Organization "1" *-- "*" Project
+  Project "1" *-- "*" Environment
+  Project "1" *-- "*" FeatureFlag
+  FeatureFlag "1" *-- "*" FlagEnvironmentState
+  Environment "1" *-- "*" FlagEnvironmentState
+  User "1" ..> "*" RefreshToken
+  Organization "1" ..> "*" AuditLog
+</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 6 ══════════════════════════════════════════════════════════════ -->
+    <section class="slide">
+      <div>
+        <div class="eyebrow">Mô hình dữ liệu · ghi chú</div>
+        <h2>Ba quyết định đáng chú ý trong schema</h2>
+      </div>
+      <div class="body grid-3" style="align-content:start">
+        <div class="card">
+          <div class="tag t-brand">Bảng nối</div>
+          <h3><code>FlagEnvironmentState</code></h3>
+          <p>
+            Trái tim của hệ thống. Flag <strong>không</strong> mang trạng thái bật/tắt — nó chỉ là
+            định nghĩa. Trạng thái nằm ở giao của <em>flag × environment</em>, nên cùng một flag
+            bật ở dev mà tắt ở prod.
+          </p>
+          <p style="color:var(--ink-mute)">Hệ quả: không bao giờ truy vấn flag mà thiếu join bảng này.</p>
+        </div>
+        <div class="card">
+          <div class="tag t-prod">Bất biến</div>
+          <h3><code>FeatureFlag.key</code></h3>
+          <p>
+            Slug này là thứ SDK dùng để tra cứu. Đổi key nghĩa là mọi client đang chạy lập tức
+            hỏi một cái tên không còn tồn tại.
+          </p>
+          <p style="color:var(--ink-mute)">
+            Chặn hai lớp: <code>updatable = false</code> ở DB, và một ArchUnit rule cấm gọi
+            <code>setKey()</code> từ bên ngoài entity.
+          </p>
+        </div>
+        <div class="card">
+          <div class="tag t-dev">Bí mật</div>
+          <h3><code>Environment.apiKeyHash</code></h3>
+          <p>
+            Chỉ lưu SHA-256, không lưu key gốc. Key thật hiện <strong>đúng một lần</strong> lúc
+            tạo hoặc lúc xoay — sau đó không ai đọc lại được, kể cả admin.
+          </p>
+          <p style="color:var(--ink-mute)">Lộ database cũng không lấy được key để gọi SDK API.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 7 ══════════════════════════════════════════════════════════════ -->
+    <section class="slide">
+      <div>
+        <div class="eyebrow">Luồng chính · 1</div>
+        <h2>Xác thực người dùng</h2>
+      </div>
+      <div class="body stack">
+        <div class="flow">
+          <div class="step">
+            <span class="num">01</span>
+            <h4>Đăng ký</h4>
+            <p><code>POST /auth/register</code> — mật khẩu băm BCrypt trước khi lưu.</p>
+          </div>
+          <div class="step">
+            <span class="num">02</span>
+            <h4>Đăng nhập</h4>
+            <p>Nhận <strong>access token 15 phút</strong> và <strong>refresh token 14 ngày</strong>.</p>
+          </div>
+          <div class="step">
+            <span class="num">03</span>
+            <h4>Gọi API</h4>
+            <p>Mỗi request gắn <code>Authorization: Bearer</code>. Filter dựng lại principal.</p>
+          </div>
+          <div class="step">
+            <span class="num">04</span>
+            <h4>Hết hạn → xoay</h4>
+            <p>Client gọi <code>/auth/refresh</code>, nhận <strong>cặp token mới</strong>, token cũ chết ngay.</p>
+          </div>
+          <div class="step">
+            <span class="num">05</span>
+            <h4>Đăng xuất</h4>
+            <p><code>/auth/logout</code> thu hồi cả family. Gọi mấy lần cũng trả 204.</p>
+          </div>
+        </div>
+
+        <div class="grid-2" style="height:auto">
+          <div class="card" style="border-color:rgba(240,82,77,.35)">
+            <div class="tag t-prod">Chống đánh cắp</div>
+            <h3>Dùng lại token cũ = thu hồi tất cả</h3>
+            <p>
+              Refresh token <strong>xoay vòng mỗi lần dùng</strong>. Nếu một token đã xoay bị dùng
+              lại, hệ thống hiểu là bản sao đang nằm trong tay người khác nên
+              <strong>huỷ toàn bộ family</strong> — cả kẻ tấn công lẫn người dùng thật đều bị đá ra,
+              buộc phải đăng nhập lại.
+            </p>
+          </div>
+          <div class="card">
+            <div class="tag t-brand">Lưu trữ</div>
+            <h3>Không lưu token gốc</h3>
+            <p>
+              Bảng <code>refresh_tokens</code> chỉ giữ <code>tokenHash</code> (SHA-256) cùng
+              <code>familyId</code>, <code>rotatedAt</code>, <code>revokedAt</code>. Truy vấn tra
+              theo hash, nên đọc được database cũng không lấy được token dùng được.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 8 ══════════════════════════════════════════════════════════════ -->
+    <section class="slide">
+      <div>
+        <div class="eyebrow">Luồng chính · 2</div>
+        <h2>Thiết lập và tạo flag</h2>
+      </div>
+      <div class="body stack">
+        <div class="flow" style="grid-template-columns:repeat(4,1fr)">
+          <div class="step">
+            <span class="num">01</span>
+            <h4>Tạo Organization</h4>
+            <p>Người tạo trở thành <strong>OWNER</strong>. Đây là ranh giới tenant của mọi thứ bên trong.</p>
+          </div>
+          <div class="step">
+            <span class="num">02</span>
+            <h4>Tạo Project</h4>
+            <p>Một sản phẩm hoặc một hệ thống. Flag sống ở đây, không sống ở environment.</p>
+          </div>
+          <div class="step">
+            <span class="num">03</span>
+            <h4>Tạo Environment</h4>
+            <p>Sinh API key bằng <code>SecureRandom</code>, trả <strong>một lần duy nhất</strong>, lưu dạng băm.</p>
+          </div>
+          <div class="step">
+            <span class="num">04</span>
+            <h4>Tạo Feature Flag</h4>
+            <p>Đặt <code>key</code> bất biến và <code>valueType</code>. Chưa bật ở đâu cả.</p>
+          </div>
+        </div>
+
+        <div>
+          <div class="card" style="border-color:rgba(37,99,235,.4)">
+            <div class="tag t-brand">Bước quan trọng nhất</div>
+            <h3>Tạo flag sinh state cho mọi environment</h3>
+            <p>
+              Ngay trong transaction tạo flag, hệ thống duyệt <strong>toàn bộ environment của
+              project</strong> và tạo một dòng <code>FlagEnvironmentState</code> cho mỗi nơi, mặc
+              định <code>enabled = false</code>. Flag mới do đó luôn ra đời ở trạng thái tắt trên
+              mọi môi trường — an toàn theo mặc định.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 9 ═════════════════════════════════════════════════════════════ -->
+    <section class="slide">
+      <div>
+        <div class="eyebrow">Luồng chính · 3</div>
+        <h2>Bật / tắt một flag</h2>
+      </div>
+      <div class="body grid-2">
+        <div class="stack">
+          <p class="lede" style="font-size:16px">
+            Đường ghi quan trọng nhất hệ thống. Thứ tự dưới đây đúng theo code trong
+            <code>updateState()</code>.
+          </p>
+          <ul class="ticks" style="gap:9px">
+            <li><strong>Kiểm tra quyền trước</strong> — chỉ OWNER hoặc ADMIN của project mới được đi tiếp</li>
+            <li>Tìm dòng state theo cặp <em>flag × environment</em>, không có thì 404</li>
+            <li>Chụp lại trạng thái <strong>trước</strong> khi đổi</li>
+            <li>Ghi <code>enabled</code>, <code>value</code>, <code>rolloutPercent</code> rồi lưu</li>
+            <li>Ghi <code>audit_log</code> <strong>đồng bộ, cùng transaction</strong></li>
+            <li>Phát sự kiện để báo Slack <strong>sau khi commit</strong></li>
+            <li>Cộng metric <code>ff_flag_changes_total</code></li>
+          </ul>
+        </div>
+
+        <div class="stack">
+          <div class="card">
+            <div class="tag t-brand">Vì sao guard đứng trước</div>
+            <h3>Chặn trước khi chạm dữ liệu</h3>
+            <p>
+              <code>PermissionService</code> đọc vai trò trong organization và ném lỗi ngay nếu
+              không đủ quyền — <strong>trước</strong> mọi thao tác ghi. Controller không chứa một
+              dòng logic phân quyền nào; toàn bộ nằm ở tầng service.
+            </p>
+          </div>
+          <div class="card">
+            <div class="tag t-dev">Vì sao audit đồng bộ</div>
+            <h3>Đổi và vết ghi cùng sống chết</h3>
+            <p>
+              Audit nằm trong <strong>chính transaction</strong> của thay đổi, nên không thể có
+              chuyện flag đã đổi mà không còn vết. Ngược lại, thông báo Slack chạy
+              <strong>bất đồng bộ sau commit</strong> — Slack sập thì việc bật flag vẫn thành công.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 7 ══════════════════════════════════════════════════════════════ -->
+    <section class="slide">
+      <div>
+        <div class="eyebrow">Luồng chính · 4</div>
+        <h2>Một lần SDK hỏi flag</h2>
+      </div>
+      <div class="body stack">
+        <div class="flow">
+          <div class="step">
+            <span class="num">01</span>
+            <h4>Gửi API key</h4>
+            <p>Client gọi <code>GET /sdk/flags</code> kèm header <code>X-Environment-Key</code>.</p>
+          </div>
+          <div class="step">
+            <span class="num">02</span>
+            <h4>Băm & tra cứu</h4>
+            <p>Filter băm SHA-256 rồi tìm environment theo hash — không so sánh key gốc.</p>
+          </div>
+          <div class="step">
+            <span class="num">03</span>
+            <h4>Gắn principal</h4>
+            <p>Environment tìm được trở thành principal của request, thay cho user.</p>
+          </div>
+          <div class="step">
+            <span class="num">04</span>
+            <h4>Đọc trạng thái</h4>
+            <p>Lấy toàn bộ state của environment đó, loại các flag đã archived.</p>
+          </div>
+          <div class="step">
+            <span class="num">05</span>
+            <h4>Trả kết quả</h4>
+            <p>Mảng <code>{flagKey, enabled, value, valueType}</code> — không phân trang.</p>
+          </div>
+        </div>
+
+        <div class="grid-2" style="height:auto">
+          <div class="card">
+            <h3>Vì sao SDK không phân trang</h3>
+            <p>
+              Sáu endpoint quản trị đều trả về envelope <code>{content, page, size, …}</code> để
+              không endpoint nào có thể kéo cả bảng ra. SDK thì cố tình đứng ngoài quy tắc đó:
+              client cần <strong>toàn bộ</strong> flag của môi trường trong một lượt gọi để
+              cache, nếu phân trang thì việc đánh giá flag sẽ phụ thuộc mạng nhiều lần.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Ghi vết mọi thay đổi</h3>
+            <p>
+              Mỗi lần bật/tắt flag hay đổi cấu hình đều ghi một dòng <code>audit_log</code> ngay
+              <strong>trong cùng transaction</strong> — nên hoặc cả thay đổi và vết ghi cùng
+              thành công, hoặc cùng thất bại. Bảng này chỉ ghi thêm, không có khoá ngoại để nó
+              sống lâu hơn cả thực thể mà nó mô tả.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div id="progress"><i></i></div>
+    <div id="counter"></div>
+  </div>
+</div>
+
+<div id="hint"><kbd>←</kbd> <kbd>→</kbd> chuyển slide · <kbd>F</kbd> toàn màn hình</div>
+
+<script>
+  (function () {
+    var slides   = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+    var stage    = document.getElementById('stage');
+    var viewport = document.getElementById('viewport');
+    var bar      = document.querySelector('#progress i');
+    var counter  = document.getElementById('counter');
+    var rail     = document.getElementById('rail');
+    var hint     = document.getElementById('hint');
+    var i = 0;
+
+    function show(n) {
+      i = Math.max(0, Math.min(slides.length - 1, n));
+      slides.forEach(function (s, k) { s.classList.toggle('is-active', k === i); });
+      bar.style.width = ((i + 1) / slides.length * 100) + '%';
+      counter.textContent = String(i + 1).padStart(2, '0') + ' / ' + String(slides.length).padStart(2, '0');
+      // Park the rail's lit segment proportionally down the spine.
+      rail.style.setProperty('--rail-pos', (i / Math.max(1, slides.length - 1)) * (100 - 8) + '%');
+    }
+
+    // Scale the fixed 16:9 stage to fit any viewport, without ever cropping it.
+    function fit() {
+      var pad = 48;
+      var s = Math.min(
+        (viewport.clientWidth  - pad) / stage.offsetWidth,
+        (viewport.clientHeight - pad) / stage.offsetHeight
+      );
+      stage.style.transform = 'scale(' + s + ')';
+    }
+
+    window.addEventListener('resize', fit);
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { show(i + 1); e.preventDefault(); }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { show(i - 1); e.preventDefault(); }
+      else if (e.key === 'Home') { show(0); }
+      else if (e.key === 'End') { show(slides.length - 1); }
+      else if (e.key === 'f' || e.key === 'F') {
+        if (document.fullscreenElement) { document.exitFullscreen(); }
+        else if (document.documentElement.requestFullscreen) { document.documentElement.requestFullscreen(); }
+      }
+    });
+
+    // Click to advance; click the left eighth to go back.
+    viewport.addEventListener('click', function (e) {
+      show(e.clientX < window.innerWidth / 8 ? i - 1 : i + 1);
+    });
+
+    // Fade the keyboard hint once the audience is under way.
+    setTimeout(function () { hint.style.opacity = '0'; }, 6000);
+
+    fit();
+    show(0);
+    // Mermaid sizes its SVG after this script runs; refit once it has settled.
+    setTimeout(fit, 400);
+    setTimeout(fit, 1500);
+  })();
+</script>

@@ -17,7 +17,6 @@ import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EvaluationService;
-import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -68,11 +67,7 @@ class FlagHygieneIntegrationTest {
     project = projectRepository.save(Project.builder().organization(org).name("web").build());
     environment =
         environmentRepository.save(
-            Environment.builder()
-                .project(project)
-                .name("production")
-                .apiKeyHash(ApiKeyHasher.hash(UUID.randomUUID().toString()))
-                .build());
+            Environment.builder().project(project).name("production").build());
   }
 
   private FeatureFlag flag(String key, LocalDateTime expiresAt) {
@@ -231,11 +226,7 @@ class FlagHygieneIntegrationTest {
         projectRepository.save(Project.builder().organization(otherOrg).name("other").build());
     Environment otherEnv =
         environmentRepository.save(
-            Environment.builder()
-                .project(otherProject)
-                .name("production")
-                .apiKeyHash(ApiKeyHasher.hash(UUID.randomUUID().toString()))
-                .build());
+            Environment.builder().project(otherProject).name("production").build());
     FeatureFlag theirs =
         featureFlagRepository.save(
             FeatureFlag.builder()

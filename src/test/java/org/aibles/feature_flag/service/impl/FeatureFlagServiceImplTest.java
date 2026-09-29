@@ -88,10 +88,8 @@ class FeatureFlagServiceImplTest {
   void create_autoCreatesOneStateRowPerEnvironment() {
     UUID env1Id = UUID.randomUUID();
     UUID env2Id = UUID.randomUUID();
-    Environment env1 =
-        Environment.builder().id(env1Id).name("prod").project(project).apiKeyHash("k1").build();
-    Environment env2 =
-        Environment.builder().id(env2Id).name("staging").project(project).apiKeyHash("k2").build();
+    Environment env1 = Environment.builder().id(env1Id).name("prod").project(project).build();
+    Environment env2 = Environment.builder().id(env2Id).name("staging").project(project).build();
 
     when(featureFlagRepository.existsByProjectIdAndKey(projectId, "my-flag")).thenReturn(false);
     when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
@@ -204,8 +202,7 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    Environment env =
-        Environment.builder().id(envId).name("prod").project(project).apiKeyHash("k").build();
+    Environment env = Environment.builder().id(envId).name("prod").project(project).build();
 
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(featureFlagRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -240,8 +237,7 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(true)
             .build();
-    Environment env =
-        Environment.builder().id(envId).name("prod").project(project).apiKeyHash("k").build();
+    Environment env = Environment.builder().id(envId).name("prod").project(project).build();
 
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(featureFlagRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -300,7 +296,7 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    Environment env = Environment.builder().id(envId).name("prod").apiKeyHash("k").build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
     FlagEnvironmentState state =
         FlagEnvironmentState.builder()
             .id(UUID.randomUUID())
@@ -362,7 +358,7 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    Environment env = Environment.builder().id(envId).name("prod").apiKeyHash("k").build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
     FlagEnvironmentState state =
         FlagEnvironmentState.builder()
             .id(UUID.randomUUID())
@@ -402,7 +398,7 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    Environment env = Environment.builder().id(envId).name("prod").apiKeyHash("k").build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
     FlagEnvironmentState state =
         FlagEnvironmentState.builder()
             .id(UUID.randomUUID())
@@ -450,7 +446,7 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    Environment env = Environment.builder().id(envId).name("prod").apiKeyHash("k").build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
     FlagEnvironmentState state =
         FlagEnvironmentState.builder()
             .id(UUID.randomUUID())
