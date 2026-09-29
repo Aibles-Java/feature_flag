@@ -525,6 +525,19 @@ caller for flags on a partial rollout. Omitting it returns a partially-rolled-ou
 **on**, so a rollout percentage is **not** an access-control mechanism. See
 `docs/adr/ADR-0004-percentage-rollout-contract.md`.
 
+**Caching (issue #30).** Both SDK endpoints read a per-instance Caffeine cache of the environment's
+pre-rollout flag states, keyed by environment id (`EvaluationCacheService`,
+`app.evaluation-cache.max-size` / `ttl`, default 1000 entries / 5 min). Rollout is still evaluated
+per request on top of the cached entry, so one entry serves every `identifier`. Every write that
+changes an environment's flag states (state update, flag create/archive/unarchive, snapshot import,
+environment delete) evicts the affected environments **after commit**. `ShallowEtagHeaderFilter`
+adds an `ETag` to both SDK endpoints (`/api/v1/sdk/flags`, `/api/v1/sdk/flags/*`), so a poll with a matching `If-None-Match` gets `304`.
+
+**Rate limits.** Two limits apply to the SDK chain: per source IP **before** the API key is checked
+(`app.rate-limit.sdk-ip`, default 600/min — the only ceiling on anonymous key probing, issue #128),
+then per environment once the key has authenticated (`app.rate-limit.sdk`, default 300/min).
+Exceeding either returns `429` with `Retry-After`.
+
 > The inventory above covers the v1 core resources. Later issues added further admin endpoint
 > groups — audit log, custom roles, project permission grants, flag hygiene and webhook
 > subscriptions. Swagger UI (`/swagger-ui.html`) is the authoritative, always-current inventory.
@@ -763,6 +776,10 @@ flag_enabled = bucket < rollout_percentage
 Allow specific users to always see a flag as enabled/disabled regardless of segment or rollout rules. Useful for internal testers and account-level exceptions.
 
 ### 12.4 Redis Evaluation Cache
+
+> An **in-process** Caffeine cache already ships (issue #30, see §7.2 SDK Evaluation). What remains
+> for v2 is a shared cache: eviction is per instance, so with several instances a write only evicts
+> the instance that handled it and the others serve stale state until their TTL expires.
 
 Cache `getAllFlags(environmentId)` results in Redis with a short TTL (e.g., 30s). Eliminates per-request DB queries for high-throughput SDK evaluation.
 
