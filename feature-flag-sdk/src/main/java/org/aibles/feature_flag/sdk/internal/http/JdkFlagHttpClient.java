@@ -1,13 +1,24 @@
 package org.aibles.feature_flag.sdk.internal.http;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import javax.net.ssl.SSLParameters;
+import org.aibles.feature_flag.sdk.FlagValueType;
 import org.aibles.feature_flag.sdk.exception.InvalidApiKeyException;
+import org.aibles.feature_flag.sdk.internal.CacheEntry;
 import org.aibles.feature_flag.sdk.internal.SdkConfig;
 
 /**
@@ -27,6 +38,11 @@ import org.aibles.feature_flag.sdk.internal.SdkConfig;
  * passed to any Logger call. JDK wire-logging detection is performed at construction; if the JVM
  * property {@code jdk.httpclient.HttpClient.log} contains {@code "headers"}, a WARN is emitted but
  * construction is not blocked.
+ *
+ * <p>Identifier transport: {@code identifier} is sent as a query parameter {@code ?identifier=...}
+ * (URL-encoded) to match the live server contract (@RequestParam on EvaluationController). Moving
+ * it to {@code X-Flag-Identifier} header is deferred to a future phase requiring a coordinated
+ * server change.
  */
 public final class JdkFlagHttpClient {
 
@@ -41,6 +57,9 @@ public final class JdkFlagHttpClient {
 
   private final SdkConfig config;
   private final HttpClient httpClient;
+
+  /** Shared mapper for response parsing — no default typing enabled (ADR-SDK-003). */
+  private static final ObjectMapper RESPONSE_MAPPER = new ObjectMapper();
 
   /**
    * Constructs a new client. Detects JDK wire-logging and emits a WARN if header logging is
@@ -79,69 +98,45 @@ public final class JdkFlagHttpClient {
     return configuredProtocols.clone();
   }
 
+  // ---------------------------------------------------------------------------
+  // fetchOne — returns a CacheEntry (full implementation)
+  // ---------------------------------------------------------------------------
+
   /**
    * Fetches a single flag by key from the flag server.
    *
-   * <p>This is a minimal stub for G1 evidence purposes — it performs the HTTP/TLS handshake so the
-   * TLS tests can validate behaviour. Full response parsing is a P4 deliverable.
+   * <p>The {@code identifier} is sent as the {@code ?identifier=…} query parameter (URL-encoded) to
+   * match the live server contract. See class Javadoc for the deferred header-transport note.
    *
    * @param flagKey the flag key to fetch (never logged); must be non-null, non-blank, and must not
    *     contain {@code '/'}, {@code '?'}, {@code '#'}, or whitespace to prevent path traversal and
    *     silent URI truncation (M-3 / LLD §6.3)
    * @param identifier opaque caller identity for rollout bucketing (PII — never logged); may be
-   *     null
+   *     null or blank (omitted from the request)
    * @param onAuthFailure callback invoked (synchronously, before throw) when a 401 is received
    *     (SR-02); pass {@code null} for a no-op
+   * @return a {@link CacheEntry} parsed from the server response, or {@code null} on non-200 non
+   *     -retryable non-401 status
    * @throws IllegalArgumentException if flagKey is null, blank, or contains unsafe characters
    * @throws IOException if the request fails (includes SSLHandshakeException for cert / protocol
    *     violations)
    * @throws InvalidApiKeyException if the server returns HTTP 401
    */
-  public void fetchOne(
+  public CacheEntry fetchOne(
       String flagKey, String identifier, Consumer<InvalidApiKeyException> onAuthFailure)
       throws IOException {
-    if (flagKey == null || flagKey.isBlank()) {
-      throw new IllegalArgumentException("flagKey must not be null or blank");
-    }
-    // Guard against path-traversal, query injection, fragment injection, and silent URI truncation
-    // caused by '/', '?', '#', or whitespace in the key (M-3 / LLD §6.3).
-    for (int i = 0; i < flagKey.length(); i++) {
-      char c = flagKey.charAt(i);
-      if (c == '/' || c == '?' || c == '#' || Character.isWhitespace(c)) {
-        throw new IllegalArgumentException(
-            "flagKey contains unsafe character at index " + i + ": '" + c + "'");
-      }
-    }
+    validateFlagKey(flagKey);
 
-    // Build the URI safely using the multi-arg constructor — percent-encodes the path segment
-    // rather than relying on string concatenation (M-3 / LLD §6.3).
-    // Use the (scheme, authority, path, query, fragment) form to preserve the port from the
-    // base URL. The (scheme, host, path, query) form silently drops the port.
-    java.net.URI parsed;
-    try {
-      java.net.URI base = new java.net.URI(config.getServerUrl());
-      // authority includes host:port (e.g. "flags.internal" or "127.0.0.1:8081").
-      String authority = base.getAuthority();
-      parsed =
-          new java.net.URI(base.getScheme(), authority, "/api/v1/sdk/flags/" + flagKey, null, null);
-    } catch (java.net.URISyntaxException e) {
-      throw new IllegalArgumentException("Failed to construct request URI for flagKey", e);
-    }
+    URI uri = buildFlagUri("/api/v1/sdk/flags/" + flagKey, identifier);
 
-    HttpRequest.Builder reqBuilder =
+    HttpRequest request =
         HttpRequest.newBuilder()
-            .uri(parsed)
+            .uri(uri)
             .timeout(Duration.ofMillis(config.getReadTimeoutMs()))
             // Key in header — never logged (DCR-3).
             .header("X-Environment-Key", config.getApiKey())
-            .GET();
-
-    if (identifier != null && !identifier.isBlank()) {
-      // identifier is PII — passed as header, never in URL path or query string (LLD §6.3).
-      reqBuilder.header("X-Flag-Identifier", identifier);
-    }
-
-    HttpRequest request = reqBuilder.build();
+            .GET()
+            .build();
 
     // Log path template only — never the flagKey segment or header values (DCR-3 / SR-04).
     log.debug("SDK fetch: GET /api/v1/sdk/flags/[key] -> attempt 1");
@@ -154,7 +149,9 @@ public final class JdkFlagHttpClient {
       throw new IOException("SDK HTTP request interrupted", e);
     }
 
-    if (response.statusCode() == 401) {
+    int status = response.statusCode();
+
+    if (status == 401) {
       InvalidApiKeyException ex =
           new InvalidApiKeyException("API key rejected — key may have been rotated");
       // SR-02: invoke the auth-failure hook before throwing so the caller can react
@@ -164,6 +161,14 @@ public final class JdkFlagHttpClient {
       }
       throw ex;
     }
+
+    if (status != 200) {
+      // Non-200, non-401: return null so the caller can handle (serve-stale / default).
+      log.debug("SDK fetchOne: non-200 status {}", status);
+      return null;
+    }
+
+    return parseSingleEntry(response.body());
   }
 
   /**
@@ -172,9 +177,148 @@ public final class JdkFlagHttpClient {
    *
    * @see #fetchOne(String, String, Consumer)
    */
-  public void fetchOne(String flagKey, String identifier) throws IOException {
-    fetchOne(flagKey, identifier, config.getOnAuthFailure());
+  public CacheEntry fetchOne(String flagKey, String identifier) throws IOException {
+    return fetchOne(flagKey, identifier, config.getOnAuthFailure());
   }
+
+  // ---------------------------------------------------------------------------
+  // fetchAll — bulk pre-warm
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetches all flags for this environment from the flag server.
+   *
+   * <p>Returns an empty list on non-200 response (so the cache retains its existing entries).
+   * Throws {@link InvalidApiKeyException} on 401.
+   *
+   * @param identifier opaque caller identity; may be null (omitted from request)
+   */
+  public List<CacheEntry> fetchAll(String identifier) throws IOException {
+    URI uri = buildFlagUri("/api/v1/sdk/flags", identifier);
+
+    HttpRequest request =
+        HttpRequest.newBuilder()
+            .uri(uri)
+            .timeout(Duration.ofMillis(config.getReadTimeoutMs()))
+            .header("X-Environment-Key", config.getApiKey())
+            .GET()
+            .build();
+
+    log.debug("SDK fetchAll: GET /api/v1/sdk/flags");
+
+    HttpResponse<String> response;
+    try {
+      response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IOException("SDK HTTP request interrupted", e);
+    }
+
+    int status = response.statusCode();
+
+    if (status == 401) {
+      Consumer<InvalidApiKeyException> hook = config.getOnAuthFailure();
+      InvalidApiKeyException ex =
+          new InvalidApiKeyException("API key rejected — key may have been rotated");
+      if (hook != null) {
+        hook.accept(ex);
+      }
+      throw ex;
+    }
+
+    if (status != 200) {
+      log.debug("SDK fetchAll: non-200 status {}", status);
+      return Collections.emptyList();
+    }
+
+    return parseEntryList(response.body());
+  }
+
+  // ---------------------------------------------------------------------------
+  // URI construction
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Builds a request URI for the given path, appending {@code ?identifier=…} (URL-encoded) when the
+   * identifier is non-blank. The identifier is sent as a QUERY PARAM to match the live server
+   * {@code @RequestParam} contract on {@code EvaluationController}.
+   */
+  private URI buildFlagUri(String path, String identifier) {
+    try {
+      URI base = new URI(config.getServerUrl());
+      String authority = base.getAuthority();
+      String query = null;
+      if (identifier != null && !identifier.isBlank()) {
+        // URL-encode the identifier to prevent query-string injection.
+        query = "identifier=" + URLEncoder.encode(identifier, StandardCharsets.UTF_8);
+      }
+      return new URI(base.getScheme(), authority, path, query, null);
+    } catch (URISyntaxException e) {
+      throw new IllegalArgumentException("Failed to construct request URI", e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Response parsing
+  // ---------------------------------------------------------------------------
+
+  private CacheEntry parseSingleEntry(String body) throws IOException {
+    Map<String, Object> map = RESPONSE_MAPPER.readValue(body, new TypeReference<>() {});
+    return mapToEntry(map);
+  }
+
+  private List<CacheEntry> parseEntryList(String body) throws IOException {
+    List<Map<String, Object>> list = RESPONSE_MAPPER.readValue(body, new TypeReference<>() {});
+    long nowNanos = System.nanoTime();
+    return list.stream().map(m -> mapToEntryWithTimestamp(m, nowNanos)).toList();
+  }
+
+  private static CacheEntry mapToEntry(Map<String, Object> m) {
+    return mapToEntryWithTimestamp(m, System.nanoTime());
+  }
+
+  private static CacheEntry mapToEntryWithTimestamp(Map<String, Object> m, long nowNanos) {
+    String flagKey = (String) m.get("flagKey");
+    boolean enabled = Boolean.TRUE.equals(m.get("enabled"));
+    String value = (String) m.get("value");
+    FlagValueType valueType = parseValueType(m.get("valueType"));
+    int rolloutPercent = 0;
+    Object rp = m.get("rolloutPercent");
+    if (rp instanceof Number n) {
+      rolloutPercent = n.intValue();
+    }
+    return new CacheEntry(flagKey, enabled, value, valueType, rolloutPercent, nowNanos);
+  }
+
+  private static FlagValueType parseValueType(Object raw) {
+    if (raw == null) return null;
+    try {
+      return FlagValueType.valueOf(raw.toString());
+    } catch (IllegalArgumentException e) {
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // FlagKey validation (M-3 / LLD §6.3)
+  // ---------------------------------------------------------------------------
+
+  private static void validateFlagKey(String flagKey) {
+    if (flagKey == null || flagKey.isBlank()) {
+      throw new IllegalArgumentException("flagKey must not be null or blank");
+    }
+    for (int i = 0; i < flagKey.length(); i++) {
+      char c = flagKey.charAt(i);
+      if (c == '/' || c == '?' || c == '#' || Character.isWhitespace(c)) {
+        throw new IllegalArgumentException(
+            "flagKey contains unsafe character at index " + i + ": '" + c + "'");
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // HttpClient construction
+  // ---------------------------------------------------------------------------
 
   /**
    * Builds the {@link HttpClient} with TLS protocol pinning. Uses the default (validating) {@link
