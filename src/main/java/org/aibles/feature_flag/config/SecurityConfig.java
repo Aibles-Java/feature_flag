@@ -8,6 +8,7 @@ import org.aibles.feature_flag.security.ApiKeyAuthenticationFilter;
 import org.aibles.feature_flag.security.CustomUserDetailsService;
 import org.aibles.feature_flag.security.JwtAuthenticationFilter;
 import org.aibles.feature_flag.security.JwtTokenProvider;
+import org.aibles.feature_flag.security.ProblemDetailAuthenticationEntryPoint;
 import org.aibles.feature_flag.security.ratelimit.AuthRateLimitFilter;
 import org.aibles.feature_flag.security.ratelimit.RateLimitProperties;
 import org.aibles.feature_flag.security.ratelimit.RateLimitService;
@@ -49,6 +50,19 @@ public class SecurityConfig {
   private final EnvironmentRepository environmentRepository;
   private final RateLimitService rateLimitService;
   private final FeatureFlagMetrics metrics;
+
+  /**
+   * Allowed CORS origins for the browser SPA, supplied as a comma-separated list. Externalized so
+   * prod points at the deployed frontend domain(s) via {@code APP_CORS_ALLOWED_ORIGINS} rather than
+   * the committed localhost dev defaults. Must be explicit origins (never {@code *}) because the
+   * config sends {@code Access-Control-Allow-Credentials: true}.
+   */
+  @Value("${app.cors.allowed-origins}")
+  private List<String> allowedOrigins;
+
+  /** Renders unauthenticated admin-chain requests as 401 problem+json (see the admin chain). */
+  private final ProblemDetailAuthenticationEntryPoint authenticationEntryPoint =
+      new ProblemDetailAuthenticationEntryPoint();
 
   // Chain 0: Actuator/management endpoints (issue #29). Highest precedence so /actuator/**
   // never falls through to the JWT admin chain. Health is public (liveness/readiness probes);
@@ -151,6 +165,13 @@ public class SecurityConfig {
                     .permitAll()
                     .anyRequest()
                     .authenticated())
+        // Without this, Spring Security defaults the entry point to Http403ForbiddenEntryPoint —
+        // it only picks a 401-capable default when a built-in mechanism (form login, HTTP Basic)
+        // is configured, and this chain authenticates with a custom JWT filter instead. The result
+        // was that *unauthenticated* and expired-token requests returned 403, which clients cannot
+        // tell apart from a genuine permission denial. Explicitly: 401 = who are you,
+        // 403 = you may not.
+        .exceptionHandling(ex -> ex.authenticationEntryPoint(authenticationEntryPoint))
         // Per-IP throttle on the (permitAll) /api/v1/auth/** endpoints. Anchored on the
         // standard UsernamePasswordAuthenticationFilter (added before jwtFilter so it runs first).
         .addFilterBefore(authRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
@@ -180,7 +201,7 @@ public class SecurityConfig {
   @Bean
   public CorsConfigurationSource corsConfigurationSource() {
     CorsConfiguration config = new CorsConfiguration();
-    config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174"));
+    config.setAllowedOrigins(allowedOrigins);
     config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
     config.setAllowedHeaders(List.of("*"));
     config.setAllowCredentials(true);

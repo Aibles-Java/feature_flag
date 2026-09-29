@@ -3,6 +3,7 @@ package org.aibles.feature_flag.notification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 
+import java.util.UUID;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
 import org.aibles.feature_flag.notification.event.FlagStateChangedEvent;
@@ -29,7 +30,15 @@ class SlackEventListenerTest {
 
     listener.onFlagStateChanged(
         new FlagStateChangedEvent(
-            "checkout-v2", "staging", "web", false, true, "off", "on", "dev@example.com"));
+            UUID.randomUUID(),
+            "checkout-v2",
+            "staging",
+            "web",
+            false,
+            true,
+            "off",
+            "on",
+            "dev@example.com"));
 
     String msg = capture();
     assertThat(msg).contains("checkout-v2").contains("staging").contains("web");
@@ -43,7 +52,15 @@ class SlackEventListenerTest {
 
     listener.onFlagStateChanged(
         new FlagStateChangedEvent(
-            "checkout-v2", "Production", "web", true, false, "on", "off", "dev@example.com"));
+            UUID.randomUUID(),
+            "checkout-v2",
+            "Production",
+            "web",
+            true,
+            false,
+            "on",
+            "off",
+            "dev@example.com"));
 
     assertThat(capture()).startsWith("🔴");
   }
@@ -52,7 +69,8 @@ class SlackEventListenerTest {
   void apiKeyRotated_nonProduction_includesEnvProjectActor_noKey() {
     SlackEventListener listener = new SlackEventListener(slackNotifier);
 
-    listener.onApiKeyRotated(new ApiKeyRotatedEvent("staging", "web", "dev@example.com"));
+    listener.onApiKeyRotated(
+        new ApiKeyRotatedEvent(UUID.randomUUID(), "staging", "web", "dev@example.com"));
 
     String msg = capture();
     assertThat(msg).contains("staging").contains("web").contains("dev@example.com");
@@ -63,7 +81,8 @@ class SlackEventListenerTest {
   void apiKeyRotated_production_usesCriticalSeverity() {
     SlackEventListener listener = new SlackEventListener(slackNotifier);
 
-    listener.onApiKeyRotated(new ApiKeyRotatedEvent("production", "web", "dev@example.com"));
+    listener.onApiKeyRotated(
+        new ApiKeyRotatedEvent(UUID.randomUUID(), "production", "web", "dev@example.com"));
 
     assertThat(capture()).startsWith("🔴");
   }
@@ -72,7 +91,8 @@ class SlackEventListenerTest {
   void flagArchived_archived_saysArchived() {
     SlackEventListener listener = new SlackEventListener(slackNotifier);
 
-    listener.onFlagArchived(new FlagArchivedEvent("old-flag", "web", true, "dev@example.com"));
+    listener.onFlagArchived(
+        new FlagArchivedEvent(UUID.randomUUID(), "old-flag", "web", true, "dev@example.com"));
 
     String msg = capture();
     assertThat(msg).contains("old-flag").contains("web").contains("archived");
@@ -83,7 +103,8 @@ class SlackEventListenerTest {
   void flagArchived_unarchived_saysUnarchived() {
     SlackEventListener listener = new SlackEventListener(slackNotifier);
 
-    listener.onFlagArchived(new FlagArchivedEvent("old-flag", "web", false, "dev@example.com"));
+    listener.onFlagArchived(
+        new FlagArchivedEvent(UUID.randomUUID(), "old-flag", "web", false, "dev@example.com"));
 
     assertThat(capture()).contains("unarchived");
   }

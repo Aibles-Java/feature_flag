@@ -29,8 +29,8 @@ docker compose up -d
 ```
 
 After startup:
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
-- OpenAPI JSON: `http://localhost:8080/api-docs`
+- Swagger UI: `http://localhost:8081/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:8081/api-docs`
 
 ## Architecture
 
@@ -54,9 +54,38 @@ Organization → Project → Environment (has API key)
 
 2. **Admin chain** (all other `/api/v1/**`, order=2) — `JwtAuthenticationFilter` validates Bearer tokens. `UserPrincipal` (containing UUID userId) is set as principal.
 
-### Permission model
+### Permission model (ABAC)
 
-`PermissionService` is a helper injected into every service impl. It reads the current `UserPrincipal` from `SecurityContextHolder` and checks `OrganizationMember.role` (OWNER / ADMIN / VIEWER) before any mutating operation. Controllers do not contain authorization logic.
+`PermissionService` is the Policy Decision Point, injected into every service impl. Controllers
+contain no authorization logic. It reads the current `UserPrincipal` from `SecurityContextHolder`
+and resolves an **effective action set**, then asserts the required `Action` is in it:
+
+```
+effectiveActions(user, project) = actionsForRole(org role) ∪ grantActions(PROJECT grant)
+effectiveActions(user, org)     = actionsForRole(org role)      // grants never apply at org scope
+```
+
+- `OrganizationMember.role` (OWNER / ADMIN / VIEWER) is still the org-level source of truth.
+- `PermissionGrant` elevates a user on one **project** — carrying either a built-in role or a
+  `CustomRole` (an org-scoped named set of `Action`s). Grants only **add** capability; an org
+  OWNER/ADMIN is never downgraded by a narrow grant.
+- Two attribute rules layer on top of the action check. Any action in `PRODUCTION_ELEVATED`
+  (`FLAG_STATE_UPDATE`, `FLAG_ARCHIVE`, `ENV_ROTATE_KEY`, `ENV_DELETE`) that reaches a
+  `PRODUCTION` environment is rewritten to its OWNER-only `*_PRODUCTION` counterpart, and must
+  fall inside that environment's optional change window. **Archiving counts** — archived flags
+  are filtered out of every SDK response, so leaving it unguarded made the rule bypassable; any
+  new action that changes production behaviour has to be added to that table.
+- The environments an action is measured against: the one the call site names
+  (`ResourceRef.environment(...)`), or — for project-scoped archive/unarchive — every production
+  environment under the project, where the strictest change window wins.
+
+Call sites use `check(Action, ResourceRef)`. The older `requireRole(...)` /
+`requireRoleForProject(...)` / `requireRoleForEnvironment(...)` methods are **kept as adapters** so
+un-migrated call sites (currently `AuditService`) keep working; the project/environment adapters are
+grant-aware, but a grant carrying a *custom* role has no built-in role to compare against and so
+only works through `check`. Prefer `check` in new code.
+
+See `docs/ABAC.md` and `docs/adr/ADR-0006-abac-authorization-model.md`.
 
 ### SDK evaluation flow
 
@@ -80,7 +109,8 @@ spring.datasource.username=ff_user
 spring.datasource.password=ff_password
 spring.jpa.hibernate.ddl-auto=validate   # Liquibase owns the schema
 app.jwt.secret=local-dev-only-...        # dev-only signing key
-app.jwt.expiration-ms=86400000
+app.jwt.access-expiration-ms=900000       # 15 min
+app.jwt.refresh-expiration-ms=1209600000  # 14 days
 ```
 
 Secrets are externalized via env vars (`APP_JWT_SECRET`, `SPRING_DATASOURCE_URL/USERNAME/PASSWORD`
@@ -90,11 +120,48 @@ defaults**, so prod can never fall back to dev values. `config/JwtProperties` (t
 is missing, an unresolved `${...}` placeholder, shorter than 512 bits (64 UTF-8 bytes), or
 contains the `change-me` placeholder marker.
 
-DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–007`). Never modify a changeset that has already run; always add a new one.
+DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–011` and `013–017`; `012` is reserved by the in-flight webhooks branch). Never modify a changeset that has already run; always add a new one.
 
 ## API Key generation
 
-`ApiKeyGenerator` uses `SecureRandom` → 32 bytes → `HexFormat.of().formatHex()` → 64-char hex string. This runs on environment creation and on `POST /api/v1/environments/{id}/api-key/rotate`.
+`ApiKeyGenerator` uses `SecureRandom` → 32 bytes → `HexFormat.of().formatHex()` → 64-char hex string. This runs on environment creation, on `POST /api/v1/environments/{id}/api-key/rotate`, and on `POST /api/v1/environments/{id}/clone` (a clone always mints its own key — the source's is never copied).
+
+## Outbound webhooks (issue #36)
+
+`webhook/` is a second consumer of the same `@Async @TransactionalEventListener(AFTER_COMMIT)`
+pipeline as `SlackEventListener` — `WebhookDispatcher` resolves subscriptions, `WebhookSender`
+signs and POSTs with retries. Off by default (`app.webhook.enabled=false`).
+
+Two rules that are easy to get wrong:
+
+1. **The webhook secret is encrypted, NOT hashed.** HMAC signing needs the plaintext on every
+   delivery, so the `ApiKeyHasher`/SHA-256 precedent used for SDK keys and refresh tokens
+   **cannot** be applied here — `SecretCipher` (AES-256-GCM) is reversible on purpose. Its key
+   (`APP_WEBHOOK_ENCRYPTION_KEY`) is **not rotatable in place**: changing it orphans every stored
+   secret.
+2. **`SsrfGuard` runs at subscribe time *and* on every delivery attempt.** DNS is mutable, so a
+   subscribe-time-only check is bypassable by rebinding. Don't "optimise" the second check away.
+
+Subscriptions are per-environment; project-scoped events (flag create/update/archive) fan out to
+every environment in the project. See `docs/adr/ADR-0005-webhook-delivery-and-secret-storage.md`.
+
+## Flag hygiene (issue #37)
+
+`flag_environment_states.last_evaluated_at` records SDK usage; `feature_flags.expires_at` is an
+optional planned-removal date. `GET /api/v1/flag-hygiene?projectId=…&status=ALL|STALE|EXPIRED`
+reports flag debt, one row per (flag, environment) pair.
+
+Three rules that are easy to break:
+
+1. **The usage write needs `REQUIRES_NEW`.** The SDK evaluation path is
+   `@Transactional(readOnly = true)`; joining it makes the touch an UPDATE inside a read-only
+   transaction — PostgreSQL rejects that, H2 allows it, so the bug would only appear in production.
+2. **The touch must stay a bulk JPQL UPDATE.** A bulk update skips `@UpdateTimestamp`; setting the
+   field on the managed entity instead would bump `updated_at` on every read.
+3. **Call the tracker outside any cache-load function.** Inside a cache-miss loader, a cache hit
+   (issue #30) would skip tracking and the busiest flags would be reported stale.
+
+Expiry is reported, **never** auto-enforced — see `decisions/0028`.
 
 ## v2 Roadmap (not yet implemented)
 

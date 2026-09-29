@@ -31,7 +31,9 @@ class EvaluationCacheServiceImplTest {
   void putAndGet_returnsStoredSnapshots() {
     UUID envId = UUID.randomUUID();
     List<FlagStateSnapshot> snapshots =
-        List.of(new FlagStateSnapshot("flag-a", true, "on", FlagValueType.BOOLEAN, 100));
+        List.of(
+            new FlagStateSnapshot(
+                UUID.randomUUID(), "flag-a", true, "on", FlagValueType.BOOLEAN, 100));
 
     cacheService.put(envId, snapshots);
 
@@ -42,7 +44,10 @@ class EvaluationCacheServiceImplTest {
   void evict_removesEntry() {
     UUID envId = UUID.randomUUID();
     cacheService.put(
-        envId, List.of(new FlagStateSnapshot("flag-b", false, null, FlagValueType.BOOLEAN, 0)));
+        envId,
+        List.of(
+            new FlagStateSnapshot(
+                UUID.randomUUID(), "flag-b", false, null, FlagValueType.BOOLEAN, 0)));
 
     cacheService.evict(envId);
 
@@ -58,7 +63,9 @@ class EvaluationCacheServiceImplTest {
   void getOrLoad_returnsExistingEntry_withoutInvokingLoader() {
     UUID envId = UUID.randomUUID();
     List<FlagStateSnapshot> cached =
-        List.of(new FlagStateSnapshot("flag-d", true, null, FlagValueType.BOOLEAN, 100));
+        List.of(
+            new FlagStateSnapshot(
+                UUID.randomUUID(), "flag-d", true, null, FlagValueType.BOOLEAN, 100));
     cacheService.put(envId, cached);
 
     List<FlagStateSnapshot> result =
@@ -71,7 +78,9 @@ class EvaluationCacheServiceImplTest {
   void getOrLoad_invokesLoader_onCacheMiss() {
     UUID envId = UUID.randomUUID();
     List<FlagStateSnapshot> loaded =
-        List.of(new FlagStateSnapshot("flag-e", false, null, FlagValueType.BOOLEAN, 0));
+        List.of(
+            new FlagStateSnapshot(
+                UUID.randomUUID(), "flag-e", false, null, FlagValueType.BOOLEAN, 0));
 
     List<FlagStateSnapshot> result = cacheService.getOrLoad(envId, id -> loaded);
 
@@ -83,7 +92,10 @@ class EvaluationCacheServiceImplTest {
   void evictAfterCommit_withNoActiveTransaction_evictsImmediately() {
     UUID envId = UUID.randomUUID();
     cacheService.put(
-        envId, List.of(new FlagStateSnapshot("flag-x", true, null, FlagValueType.BOOLEAN, 100)));
+        envId,
+        List.of(
+            new FlagStateSnapshot(
+                UUID.randomUUID(), "flag-x", true, null, FlagValueType.BOOLEAN, 100)));
 
     cacheService.evictAfterCommit(envId);
 
@@ -95,9 +107,13 @@ class EvaluationCacheServiceImplTest {
   void put_overwritesPreviousValue() {
     UUID envId = UUID.randomUUID();
     List<FlagStateSnapshot> first =
-        List.of(new FlagStateSnapshot("flag-c", true, null, FlagValueType.BOOLEAN, 100));
+        List.of(
+            new FlagStateSnapshot(
+                UUID.randomUUID(), "flag-c", true, null, FlagValueType.BOOLEAN, 100));
     List<FlagStateSnapshot> second =
-        List.of(new FlagStateSnapshot("flag-c", false, null, FlagValueType.BOOLEAN, 0));
+        List.of(
+            new FlagStateSnapshot(
+                UUID.randomUUID(), "flag-c", false, null, FlagValueType.BOOLEAN, 0));
 
     cacheService.put(envId, first);
     cacheService.put(envId, second);

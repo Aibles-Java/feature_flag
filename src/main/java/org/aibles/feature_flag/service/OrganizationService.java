@@ -1,17 +1,18 @@
 package org.aibles.feature_flag.service;
 
-import java.util.List;
 import java.util.UUID;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
 import org.aibles.feature_flag.dto.request.InviteMemberRequest;
 import org.aibles.feature_flag.dto.request.UpdateOrganizationRequest;
 import org.aibles.feature_flag.dto.response.MemberResponse;
 import org.aibles.feature_flag.dto.response.OrganizationResponse;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 public interface OrganizationService {
   OrganizationResponse create(CreateOrganizationRequest request);
 
-  List<OrganizationResponse> listMine();
+  Page<OrganizationResponse> listMine(Pageable pageable);
 
   OrganizationResponse get(UUID id);
 
@@ -19,7 +20,7 @@ public interface OrganizationService {
 
   void delete(UUID id);
 
-  List<MemberResponse> listMembers(UUID orgId);
+  Page<MemberResponse> listMembers(UUID orgId, Pageable pageable);
 
   MemberResponse inviteMember(UUID orgId, InviteMemberRequest request);
 

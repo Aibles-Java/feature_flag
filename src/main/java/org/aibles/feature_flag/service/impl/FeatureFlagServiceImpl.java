@@ -7,7 +7,9 @@ import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Project;
-import org.aibles.feature_flag.domain.enums.MemberRole;
+import org.aibles.feature_flag.domain.enums.Action;
+import org.aibles.feature_flag.domain.enums.AuditAction;
+import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
@@ -17,7 +19,9 @@ import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
+import org.aibles.feature_flag.notification.event.FlagCreatedEvent;
 import org.aibles.feature_flag.notification.event.FlagStateChangedEvent;
+import org.aibles.feature_flag.notification.event.FlagUpdatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
@@ -25,6 +29,8 @@ import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.service.FeatureFlagService;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,12 +46,13 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   private final ApplicationEventPublisher eventPublisher;
   private final EvaluationCacheService evaluationCacheService;
   private final FeatureFlagMetrics metrics;
+  private final AuditService auditService;
 
   @Override
   @Transactional
   public FeatureFlagResponse create(CreateFeatureFlagRequest request) {
-    permissionService.requireRoleForProject(
-        request.getProjectId(), MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(
+        Action.FLAG_CREATE, PermissionService.ResourceRef.project(request.getProjectId()));
 
     if (featureFlagRepository.existsByProjectIdAndKey(request.getProjectId(), request.getKey())) {
       throw new DuplicateResourceException(
@@ -64,6 +71,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             .key(request.getKey())
             .description(request.getDescription())
             .valueType(request.getValueType())
+            .expiresAt(request.getExpiresAt())
             .build();
     flag = featureFlagRepository.save(flag);
 
@@ -76,24 +84,38 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
       evaluationCacheService.evictAfterCommit(env.getId());
     }
 
+    eventPublisher.publishEvent(
+        new FlagCreatedEvent(
+            project.getId(),
+            flag.getKey(),
+            flag.getName(),
+            flag.getValueType(),
+            permissionService.currentUserEmail()));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.CREATED);
-    return toResponse(flag);
+    FeatureFlagResponse response = toResponse(flag);
+    auditService.record(
+        AuditEntityType.FEATURE_FLAG,
+        flag.getId(),
+        AuditAction.CREATE,
+        project.getOrganization().getId(),
+        null,
+        response);
+    return response;
   }
 
   @Override
-  public List<FeatureFlagResponse> listByProject(UUID projectId) {
-    permissionService.requireRoleForProject(
-        projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
-    return featureFlagRepository.findAllByProjectIdAndArchivedFalse(projectId).stream()
-        .map(this::toResponse)
-        .toList();
+  public Page<FeatureFlagResponse> listByProject(UUID projectId, Pageable pageable) {
+    permissionService.check(Action.FLAG_READ, PermissionService.ResourceRef.project(projectId));
+    return featureFlagRepository
+        .findAllByProjectIdAndArchivedFalse(projectId, pageable)
+        .map(this::toResponse);
   }
 
   @Override
   public FeatureFlagResponse get(UUID id) {
     FeatureFlag flag = findById(id);
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(
+        Action.FLAG_READ, PermissionService.ResourceRef.project(flag.getProject().getId()));
     return toResponse(flag);
   }
 
@@ -101,13 +123,25 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   @Transactional
   public FeatureFlagResponse update(UUID id, UpdateFeatureFlagRequest request) {
     FeatureFlag flag = findById(id);
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    UUID orgId = flag.getProject().getOrganization().getId();
+    permissionService.check(
+        Action.FLAG_UPDATE, PermissionService.ResourceRef.project(flag.getProject().getId()));
+    FeatureFlagResponse before = toResponse(flag);
     // key is intentionally not updated — it is immutable
     if (request.getName() != null) flag.setName(request.getName());
     if (request.getDescription() != null) flag.setDescription(request.getDescription());
+    if (request.getExpiresAt() != null) flag.setExpiresAt(request.getExpiresAt());
     FeatureFlagResponse response = toResponse(featureFlagRepository.save(flag));
+    eventPublisher.publishEvent(
+        new FlagUpdatedEvent(
+            flag.getProject().getId(),
+            flag.getKey(),
+            flag.getName(),
+            flag.getDescription(),
+            permissionService.currentUserEmail()));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.UPDATED);
+    auditService.record(
+        AuditEntityType.FEATURE_FLAG, id, AuditAction.UPDATE, orgId, before, response);
     return response;
   }
 
@@ -115,52 +149,61 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   @Transactional
   public void archive(UUID id) {
     FeatureFlag flag = findById(id);
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    UUID orgId = flag.getProject().getOrganization().getId();
+    permissionService.check(
+        Action.FLAG_ARCHIVE, PermissionService.ResourceRef.project(flag.getProject().getId()));
+    FeatureFlagResponse before = toResponse(flag);
     flag.setArchived(true);
-    featureFlagRepository.save(flag);
+    FeatureFlagResponse after = toResponse(featureFlagRepository.save(flag));
     evictAllEnvironmentsForProject(flag.getProject().getId());
     eventPublisher.publishEvent(
         new FlagArchivedEvent(
+            flag.getProject().getId(),
             flag.getKey(),
             flag.getProject().getName(),
             true,
             permissionService.currentUserEmail()));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.ARCHIVED);
+    auditService.record(
+        AuditEntityType.FEATURE_FLAG, id, AuditAction.ARCHIVE, orgId, before, after);
   }
 
   @Override
   @Transactional
   public void unarchive(UUID id) {
     FeatureFlag flag = findById(id);
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    UUID orgId = flag.getProject().getOrganization().getId();
+    permissionService.check(
+        Action.FLAG_ARCHIVE, PermissionService.ResourceRef.project(flag.getProject().getId()));
+    FeatureFlagResponse before = toResponse(flag);
     flag.setArchived(false);
-    featureFlagRepository.save(flag);
+    FeatureFlagResponse after = toResponse(featureFlagRepository.save(flag));
     evictAllEnvironmentsForProject(flag.getProject().getId());
     eventPublisher.publishEvent(
         new FlagArchivedEvent(
+            flag.getProject().getId(),
             flag.getKey(),
             flag.getProject().getName(),
             false,
             permissionService.currentUserEmail()));
     metrics.recordFlagChange(FeatureFlagMetrics.FlagChange.UNARCHIVED);
+    auditService.record(
+        AuditEntityType.FEATURE_FLAG, id, AuditAction.UNARCHIVE, orgId, before, after);
   }
 
   @Override
-  public List<FeatureFlagResponse> listArchivedByProject(UUID projectId) {
-    permissionService.requireRoleForProject(
-        projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
-    return featureFlagRepository.findAllByProjectIdAndArchivedTrue(projectId).stream()
-        .map(this::toResponse)
-        .toList();
+  public Page<FeatureFlagResponse> listArchivedByProject(UUID projectId, Pageable pageable) {
+    permissionService.check(Action.FLAG_READ, PermissionService.ResourceRef.project(projectId));
+    return featureFlagRepository
+        .findAllByProjectIdAndArchivedTrue(projectId, pageable)
+        .map(this::toResponse);
   }
 
   @Override
   public FlagStateResponse getState(UUID flagId, UUID environmentId) {
     FeatureFlag flag = findById(flagId);
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(
+        Action.FLAG_READ, PermissionService.ResourceRef.project(flag.getProject().getId()));
     FlagEnvironmentState state =
         flagStateRepository
             .findByFeatureFlagIdAndEnvironmentId(flagId, environmentId)
@@ -174,8 +217,14 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   public FlagStateResponse updateState(
       UUID flagId, UUID environmentId, UpdateFlagStateRequest request) {
     FeatureFlag flag = findById(flagId);
-    permissionService.requireRoleForProject(
-        flag.getProject().getId(), MemberRole.OWNER, MemberRole.ADMIN);
+    UUID orgId = flag.getProject().getOrganization().getId();
+    Environment environment =
+        environmentRepository
+            .findById(environmentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Environment", environmentId));
+    permissionService.check(
+        Action.FLAG_STATE_UPDATE,
+        PermissionService.ResourceRef.environment(flag.getProject().getId(), environment));
 
     FlagEnvironmentState state =
         flagStateRepository
@@ -185,16 +234,26 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
 
     boolean previousEnabled = state.isEnabled();
     String previousValue = state.getValue();
+    FlagStateResponse before = toStateResponse(state);
 
     state.setEnabled(request.getEnabled());
     state.setValue(request.getValue());
     if (request.getRolloutPercent() != null) state.setRolloutPercent(request.getRolloutPercent());
-    FlagStateResponse response = toStateResponse(flagStateRepository.save(state));
+    FlagEnvironmentState saved = flagStateRepository.save(state);
+    FlagStateResponse response = toStateResponse(saved);
+    auditService.record(
+        AuditEntityType.FLAG_STATE,
+        saved.getId(),
+        AuditAction.CHANGE_STATE,
+        orgId,
+        before,
+        response);
 
     evaluationCacheService.evictAfterCommit(environmentId);
 
     eventPublisher.publishEvent(
         new FlagStateChangedEvent(
+            state.getEnvironment().getId(),
             state.getFeatureFlag().getKey(),
             state.getEnvironment().getName(),
             state.getFeatureFlag().getProject().getName(),
@@ -227,6 +286,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         .description(flag.getDescription())
         .valueType(flag.getValueType())
         .archived(flag.isArchived())
+        .expiresAt(flag.getExpiresAt())
         .projectId(flag.getProject().getId())
         .createdAt(flag.getCreatedAt())
         .build();
@@ -239,6 +299,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         .enabled(state.isEnabled())
         .value(state.getValue())
         .rolloutPercent(state.getRolloutPercent())
+        .lastEvaluatedAt(state.getLastEvaluatedAt())
         .build();
   }
 }

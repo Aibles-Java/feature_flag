@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="018-add-environment-change-window" author="dev">
+        <!-- Optional production change window (hour-of-day, 0-23). When both are set on a
+             PRODUCTION environment, flag-state changes are only permitted within the window.
+             This is the concrete context-condition (rule D). -->
+        <addColumn tableName="environments">
+            <column name="change_window_start_hour" type="INT"/>
+            <column name="change_window_end_hour" type="INT"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="environments" columnName="change_window_start_hour"/>
+            <dropColumn tableName="environments" columnName="change_window_end_hour"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

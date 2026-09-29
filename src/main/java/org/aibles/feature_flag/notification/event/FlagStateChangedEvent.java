@@ -1,7 +1,15 @@
 package org.aibles.feature_flag.notification.event;
 
-/** Published after a flag's per-environment state (enabled/value) is changed. */
+import java.util.UUID;
+
+/**
+ * Published after a flag's per-environment state (enabled/value) is changed.
+ *
+ * <p>{@code environmentId} was added for issue #36 — webhook subscriptions are keyed by
+ * environment.
+ */
 public record FlagStateChangedEvent(
+    UUID environmentId,
     String flagKey,
     String environmentName,
     String projectName,

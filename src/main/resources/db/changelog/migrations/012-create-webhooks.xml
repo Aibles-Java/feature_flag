@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Issue #36: webhook subscriptions + delivery-attempt log.
+
+      `secret_ciphertext` holds the subscriber's shared secret ENCRYPTED (AES-256-GCM), not
+      hashed. HMAC-SHA256 signing needs the plaintext at every delivery, so the one-way
+      SHA-256 used for API keys (migration 009) and refresh tokens (010) is not an option
+      here. See docs/adr/ADR-0005-webhook-delivery-and-secret-storage.md.
+
+      Both tables cascade from their parent: a deleted environment takes its subscriptions,
+      and a deleted subscription takes its delivery history. This is the opposite of the
+      audit_log (migration 011), which deliberately has no FKs because it must outlive the
+      entities it records — a webhook delivery log has no value once the subscription is gone.
+    -->
+    <changeSet id="012-1-create-webhook-subscription" author="dev">
+        <createTable tableName="webhook_subscription">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="environment_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_webhook_subscription_environment"
+                             references="environments(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="url" type="VARCHAR(2048)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Base64 of iv||ciphertext||tag. Never a hash — see the comment above. -->
+            <column name="secret_ciphertext" type="TEXT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="enabled" type="BOOLEAN" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- Delivery path: find the enabled subscriptions for an environment. -->
+        <createIndex tableName="webhook_subscription" indexName="idx_webhook_subscription_env">
+            <column name="environment_id"/>
+        </createIndex>
+
+        <rollback>
+            <dropTable tableName="webhook_subscription"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="012-2-create-webhook-subscription-event-type" author="dev">
+        <createTable tableName="webhook_subscription_event_type">
+            <column name="subscription_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_webhook_event_type_subscription"
+                             references="webhook_subscription(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="event_type" type="VARCHAR(32)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- A subscription may not list the same event type twice. -->
+        <addPrimaryKey tableName="webhook_subscription_event_type"
+                       columnNames="subscription_id, event_type"
+                       constraintName="pk_webhook_subscription_event_type"/>
+
+        <rollback>
+            <dropTable tableName="webhook_subscription_event_type"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="012-3-create-webhook-delivery-attempt" author="dev">
+        <createTable tableName="webhook_delivery_attempt">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="subscription_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_webhook_delivery_subscription"
+                             references="webhook_subscription(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="event_type" type="VARCHAR(32)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- 1-based attempt number within one delivery (1..max-attempts). -->
+            <column name="attempt" type="INTEGER">
+                <constraints nullable="false"/>
+            </column>
+            <column name="succeeded" type="BOOLEAN">
+                <constraints nullable="false"/>
+            </column>
+            <column name="response_status" type="INTEGER"/>
+            <!-- Exception class name only, never the message: a connection error can echo the URL. -->
+            <column name="error" type="VARCHAR(255)"/>
+            <column name="duration_ms" type="BIGINT"/>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- Read path: a subscription's delivery history, newest first. -->
+        <createIndex tableName="webhook_delivery_attempt" indexName="idx_webhook_delivery_subscription">
+            <column name="subscription_id"/>
+            <column name="created_at"/>
+        </createIndex>
+
+        <rollback>
+            <dropTable tableName="webhook_delivery_attempt"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

@@ -18,7 +18,7 @@ class JwtTokenProviderTest {
   private static final long ONE_HOUR = 3_600_000L;
 
   private final JwtTokenProvider provider =
-      new JwtTokenProvider(new JwtProperties(SECRET, ONE_HOUR));
+      new JwtTokenProvider(new JwtProperties(SECRET, ONE_HOUR, ONE_HOUR));
 
   private UserPrincipal principal(UUID id, String email) {
     return UserPrincipal.from(
@@ -38,7 +38,7 @@ class JwtTokenProviderTest {
   @Test
   void rejectsExpiredToken() {
     // Negative expiry => the token is already expired the instant it is minted.
-    JwtTokenProvider expiring = new JwtTokenProvider(new JwtProperties(SECRET, -1_000L));
+    JwtTokenProvider expiring = new JwtTokenProvider(new JwtProperties(SECRET, -1_000L, 1_000L));
     String token = expiring.generateToken(principal(UUID.randomUUID(), "bob@example.com"));
 
     assertThat(provider.validateToken(token)).isFalse();
@@ -72,7 +72,9 @@ class JwtTokenProviderTest {
     JwtTokenProvider other =
         new JwtTokenProvider(
             new JwtProperties(
-                "a-completely-different-secret-key-also-long-enough-for-hs256!!", ONE_HOUR));
+                "a-completely-different-secret-key-also-long-enough-for-hs256!!",
+                ONE_HOUR,
+                ONE_HOUR));
     String foreignToken = other.generateToken(principal(UUID.randomUUID(), "dave@example.com"));
 
     assertThat(provider.validateToken(foreignToken)).isFalse();

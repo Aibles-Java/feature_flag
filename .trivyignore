@@ -1,0 +1,9 @@
+# Trivy allowlist for the GHCR image scan (issue #34).
+#
+# One CVE id (or GHSA id) per line. Only add an entry here after triaging the
+# finding — e.g. it's a false positive, unexploitable in how we use the
+# dependency, or a fix isn't available yet and the risk is accepted.
+# Include a comment with the justification and, ideally, a tracking issue.
+#
+# Example:
+# CVE-2023-12345 # exp:2026-12-31 — no fix yet upstream, not reachable from our code path (#NN)

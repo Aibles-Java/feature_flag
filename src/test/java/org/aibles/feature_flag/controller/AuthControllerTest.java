@@ -105,7 +105,9 @@ class AuthControllerTest {
   void login_returns200_withToken_whenCredentialsAreValid() throws Exception {
     AuthResponse response =
         AuthResponse.builder()
-            .token("jwt-token")
+            .accessToken("jwt-token")
+            .refreshToken("refresh-token")
+            .expiresIn(900L)
             .userId(UUID.randomUUID())
             .email("alice@example.com")
             .build();
@@ -121,7 +123,10 @@ class AuthControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.token").value("jwt-token"))
+        .andExpect(jsonPath("$.accessToken").value("jwt-token"))
+        .andExpect(jsonPath("$.refreshToken").value("refresh-token"))
+        .andExpect(jsonPath("$.tokenType").value("Bearer"))
+        .andExpect(jsonPath("$.expiresIn").value(900))
         .andExpect(jsonPath("$.email").value("alice@example.com"));
   }
 

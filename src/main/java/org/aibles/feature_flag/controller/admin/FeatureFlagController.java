@@ -1,7 +1,6 @@
 package org.aibles.feature_flag.controller.admin;
 
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
@@ -9,7 +8,12 @@ import org.aibles.feature_flag.dto.request.UpdateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
 import org.aibles.feature_flag.dto.response.FeatureFlagResponse;
 import org.aibles.feature_flag.dto.response.FlagStateResponse;
+import org.aibles.feature_flag.dto.response.PageResponse;
 import org.aibles.feature_flag.service.FeatureFlagService;
+import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,8 +31,15 @@ public class FeatureFlagController {
   }
 
   @GetMapping
-  public List<FeatureFlagResponse> listByProject(@RequestParam UUID projectId) {
-    return featureFlagService.listByProject(projectId);
+  public PageResponse<FeatureFlagResponse> listByProject(
+      @RequestParam UUID projectId,
+      @ParameterObject
+          @PageableDefault(
+              size = 20,
+              sort = {"createdAt", "id"},
+              direction = Sort.Direction.ASC)
+          Pageable pageable) {
+    return PageResponse.from(featureFlagService.listByProject(projectId, pageable));
   }
 
   @GetMapping("/{flagId}")
@@ -55,8 +66,15 @@ public class FeatureFlagController {
   }
 
   @GetMapping("/archived")
-  public List<FeatureFlagResponse> listArchived(@RequestParam UUID projectId) {
-    return featureFlagService.listArchivedByProject(projectId);
+  public PageResponse<FeatureFlagResponse> listArchived(
+      @RequestParam UUID projectId,
+      @ParameterObject
+          @PageableDefault(
+              size = 20,
+              sort = {"createdAt", "id"},
+              direction = Sort.Direction.ASC)
+          Pageable pageable) {
+    return PageResponse.from(featureFlagService.listArchivedByProject(projectId, pageable));
   }
 
   @GetMapping("/{flagId}/environments/{envId}")

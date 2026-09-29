@@ -19,7 +19,7 @@ public class JwtTokenProvider {
 
   public JwtTokenProvider(JwtProperties properties) {
     this.secretKey = Keys.hmacShaKeyFor(properties.secret().getBytes(StandardCharsets.UTF_8));
-    this.expirationMs = properties.expirationMs();
+    this.expirationMs = properties.accessExpirationMs();
   }
 
   public String generateToken(UserPrincipal principal) {

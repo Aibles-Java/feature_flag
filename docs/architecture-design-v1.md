@@ -428,7 +428,26 @@ GET    /api/v1/environments/{envId}               → 200 EnvironmentResponse
 PUT    /api/v1/environments/{envId}               → 200 EnvironmentResponse
 DELETE /api/v1/environments/{envId}               → 204
 POST   /api/v1/environments/{envId}/api-key/rotate → 200 EnvironmentResponse
+POST   /api/v1/environments/{envId}/clone         → 201 EnvironmentSecretResponse
+GET    /api/v1/environments/{envId}/export        → 200 EnvironmentSnapshotResponse
+POST   /api/v1/environments/{envId}/import        → 200 ImportResultResponse
 ```
+
+Clone / export / import (issue #38) all require OWNER or ADMIN on the owning organisation —
+export included, since a snapshot is an environment's whole configuration in one payload.
+A clone lands in the source's project with a **freshly generated** API key (never the source's)
+and a copy of every flag state. An export is a schema-versioned envelope (`schemaVersion: 1`)
+listing every flag with its state in that environment, archived flags included and ordered by
+flag key, so two exports of the same state are byte-identical. That envelope is exactly what
+import accepts as its `snapshot`, which makes an export → import round-trip lossless.
+
+Import takes `dryRun` (report the change set, write nothing) and a `conflictStrategy` of
+`SKIP` (default, non-destructive) or `OVERWRITE`, and reports a per-flag outcome of
+`CREATED` / `UPDATED` / `UNCHANGED` / `SKIPPED`. It creates flags missing from the target
+project but never rewrites an existing flag's name, description, archived status or value type
+— those are project-wide properties, so an environment-scoped import only moves state. A
+snapshot whose `schemaVersion` is unsupported, or which repeats a flag key, is rejected with
+400 before anything is written.
 
 #### Feature Flags (JWT)
 ```

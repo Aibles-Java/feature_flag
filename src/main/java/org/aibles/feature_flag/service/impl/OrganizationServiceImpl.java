@@ -5,8 +5,13 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.OrganizationMember;
+import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.entity.User;
+import org.aibles.feature_flag.domain.enums.Action;
+import org.aibles.feature_flag.domain.enums.AuditAction;
+import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
+import org.aibles.feature_flag.domain.enums.ScopeType;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
 import org.aibles.feature_flag.dto.request.InviteMemberRequest;
 import org.aibles.feature_flag.dto.request.UpdateOrganizationRequest;
@@ -17,8 +22,12 @@ import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.OrganizationMemberRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
+import org.aibles.feature_flag.repository.PermissionGrantRepository;
+import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.aibles.feature_flag.service.OrganizationService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,7 +38,10 @@ public class OrganizationServiceImpl implements OrganizationService {
   private final OrganizationRepository organizationRepository;
   private final OrganizationMemberRepository memberRepository;
   private final UserRepository userRepository;
+  private final ProjectRepository projectRepository;
+  private final PermissionGrantRepository grantRepository;
   private final PermissionService permissionService;
+  private final AuditService auditService;
 
   @Override
   @Transactional
@@ -47,14 +59,20 @@ public class OrganizationServiceImpl implements OrganizationService {
         OrganizationMember.builder().organization(org).user(user).role(MemberRole.OWNER).build();
     memberRepository.save(member);
 
-    return toResponse(org);
+    OrganizationResponse response = toResponse(org);
+    auditService.record(
+        AuditEntityType.ORGANIZATION, org.getId(), AuditAction.CREATE, org.getId(), null, response);
+    return response;
   }
 
   @Override
-  public List<OrganizationResponse> listMine() {
+  public Page<OrganizationResponse> listMine(Pageable pageable) {
     UUID userId = permissionService.currentUserId();
     List<UUID> orgIds = memberRepository.findOrganizationIdsByUserId(userId);
-    return organizationRepository.findAllById(orgIds).stream().map(this::toResponse).toList();
+    if (orgIds.isEmpty()) {
+      return Page.empty(pageable);
+    }
+    return organizationRepository.findByIdIn(orgIds, pageable).map(this::toResponse);
   }
 
   @Override
@@ -69,41 +87,54 @@ public class OrganizationServiceImpl implements OrganizationService {
   @Override
   @Transactional
   public OrganizationResponse update(UUID id, UpdateOrganizationRequest request) {
-    permissionService.requireRole(id, MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(Action.ORG_UPDATE, PermissionService.ResourceRef.org(id));
     Organization org = findById(id);
+    OrganizationResponse before = toResponse(org);
     if (request.getName() != null) org.setName(request.getName());
-    return toResponse(organizationRepository.save(org));
+    OrganizationResponse after = toResponse(organizationRepository.save(org));
+    auditService.record(AuditEntityType.ORGANIZATION, id, AuditAction.UPDATE, id, before, after);
+    return after;
   }
 
   @Override
   @Transactional
   public void delete(UUID id) {
-    permissionService.requireRole(id, MemberRole.OWNER);
+    permissionService.check(Action.ORG_DELETE, PermissionService.ResourceRef.org(id));
+    Organization org = findById(id);
+    OrganizationResponse before = toResponse(org);
     organizationRepository.deleteById(id);
+    auditService.record(AuditEntityType.ORGANIZATION, id, AuditAction.DELETE, id, before, null);
   }
 
   @Override
-  public List<MemberResponse> listMembers(UUID orgId) {
+  @Transactional(readOnly = true)
+  public Page<MemberResponse> listMembers(UUID orgId, Pageable pageable) {
     if (!permissionService.isMember(orgId)) {
       throw new UnauthorizedException("You are not a member of this organisation");
     }
-    return memberRepository.findAllByOrganizationId(orgId).stream()
-        .map(
-            m ->
-                MemberResponse.builder()
-                    .userId(m.getUser().getId())
-                    .email(m.getUser().getEmail())
-                    .firstName(m.getUser().getFirstName())
-                    .lastName(m.getUser().getLastName())
-                    .role(m.getRole())
-                    .build())
-        .toList();
+    return memberRepository.findAllByOrganizationId(orgId, pageable).map(this::toMemberResponse);
+  }
+
+  private MemberResponse toMemberResponse(OrganizationMember m) {
+    return MemberResponse.builder()
+        .userId(m.getUser().getId())
+        .email(m.getUser().getEmail())
+        .firstName(m.getUser().getFirstName())
+        .lastName(m.getUser().getLastName())
+        .role(m.getRole())
+        .build();
   }
 
   @Override
   @Transactional
   public MemberResponse inviteMember(UUID orgId, InviteMemberRequest request) {
-    permissionService.requireRole(orgId, MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(Action.MEMBER_INVITE, PermissionService.ResourceRef.org(orgId));
+    if (!permissionService
+        .effectiveActionsForOrg(permissionService.currentUserId(), orgId)
+        .containsAll(PermissionService.actionsForRole(request.getRole()))) {
+      throw new UnauthorizedException(
+          "You cannot invite a member with a role higher than your own");
+    }
     if (memberRepository.existsByOrganizationIdAndUserId(orgId, request.getUserId())) {
       throw new DuplicateResourceException("User is already a member of this organisation");
     }
@@ -117,19 +148,16 @@ public class OrganizationServiceImpl implements OrganizationService {
         OrganizationMember.builder().organization(org).user(user).role(request.getRole()).build();
     memberRepository.save(member);
 
-    return MemberResponse.builder()
-        .userId(user.getId())
-        .email(user.getEmail())
-        .firstName(user.getFirstName())
-        .lastName(user.getLastName())
-        .role(request.getRole())
-        .build();
+    MemberResponse response = toMemberResponse(member);
+    auditService.record(
+        AuditEntityType.MEMBER, user.getId(), AuditAction.INVITE_MEMBER, orgId, null, response);
+    return response;
   }
 
   @Override
   @Transactional
   public void removeMember(UUID orgId, UUID userId) {
-    permissionService.requireRole(orgId, MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(Action.MEMBER_MANAGE, PermissionService.ResourceRef.org(orgId));
     OrganizationMember member =
         memberRepository
             .findByOrganizationIdAndUserId(orgId, userId)
@@ -138,7 +166,18 @@ public class OrganizationServiceImpl implements OrganizationService {
         && memberRepository.countByOrganizationIdAndRole(orgId, MemberRole.OWNER) <= 1) {
       throw new UnauthorizedException("Cannot remove the only OWNER of an organisation");
     }
+    MemberResponse before = toMemberResponse(member);
     memberRepository.delete(member);
+    auditService.record(
+        AuditEntityType.MEMBER, userId, AuditAction.REMOVE_MEMBER, orgId, before, null);
+
+    // Grants outlive membership, so revoke this user's project grants in the org too.
+    List<UUID> projectIds =
+        projectRepository.findAllByOrganizationId(orgId).stream().map(Project::getId).toList();
+    if (!projectIds.isEmpty()) {
+      grantRepository.deleteByUser_IdAndScopeTypeAndScopeIdIn(
+          userId, ScopeType.PROJECT, projectIds);
+    }
   }
 
   private Organization findById(UUID id) {

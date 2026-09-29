@@ -16,5 +16,9 @@ public class FeatureFlagResponse {
   private FlagValueType valueType;
   private boolean archived;
   private UUID projectId;
+
+  /** Optional planned removal date (issue #37). Reported, never auto-enforced. */
+  private LocalDateTime expiresAt;
+
   private LocalDateTime createdAt;
 }

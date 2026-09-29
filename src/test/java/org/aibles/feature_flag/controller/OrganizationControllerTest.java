@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.UUID;
+import org.aibles.feature_flag.config.PaginationConfig;
 import org.aibles.feature_flag.controller.admin.OrganizationController;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
@@ -23,6 +24,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.web.PageableHandlerMethodArgumentResolver;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -43,8 +47,17 @@ class OrganizationControllerTest {
     mockMvc =
         MockMvcBuilders.standaloneSetup(new OrganizationController(organizationService))
             .setControllerAdvice(new GlobalExceptionHandler())
+            .setCustomArgumentResolvers(pageableResolver())
             .setValidator(validator)
             .build();
+  }
+
+  /** Mirrors the prod {@link PaginationConfig} limits so tests exercise the real clamp/defaults. */
+  private static PageableHandlerMethodArgumentResolver pageableResolver() {
+    PageableHandlerMethodArgumentResolver resolver = new PageableHandlerMethodArgumentResolver();
+    resolver.setMaxPageSize(PaginationConfig.MAX_PAGE_SIZE);
+    resolver.setFallbackPageable(PageRequest.of(0, PaginationConfig.DEFAULT_PAGE_SIZE));
+    return resolver;
   }
 
   @Test
@@ -70,12 +83,13 @@ class OrganizationControllerTest {
   void listMine_returns200_withOrgList() throws Exception {
     OrganizationResponse response =
         OrganizationResponse.builder().id(UUID.randomUUID()).name("Acme").slug("acme").build();
-    when(organizationService.listMine()).thenReturn(List.of(response));
+    when(organizationService.listMine(any())).thenReturn(new PageImpl<>(List.of(response)));
 
     mockMvc
         .perform(get("/api/v1/organisations"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].slug").value("acme"));
+        .andExpect(jsonPath("$.content[0].slug").value("acme"))
+        .andExpect(jsonPath("$.totalElements").value(1));
   }
 
   @Test
@@ -110,12 +124,13 @@ class OrganizationControllerTest {
             .email("alice@example.com")
             .role(MemberRole.OWNER)
             .build();
-    when(organizationService.listMembers(orgId)).thenReturn(List.of(member));
+    when(organizationService.listMembers(eq(orgId), any()))
+        .thenReturn(new PageImpl<>(List.of(member)));
 
     mockMvc
         .perform(get("/api/v1/organisations/{orgId}/members", orgId))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].email").value("alice@example.com"));
+        .andExpect(jsonPath("$.content[0].email").value("alice@example.com"));
   }
 
   @Test

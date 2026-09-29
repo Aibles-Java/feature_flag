@@ -3,6 +3,7 @@ package org.aibles.feature_flag.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
@@ -10,8 +11,10 @@ import java.util.Optional;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.OrganizationMember;
+import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.entity.User;
 import org.aibles.feature_flag.domain.enums.MemberRole;
+import org.aibles.feature_flag.domain.enums.ScopeType;
 import org.aibles.feature_flag.dto.request.CreateOrganizationRequest;
 import org.aibles.feature_flag.dto.request.InviteMemberRequest;
 import org.aibles.feature_flag.dto.request.UpdateOrganizationRequest;
@@ -21,6 +24,8 @@ import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.OrganizationMemberRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
+import org.aibles.feature_flag.repository.PermissionGrantRepository;
+import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +35,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -38,7 +47,10 @@ class OrganizationServiceImplTest {
   @Mock OrganizationRepository organizationRepository;
   @Mock OrganizationMemberRepository memberRepository;
   @Mock UserRepository userRepository;
+  @Mock ProjectRepository projectRepository;
+  @Mock PermissionGrantRepository grantRepository;
   @Mock PermissionService permissionService;
+  @Mock AuditService auditService;
 
   OrganizationServiceImpl service;
 
@@ -50,9 +62,19 @@ class OrganizationServiceImplTest {
   void setUp() {
     service =
         new OrganizationServiceImpl(
-            organizationRepository, memberRepository, userRepository, permissionService);
+            organizationRepository,
+            memberRepository,
+            userRepository,
+            projectRepository,
+            grantRepository,
+            permissionService,
+            auditService);
     org = Organization.builder().id(orgId).name("Acme").slug("acme").build();
     doNothing().when(permissionService).requireRole(any(), any(MemberRole[].class));
+    // The invite ceiling reads the caller's effective actions — default the actor to OWNER.
+    when(permissionService.currentUserId()).thenReturn(userId);
+    when(permissionService.effectiveActionsForOrg(any(), any()))
+        .thenReturn(new java.util.HashSet<>(PermissionService.actionsForRole(MemberRole.OWNER)));
   }
 
   @Test
@@ -94,12 +116,13 @@ class OrganizationServiceImplTest {
   void listMine_returnsOrgsTheUserBelongsTo() {
     when(permissionService.currentUserId()).thenReturn(userId);
     when(memberRepository.findOrganizationIdsByUserId(userId)).thenReturn(List.of(orgId));
-    when(organizationRepository.findAllById(List.of(orgId))).thenReturn(List.of(org));
+    when(organizationRepository.findByIdIn(eq(List.of(orgId)), any()))
+        .thenReturn(new PageImpl<>(List.of(org)));
 
-    List<OrganizationResponse> result = service.listMine();
+    Page<OrganizationResponse> result = service.listMine(PageRequest.of(0, 20));
 
-    assertThat(result).hasSize(1);
-    assertThat(result.get(0).getSlug()).isEqualTo("acme");
+    assertThat(result.getContent()).hasSize(1);
+    assertThat(result.getContent().get(0).getSlug()).isEqualTo("acme");
   }
 
   @Test
@@ -192,6 +215,46 @@ class OrganizationServiceImplTest {
   void listMembers_throwsUnauthorized_whenCallerIsNotMember() {
     when(permissionService.isMember(orgId)).thenReturn(false);
 
-    assertThatThrownBy(() -> service.listMembers(orgId)).isInstanceOf(UnauthorizedException.class);
+    assertThatThrownBy(() -> service.listMembers(orgId, Pageable.unpaged()))
+        .isInstanceOf(UnauthorizedException.class);
+  }
+
+  // --- ABAC: invite ceiling and grant revocation on member removal ---
+
+  @Test
+  void inviteMember_cannotGrantRoleHigherThanOwn() {
+    when(permissionService.effectiveActionsForOrg(any(), any()))
+        .thenReturn(new java.util.HashSet<>(PermissionService.actionsForRole(MemberRole.ADMIN)));
+
+    InviteMemberRequest req = new InviteMemberRequest();
+    req.setUserId(UUID.randomUUID());
+    req.setRole(MemberRole.OWNER);
+
+    assertThatThrownBy(() -> service.inviteMember(orgId, req))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("higher than your own");
+    verify(memberRepository, never()).save(any());
+  }
+
+  @Test
+  void removeMember_revokesProjectGrantsInOrg() {
+    UUID targetId = UUID.randomUUID();
+    OrganizationMember member =
+        OrganizationMember.builder()
+            .role(MemberRole.VIEWER)
+            .user(User.builder().id(targetId).email("target@example.com").build())
+            .build();
+    when(memberRepository.findByOrganizationIdAndUserId(orgId, targetId))
+        .thenReturn(Optional.of(member));
+    UUID projectId = UUID.randomUUID();
+    when(projectRepository.findAllByOrganizationId(orgId))
+        .thenReturn(List.of(Project.builder().id(projectId).build()));
+
+    service.removeMember(orgId, targetId);
+
+    verify(memberRepository).delete(member);
+    verify(grantRepository)
+        .deleteByUser_IdAndScopeTypeAndScopeIdIn(
+            eq(targetId), eq(ScopeType.PROJECT), eq(List.of(projectId)));
   }
 }

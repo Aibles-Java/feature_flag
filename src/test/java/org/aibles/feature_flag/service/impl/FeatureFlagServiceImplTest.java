@@ -3,6 +3,7 @@ package org.aibles.feature_flag.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -12,6 +13,7 @@ import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
+import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
@@ -39,6 +41,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -51,6 +56,7 @@ class FeatureFlagServiceImplTest {
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
   @Mock EvaluationCacheService evaluationCacheService;
+  @Mock AuditService auditService;
 
   FeatureFlagServiceImpl service;
 
@@ -68,9 +74,16 @@ class FeatureFlagServiceImplTest {
             permissionService,
             eventPublisher,
             evaluationCacheService,
-            new FeatureFlagMetrics(new SimpleMeterRegistry()));
-    project = Project.builder().id(projectId).name("proj").build();
+            new FeatureFlagMetrics(new SimpleMeterRegistry()),
+            auditService);
+    Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
+    project = Project.builder().id(projectId).organization(org).name("proj").build();
     doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
+    // updateState resolves the target Environment so the PDP can read its production attributes.
+    when(environmentRepository.findById(any()))
+        .thenAnswer(
+            inv ->
+                Optional.of(Environment.builder().id(inv.getArgument(0)).project(project).build()));
   }
 
   @Test
@@ -267,13 +280,13 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    when(featureFlagRepository.findAllByProjectIdAndArchivedFalse(projectId))
-        .thenReturn(List.of(flag));
+    when(featureFlagRepository.findAllByProjectIdAndArchivedFalse(eq(projectId), any()))
+        .thenReturn(new PageImpl<>(List.of(flag)));
 
-    List<FeatureFlagResponse> result = service.listByProject(projectId);
+    Page<FeatureFlagResponse> result = service.listByProject(projectId, PageRequest.of(0, 20));
 
-    assertThat(result).hasSize(1);
-    assertThat(result.get(0).getKey()).isEqualTo("f");
+    assertThat(result.getContent()).hasSize(1);
+    assertThat(result.getContent().get(0).getKey()).isEqualTo("f");
   }
 
   @Test

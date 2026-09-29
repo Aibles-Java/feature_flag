@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="015-create-permission-grants" author="dev">
+        <createTable tableName="permission_grant">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="user_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_permission_grant_user"
+                             references="users(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="scope_type" type="VARCHAR(20)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="scope_id" type="UUID">
+                <constraints nullable="false"/>
+            </column>
+            <column name="role" type="VARCHAR(20)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="permission_grant"
+                             columnNames="user_id, scope_type, scope_id"
+                             constraintName="uq_permission_grant_user_scope"/>
+        <sql>ALTER TABLE permission_grant ADD CONSTRAINT chk_permission_grant_scope_type
+            CHECK (scope_type IN ('PROJECT'))</sql>
+        <sql>ALTER TABLE permission_grant ADD CONSTRAINT chk_permission_grant_role
+            CHECK (role IN ('OWNER', 'ADMIN', 'VIEWER'))</sql>
+        <rollback>
+            <dropTable tableName="permission_grant"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
