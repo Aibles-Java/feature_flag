@@ -3,7 +3,6 @@ package org.aibles.feature_flag.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -28,7 +27,6 @@ import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.EnvType;
 import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.domain.enums.ScopeType;
-import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.OrganizationMemberRepository;
@@ -39,8 +37,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -113,12 +109,41 @@ class PermissionServiceTest {
   }
 
   @Test
-  void isMemberReflectsRepositoryExistence() {
-    UUID other = UUID.randomUUID();
-    when(memberRepository.existsByOrganizationIdAndUserId(orgId, userId)).thenReturn(true);
-    when(memberRepository.existsByOrganizationIdAndUserId(other, userId)).thenReturn(false);
-    assertThat(permissionService.isMember(orgId)).isTrue();
-    assertThat(permissionService.isMember(other)).isFalse();
+  void aGrantThatConfersAnythingAlsoConfersProjectVisibility() {
+    // A custom role of FLAG_READ alone used to hide the project from the list and refuse a fetch
+    // by id while serving its flags — an empty screen in front of a working API.
+    CustomRole flagsOnly =
+        CustomRole.builder().id(UUID.randomUUID()).actions(Set.of(Action.FLAG_READ)).build();
+    PermissionGrant grant = PermissionGrant.builder().customRole(flagsOnly).build();
+
+    assertThat(PermissionService.grantActions(grant))
+        .containsExactlyInAnyOrder(Action.FLAG_READ, Action.PROJECT_READ);
+  }
+
+  @Test
+  void aGrantThatConfersNothingStaysEmpty() {
+    // "Grants nothing yet" is a state the role list already shows; it should not quietly become
+    // "can see the project".
+    CustomRole empty = CustomRole.builder().id(UUID.randomUUID()).actions(Set.of()).build();
+    PermissionGrant grant = PermissionGrant.builder().customRole(empty).build();
+
+    assertThat(PermissionService.grantActions(grant)).isEmpty();
+  }
+
+  @Test
+  void memberRoleCarriesOrganisationReadAndNothingAboutProjects() {
+    // The point of MEMBER: in the organisation, reaching no project of its own. It is not the
+    // empty set, or the workspace switcher would list an organisation it cannot then open.
+    assertThat(PermissionService.actionsForRole(MemberRole.MEMBER))
+        .containsExactlyInAnyOrder(Action.ORG_READ, Action.MEMBER_READ);
+  }
+
+  @Test
+  void memberIsTheLeastPermissiveRole() {
+    // mostPermissive() ranks by action-set size, so MEMBER has to stay the smallest for a grant
+    // to win over it.
+    assertThat(PermissionService.actionsForRole(MemberRole.MEMBER).size())
+        .isLessThan(PermissionService.actionsForRole(MemberRole.VIEWER).size());
   }
 
   // ── Role → action matrix ────────────────────────────────────────────────────────────
@@ -127,10 +152,24 @@ class PermissionServiceTest {
   void actionMatrixEncodesRoleCapabilities() {
     assertThat(PermissionService.actionsForRole(MemberRole.VIEWER))
         .containsExactlyInAnyOrder(
-            Action.FLAG_READ, Action.ENV_READ, Action.PROJECT_READ, Action.AUDIT_READ);
+            Action.FLAG_READ,
+            Action.ENV_READ,
+            Action.PROJECT_READ,
+            Action.AUDIT_READ,
+            Action.WEBHOOK_READ,
+            Action.ORG_READ,
+            Action.MEMBER_READ);
 
     assertThat(PermissionService.actionsForRole(MemberRole.ADMIN))
-        .contains(Action.FLAG_STATE_UPDATE, Action.GRANT_MANAGE, Action.ROLE_MANAGE)
+        .contains(
+            Action.FLAG_STATE_UPDATE,
+            Action.GRANT_MANAGE,
+            Action.ROLE_MANAGE,
+            // Webhook management and export were OWNER/ADMIN through the old role adapter and
+            // keep exactly that reach now that they are named actions.
+            Action.WEBHOOK_MANAGE,
+            Action.ENV_EXPORT)
+        .doesNotContain(Action.WEBHOOK_MANAGE_PRODUCTION)
         .doesNotContain(Action.FLAG_STATE_UPDATE_PRODUCTION, Action.FLAG_DELETE, Action.ORG_DELETE);
 
     assertThat(PermissionService.actionsForRole(MemberRole.OWNER))
@@ -175,8 +214,10 @@ class PermissionServiceTest {
     when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(userId, ScopeType.PROJECT, projectId))
         .thenReturn(Optional.of(PermissionGrant.builder().customRole(releaseManager).build()));
 
+    // PROJECT_READ comes along because the grant confers something: a person who can toggle a
+    // flag has to be able to see the project holding it.
     assertThat(permissionService.effectiveActionsForProject(userId, projectId))
-        .containsExactlyInAnyOrder(Action.FLAG_STATE_UPDATE, Action.FLAG_READ);
+        .containsExactlyInAnyOrder(Action.FLAG_STATE_UPDATE, Action.FLAG_READ, Action.PROJECT_READ);
   }
 
   // ── check(): action gate ────────────────────────────────────────────────────────────
@@ -478,6 +519,50 @@ class PermissionServiceTest {
     return environment(EnvType.PRODUCTION, start, end);
   }
 
+  private PermissionService.ResourceRef envInZone(Integer start, Integer end, String zone) {
+    PermissionService.ResourceRef ref = env(EnvType.PRODUCTION, start, end);
+    ref.environment().setChangeWindowTimezone(zone);
+    return ref;
+  }
+
+  @Test
+  void changeWindowIsReadInTheEnvironmentsOwnTimezone() {
+    // Clock is fixed at 10:30 UTC. A 9-12 window is open in UTC and shut in Ho Chi Minh (17:30
+    // there), so identical hours give opposite answers purely from the zone. Before this field
+    // existed every environment silently got the server's answer.
+    stubProjectRole(MemberRole.OWNER);
+
+    assertThatCode(() -> permissionService.check(Action.FLAG_STATE_UPDATE, envInZone(9, 12, "UTC")))
+        .doesNotThrowAnyException();
+
+    assertThatThrownBy(
+            () ->
+                permissionService.check(
+                    Action.FLAG_STATE_UPDATE, envInZone(9, 12, "Asia/Ho_Chi_Minh")))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessageContaining("change window");
+  }
+
+  @Test
+  void anUnusableTimezoneFallsBackToTheServerZoneRatherThanRefusingEverything() {
+    // Requests are validated, so a bad value here is data written before that validation existed.
+    // Locking every production change until someone edits a row is the worse failure.
+    stubProjectRole(MemberRole.OWNER);
+
+    assertThatCode(
+            () -> permissionService.check(Action.FLAG_STATE_UPDATE, envInZone(9, 12, "Not/AZone")))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void aNullTimezoneKeepsTheServerZone() {
+    stubProjectRole(MemberRole.OWNER);
+
+    assertThatCode(
+            () -> permissionService.check(Action.FLAG_STATE_UPDATE, env(EnvType.PRODUCTION, 9, 12)))
+        .doesNotThrowAnyException();
+  }
+
   private void stubProjectEnvironments(Environment... environments) {
     when(environmentRepository.findAllByProjectId(projectId)).thenReturn(List.of(environments));
   }
@@ -499,125 +584,10 @@ class PermissionServiceTest {
     return PermissionService.ResourceRef.environment(projectId, environment);
   }
 
-  // ── Legacy requireRole* adapters (kept for un-migrated call sites) ───────────────────
-
-  private OrganizationMember memberWithRole(MemberRole role) {
-    return OrganizationMember.builder().role(role).build();
-  }
-
   private Project projectInOrg() {
     return Project.builder()
         .id(projectId)
         .organization(Organization.builder().id(orgId).build())
         .build();
-  }
-
-  @Test
-  void requireRolePassesWhenMemberRoleIsAllowed() {
-    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
-        .thenReturn(Optional.of(memberWithRole(MemberRole.OWNER)));
-
-    assertThatCode(() -> permissionService.requireRole(orgId, MemberRole.OWNER, MemberRole.ADMIN))
-        .doesNotThrowAnyException();
-  }
-
-  @Test
-  void requireRoleThrowsWhenMemberRoleIsNotAllowed() {
-    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
-        .thenReturn(Optional.of(memberWithRole(MemberRole.VIEWER)));
-
-    assertThatThrownBy(
-            () -> permissionService.requireRole(orgId, MemberRole.OWNER, MemberRole.ADMIN))
-        .isInstanceOf(UnauthorizedException.class)
-        .hasMessageContaining("Insufficient permissions");
-  }
-
-  @Test
-  void requireRoleThrowsWhenNotAMember() {
-    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
-        .thenReturn(Optional.empty());
-
-    assertThatThrownBy(() -> permissionService.requireRole(orgId, MemberRole.OWNER))
-        .isInstanceOf(UnauthorizedException.class)
-        .hasMessageContaining("not a member");
-  }
-
-  @ParameterizedTest
-  @EnumSource(MemberRole.class)
-  void requireRoleEnforcesEachRoleExactly(MemberRole role) {
-    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
-        .thenReturn(Optional.of(memberWithRole(role)));
-
-    permissionService.requireRole(orgId, role);
-
-    MemberRole[] others =
-        java.util.Arrays.stream(MemberRole.values())
-            .filter(r -> r != role)
-            .toArray(MemberRole[]::new);
-    assertThat(catchThrowable(() -> permissionService.requireRole(orgId, others)))
-        .isInstanceOf(UnauthorizedException.class);
-  }
-
-  @Test
-  void requireRoleForProjectResolvesOrgThenChecksRole() {
-    when(projectRepository.findById(projectId)).thenReturn(Optional.of(projectInOrg()));
-    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
-        .thenReturn(Optional.of(memberWithRole(MemberRole.ADMIN)));
-
-    assertThatCode(() -> permissionService.requireRoleForProject(projectId, MemberRole.ADMIN))
-        .doesNotThrowAnyException();
-  }
-
-  @Test
-  void requireRoleForProjectIsElevatedByABuiltInRoleGrant() {
-    // Org VIEWER + a PROJECT grant of ADMIN → the adapter sees ADMIN on that project.
-    when(projectRepository.findById(projectId)).thenReturn(Optional.of(projectInOrg()));
-    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
-        .thenReturn(Optional.of(memberWithRole(MemberRole.VIEWER)));
-    when(grantRepository.findByUser_IdAndScopeTypeAndScopeId(userId, ScopeType.PROJECT, projectId))
-        .thenReturn(
-            Optional.of(
-                PermissionGrant.builder()
-                    .scopeType(ScopeType.PROJECT)
-                    .scopeId(projectId)
-                    .role(MemberRole.ADMIN)
-                    .build()));
-
-    assertThatCode(() -> permissionService.requireRoleForProject(projectId, MemberRole.ADMIN))
-        .doesNotThrowAnyException();
-  }
-
-  @Test
-  void requireRoleForProjectThrowsWhenProjectMissing() {
-    when(projectRepository.findById(projectId)).thenReturn(Optional.empty());
-
-    assertThatThrownBy(() -> permissionService.requireRoleForProject(projectId, MemberRole.OWNER))
-        .isInstanceOf(ResourceNotFoundException.class);
-  }
-
-  @Test
-  void requireRoleForEnvironmentResolvesProjectAndOrgThenChecksRole() {
-    UUID envId = UUID.randomUUID();
-    Project project = projectInOrg();
-    when(environmentRepository.findById(envId))
-        .thenReturn(Optional.of(Environment.builder().id(envId).project(project).build()));
-    when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
-    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
-        .thenReturn(Optional.of(memberWithRole(MemberRole.OWNER)));
-
-    assertThatCode(
-            () ->
-                permissionService.requireRoleForEnvironment(
-                    envId, MemberRole.OWNER, MemberRole.ADMIN))
-        .doesNotThrowAnyException();
-  }
-
-  @Test
-  void requireRoleForEnvironmentThrowsWhenEnvironmentMissing() {
-    UUID envId = UUID.randomUUID();
-    when(environmentRepository.findById(envId)).thenReturn(Optional.empty());
-
-    assertThatThrownBy(() -> permissionService.requireRoleForEnvironment(envId, MemberRole.OWNER))
-        .isInstanceOf(ResourceNotFoundException.class);
   }
 }

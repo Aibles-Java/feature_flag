@@ -19,7 +19,6 @@ import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.EnvType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
 import org.aibles.feature_flag.dto.response.EnvironmentResponse;
@@ -87,8 +86,6 @@ class EnvironmentServiceImplTest {
             .name("prod")
             .apiKeyHash(ApiKeyHasher.hash("old-key"))
             .build();
-    doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
-    doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
   }
 
   @Test
@@ -303,6 +300,22 @@ class EnvironmentServiceImplTest {
     UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
     req.setChangeWindowStartHour(9);
     req.setChangeWindowEndHour(17);
+
+    assertThatThrownBy(() -> service.update(envId, req))
+        .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class);
+    verify(environmentRepository, never()).save(any());
+  }
+
+  @Test
+  void update_changingChangeWindowTimezone_requiresManageProtection() {
+    productionEnv();
+    doThrow(new org.aibles.feature_flag.exception.UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ENV_MANAGE_PROTECTION), any());
+
+    // Hours untouched: shifting only the zone still moves when the window is open.
+    UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+    req.setChangeWindowTimezone("Pacific/Kiritimati");
 
     assertThatThrownBy(() -> service.update(envId, req))
         .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class);
