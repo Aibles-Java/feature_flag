@@ -305,6 +305,40 @@ class ReviewFixesTest {
   }
 
   @Test
+  @DisplayName("HF-4: fetchOne with oversize response body is rejected before parsing (no OOM)")
+  void hf4FetchOneOversizeResponseBodyRejected() throws Exception {
+    int oversizeBytes = JdkFlagHttpClient.MAX_RESPONSE_BODY_BYTES + 1;
+    byte[] body = new byte[oversizeBytes];
+    java.util.Arrays.fill(body, (byte) '{'); // size matters, not validity
+
+    httpServer.createContext(
+        "/api/v1/sdk/flags/big-flag",
+        exchange -> {
+          exchange.sendResponseHeaders(200, body.length);
+          try (OutputStream os = exchange.getResponseBody()) {
+            os.write(body);
+          }
+        });
+
+    SdkConfig cfg =
+        TestSdkConfigHelper.buildUnchecked(
+            SdkConfig.builder()
+                .serverUrl("http://127.0.0.1:" + serverPort)
+                .apiKey(SYNTHETIC_KEY)
+                .cacheTtlSeconds(60)
+                .connectTimeoutMs(3000)
+                .readTimeoutMs(5000));
+    java.net.http.HttpClient plainHttp = java.net.http.HttpClient.newHttpClient();
+    JdkFlagHttpClient httpClient = new JdkFlagHttpClient(cfg, plainHttp);
+
+    // fetchOne should throw IOException (oversize) before Jackson parse rather than OOM.
+    assertThrows(
+        IOException.class,
+        () -> httpClient.fetchOne("big-flag", null),
+        "HF-4: fetchOne oversize response body must throw IOException before Jackson parsing");
+  }
+
+  @Test
   @DisplayName("HF-4: fetchAll parsed list is capped at MAX_FETCH_ALL_ENTRIES entries")
   void hf4FetchAllListSizeCapped() throws Exception {
     // Build a JSON array with more entries than the cap

@@ -159,9 +159,9 @@ public final class JdkFlagHttpClient {
     // Log path template only — never the flagKey segment or header values (DCR-3 / SR-04).
     log.debug("SDK fetch: GET /api/v1/sdk/flags/[key] -> attempt 1");
 
-    HttpResponse<String> response;
+    HttpResponse<byte[]> response;
     try {
-      response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+      response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new IOException("SDK HTTP request interrupted", e);
@@ -186,7 +186,14 @@ public final class JdkFlagHttpClient {
       return null;
     }
 
-    return parseSingleEntry(response.body());
+    // HF-4: bound the body size BEFORE Jackson parsing (DoS guard) — mirrors fetchAll.
+    byte[] bodyBytes = response.body();
+    if (bodyBytes.length > MAX_RESPONSE_BODY_BYTES) {
+      throw new IOException(
+          "SDK fetchOne: response body exceeds " + MAX_RESPONSE_BODY_BYTES + " byte cap (HF-4)");
+    }
+
+    return parseSingleEntry(new String(bodyBytes, StandardCharsets.UTF_8));
   }
 
   /**
