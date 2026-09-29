@@ -17,7 +17,7 @@ Two branches, both committed, tested and **not yet pushed**. Neither has a PR.
 
 **`feature/env-create-backfills-flag-states`** (1 commit off `develop`)
 - `601e5e1 fix:` — `EnvironmentServiceImpl.create()` now backfills a state row per
-  existing flag, plus migration `019` to repair existing data. See
+  existing flag, plus migration `024` (was `019`, renumbered to avoid PR #122) to repair existing data. See
   [[flag-environment-state-invariant-has-two-sides]]. 472 tests pass.
 
 ## Context to Load
@@ -56,6 +56,6 @@ Two branches, both committed, tested and **not yet pushed**. Neither has a PR.
      `isChangeWindowComplete()` rejects sending one half. Only `start == end` (zero-width,
      treated as unrestricted) neutralises it, which is undiscoverable from the API.
 
-4. Migration `019`'s SQL is **unverified against real data** — it runs on an empty H2 in
+4. Migration `024`'s SQL is **unverified against real data** — it runs on an empty H2 in
    CI, proving only that the syntax is valid. Run it against a local Postgres with a
    project that has flags and a late-created environment before trusting it.

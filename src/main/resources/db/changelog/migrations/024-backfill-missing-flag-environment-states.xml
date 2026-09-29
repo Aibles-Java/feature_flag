@@ -24,8 +24,12 @@
       Defaults come from the table itself (007/008): enabled=false, rollout_percent=100,
       created_at/updated_at=now(). New rows start disabled — a repair must never turn a flag
       ON in an environment nobody has configured.
+
+      Numbered 024, not 019: 019-023 are already claimed by unmerged branches (019/020/023 by the
+      API key lifecycle work in PR #122, 021/022 by PR #121). This changeset has not run on any
+      shared database, so renumbering it before merge is safe.
     -->
-    <changeSet id="019-backfill-missing-flag-environment-states" author="dev">
+    <changeSet id="024-backfill-missing-flag-environment-states" author="dev">
         <sql>
             INSERT INTO flag_environment_states (feature_flag_id, environment_id)
             SELECT f.id, e.id
