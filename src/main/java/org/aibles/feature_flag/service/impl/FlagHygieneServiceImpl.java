@@ -7,8 +7,8 @@ import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.config.HygieneProperties;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.HygieneStatus;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.response.FlagHygieneResponse;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.service.FlagHygieneService;
@@ -28,8 +28,9 @@ public class FlagHygieneServiceImpl implements FlagHygieneService {
   @Override
   @Transactional(readOnly = true)
   public Page<FlagHygieneResponse> report(UUID projectId, HygieneStatus status, Pageable pageable) {
-    permissionService.requireRoleForProject(
-        projectId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    // FLAG_READ matches the old OWNER/ADMIN/VIEWER set exactly, and unlike the adapter it is
+    // reachable by a grant carrying a custom role.
+    permissionService.check(Action.FLAG_READ, PermissionService.ResourceRef.project(projectId));
 
     // One "now" for the whole page: filtering and the per-row stale/expired flags must agree,
     // and re-reading the clock per row could classify two rows inconsistently.

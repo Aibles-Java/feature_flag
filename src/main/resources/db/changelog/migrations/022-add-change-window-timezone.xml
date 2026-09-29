@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        The change window is a pair of hours with no timezone, compared against whatever zone the
+        server happens to run in. A team in Asia/Ho_Chi_Minh setting 09:00-17:00 against a server
+        on UTC gets a window that actually opens at 16:00 local - and nothing anywhere says so.
+        The window still closes, so the failure is silent rather than loud.
+
+        Nullable rather than defaulted, because a default would have to be a guess. Null means
+        "the server's zone", which is exactly what every existing row already means, so no row
+        changes behaviour when this ships. New environments are asked for a zone explicitly.
+    -->
+    <changeSet id="022-add-change-window-timezone" author="dev">
+        <addColumn tableName="environments">
+            <column name="change_window_timezone" type="VARCHAR(64)"/>
+        </addColumn>
+
+        <rollback>
+            <dropColumn tableName="environments" columnName="change_window_timezone"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

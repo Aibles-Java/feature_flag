@@ -18,7 +18,6 @@ import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.ImportConflictStrategy;
 import org.aibles.feature_flag.domain.enums.ImportOutcome;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CloneEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.ImportEnvironmentRequest;
 import org.aibles.feature_flag.dto.response.EnvironmentResponse;
@@ -54,10 +53,17 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
   @Transactional
   public EnvironmentSecretResponse clone(
       UUID sourceEnvironmentId, CloneEnvironmentRequest request) {
-    permissionService.requireRoleForEnvironment(
-        sourceEnvironmentId, MemberRole.OWNER, MemberRole.ADMIN);
     Environment source = findEnvironment(sourceEnvironmentId);
     Project project = source.getProject();
+    // Copying the source and creating a new environment are two capabilities, so both are asked
+    // for. The source side is ENV_EXPORT, not ENV_READ: a clone copies every flag state and hands
+    // back a key that reads them, so it is an export by another route — a custom role holding
+    // ENV_READ + ENV_CREATE but not ENV_EXPORT must not get one. Built-in roles land where the old
+    // OWNER/ADMIN adapter did.
+    permissionService.check(
+        Action.ENV_EXPORT, PermissionService.ResourceRef.environment(project.getId(), source));
+    permissionService.check(
+        Action.ENV_CREATE, PermissionService.ResourceRef.project(project.getId()));
 
     if (environmentRepository.existsByProjectIdAndName(project.getId(), request.getName())) {
       throw new DuplicateResourceException("Environment name already exists in this project");
@@ -110,8 +116,12 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
   @Override
   @Transactional(readOnly = true)
   public EnvironmentSnapshotResponse export(UUID environmentId) {
-    permissionService.requireRoleForEnvironment(environmentId, MemberRole.OWNER, MemberRole.ADMIN);
     Environment env = findEnvironment(environmentId);
+    // ENV_EXPORT rather than ENV_READ: an export dumps every flag state in the environment, and
+    // ENV_READ sits in VIEWER while this has always been OWNER/ADMIN only.
+    permissionService.check(
+        Action.ENV_EXPORT,
+        PermissionService.ResourceRef.environment(env.getProject().getId(), env));
 
     List<EnvironmentSnapshotResponse.FlagSnapshot> flags =
         flagStateRepository.findAllByEnvironmentIdOrderByFlagKey(environmentId).stream()

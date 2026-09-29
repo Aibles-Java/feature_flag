@@ -12,7 +12,6 @@ import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
 import org.aibles.feature_flag.dto.response.FlagEvaluationResponse;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
@@ -25,7 +24,6 @@ import org.aibles.feature_flag.service.EvaluationService;
 import org.aibles.feature_flag.service.FeatureFlagService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentMatchers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -56,8 +54,8 @@ class EvaluationCacheIntegrationTest {
 
   @MockitoSpyBean FlagEnvironmentStateRepository flagStateRepository;
 
-  // Stub out permission checks so featureFlagService.updateState() can be called without a
-  // real SecurityContextHolder / OrganizationMember setup.
+  // A mock PermissionService allows everything (its void check() does nothing), so
+  // featureFlagService.updateState() runs without a SecurityContext or OrganizationMember setup.
   @MockitoBean PermissionService permissionService;
 
   @Autowired OrganizationRepository organizationRepository;
@@ -70,11 +68,6 @@ class EvaluationCacheIntegrationTest {
 
   @BeforeEach
   void setUp() {
-    // Permission stub: allow any role check
-    org.mockito.Mockito.doNothing()
-        .when(permissionService)
-        .requireRoleForProject(ArgumentMatchers.any(), ArgumentMatchers.<MemberRole[]>any());
-
     String suffix = UUID.randomUUID().toString().substring(0, 8);
     Organization org =
         organizationRepository.save(

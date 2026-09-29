@@ -61,6 +61,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
             .type(request.getType() != null ? request.getType() : EnvType.DEVELOPMENT)
             .changeWindowStartHour(request.getChangeWindowStartHour())
             .changeWindowEndHour(request.getChangeWindowEndHour())
+            .changeWindowTimezone(request.getChangeWindowTimezone())
             .apiKeyHash(ApiKeyHasher.hash(plaintextKey))
             .build();
     Environment saved = environmentRepository.save(env);
@@ -103,7 +104,12 @@ public class EnvironmentServiceImpl implements EnvironmentService {
                 && !Objects.equals(
                     request.getChangeWindowStartHour(), env.getChangeWindowStartHour()))
             || (request.getChangeWindowEndHour() != null
-                && !Objects.equals(request.getChangeWindowEndHour(), env.getChangeWindowEndHour()));
+                && !Objects.equals(request.getChangeWindowEndHour(), env.getChangeWindowEndHour()))
+            // The zone moves the window as surely as the hours do: offsets span ~26h, so an
+            // unguarded zone change can slide any wall-clock hour into (or out of) the window.
+            || (request.getChangeWindowTimezone() != null
+                && !Objects.equals(
+                    request.getChangeWindowTimezone(), env.getChangeWindowTimezone()));
     if (changingType || changingWindow) {
       permissionService.check(
           Action.ENV_MANAGE_PROTECTION,
@@ -120,6 +126,9 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     }
     if (request.getChangeWindowEndHour() != null) {
       env.setChangeWindowEndHour(request.getChangeWindowEndHour());
+    }
+    if (request.getChangeWindowTimezone() != null) {
+      env.setChangeWindowTimezone(request.getChangeWindowTimezone());
     }
     EnvironmentResponse after = toResponse(environmentRepository.save(env));
     auditService.record(AuditEntityType.ENVIRONMENT, id, AuditAction.UPDATE, orgId, before, after);
@@ -182,6 +191,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
         .type(env.getType())
         .changeWindowStartHour(env.getChangeWindowStartHour())
         .changeWindowEndHour(env.getChangeWindowEndHour())
+        .changeWindowTimezone(env.getChangeWindowTimezone())
         .createdAt(env.getCreatedAt())
         .build();
   }
