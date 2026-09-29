@@ -214,9 +214,9 @@ class EnvironmentTransferServiceImplTest {
 
     service.clone(sourceEnvId, request);
 
-    // Two capabilities, asked separately: read the source, create the copy. ENV_CREATE is the
-    // narrower of the pair, so this lands where the old OWNER/ADMIN adapter did.
-    verify(permissionService).check(eq(Action.ENV_READ), any());
+    // Two capabilities, asked separately: export the source (a clone copies every flag state, so
+    // ENV_READ alone would let it stand in for a denied export), create the copy.
+    verify(permissionService).check(eq(Action.ENV_EXPORT), any());
     verify(permissionService).check(eq(Action.ENV_CREATE), any());
   }
 

@@ -104,7 +104,12 @@ public class EnvironmentServiceImpl implements EnvironmentService {
                 && !Objects.equals(
                     request.getChangeWindowStartHour(), env.getChangeWindowStartHour()))
             || (request.getChangeWindowEndHour() != null
-                && !Objects.equals(request.getChangeWindowEndHour(), env.getChangeWindowEndHour()));
+                && !Objects.equals(request.getChangeWindowEndHour(), env.getChangeWindowEndHour()))
+            // The zone moves the window as surely as the hours do: offsets span ~26h, so an
+            // unguarded zone change can slide any wall-clock hour into (or out of) the window.
+            || (request.getChangeWindowTimezone() != null
+                && !Objects.equals(
+                    request.getChangeWindowTimezone(), env.getChangeWindowTimezone()));
     if (changingType || changingWindow) {
       permissionService.check(
           Action.ENV_MANAGE_PROTECTION,

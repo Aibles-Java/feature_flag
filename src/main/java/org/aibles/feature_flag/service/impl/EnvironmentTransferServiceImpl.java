@@ -55,11 +55,13 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
       UUID sourceEnvironmentId, CloneEnvironmentRequest request) {
     Environment source = findEnvironment(sourceEnvironmentId);
     Project project = source.getProject();
-    // Reading the source and creating a new environment are two capabilities, so both are asked
-    // for. ENV_CREATE is the narrower of the pair (ADMIN, where ENV_READ reaches VIEWER), so the
-    // combination lands exactly where the old OWNER/ADMIN adapter did.
+    // Copying the source and creating a new environment are two capabilities, so both are asked
+    // for. The source side is ENV_EXPORT, not ENV_READ: a clone copies every flag state and hands
+    // back a key that reads them, so it is an export by another route — a custom role holding
+    // ENV_READ + ENV_CREATE but not ENV_EXPORT must not get one. Built-in roles land where the old
+    // OWNER/ADMIN adapter did.
     permissionService.check(
-        Action.ENV_READ, PermissionService.ResourceRef.environment(project.getId(), source));
+        Action.ENV_EXPORT, PermissionService.ResourceRef.environment(project.getId(), source));
     permissionService.check(
         Action.ENV_CREATE, PermissionService.ResourceRef.project(project.getId()));
 

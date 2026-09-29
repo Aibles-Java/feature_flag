@@ -241,6 +241,22 @@ class EnvironmentServiceImplTest {
   }
 
   @Test
+  void update_changingChangeWindowTimezone_requiresManageProtection() {
+    productionEnv();
+    doThrow(new org.aibles.feature_flag.exception.UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ENV_MANAGE_PROTECTION), any());
+
+    // Hours untouched: shifting only the zone still moves when the window is open.
+    UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+    req.setChangeWindowTimezone("Pacific/Kiritimati");
+
+    assertThatThrownBy(() -> service.update(envId, req))
+        .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class);
+    verify(environmentRepository, never()).save(any());
+  }
+
+  @Test
   void update_nonProtectionChange_doesNotRequireManageProtection() {
     productionEnv();
     when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
