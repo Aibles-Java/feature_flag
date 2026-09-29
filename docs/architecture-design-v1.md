@@ -178,7 +178,7 @@ The Feature Flag Management Platform is a self-hosted service similar to Flagsmi
 │ project_id FK            │   │ project_id FK                │
 │ name                     │   │ name                         │
 │ description              │   │ key UNIQUE per project ←SDK  │
-│ api_key_hash UNIQUE(64)  │   │ description                  │
+│ type / change_window_*   │   │ description                  │
 │ created_at / updated_at  │   │ value_type (BOOL/STR/INT/JSON│
 │ UNIQUE (project_id, name)│   │ archived (default=false)     │
 └────────────┬─────────────┘   │ created_at / updated_at      │
@@ -209,7 +209,7 @@ The Feature Flag Management Platform is a self-hosted service similar to Flagsmi
 | `FlagEnvironmentState` always exists per (flag, env) pair | Auto-created on flag creation |
 | Organization member roles | `CHECK` constraint on `role` column |
 | Flag value types | `CHECK` constraint on `value_type` column |
-| Unique API key per environment | `UNIQUE` index on `environments.api_key_hash` (the SHA-256 hash — plaintext is never stored, see §6.4) |
+| API key hashes are unique | `UNIQUE` on `environment_api_key.key_hash` (the SHA-256 hash — plaintext is never stored, see §6.4). An environment can hold several keys |
 | Cascade deletes | FK constraints with `ON DELETE CASCADE` |
 
 ### Value Types
@@ -330,9 +330,10 @@ Incoming Request
 │                                                 │
 │  ApiKeyAuthenticationFilter                     │
 │    reads X-Environment-Key header               │
-│    → EnvironmentRepository.findByApiKeyHash()   │
+│    → EnvironmentApiKeyRepository.findByKeyHash()│
+│    → rejects unknown / revoked / expired (401)  │
 │    → sets ApiKeyAuthenticationToken principal   │
-│    → Environment object available in controller │
+│    → key.getEnvironment() used by controllers   │
 └────────────────────────────────┬────────────────┘
                                  │ (no match → falls through)
                                  ▼
@@ -409,30 +410,40 @@ See `docs/ABAC.md` and `docs/adr/ADR-0006-abac-authorization-model.md`.
 
 - Generated using `SecureRandom` (`util/ApiKeyGenerator`): 32 bytes → 64-char lowercase hex
   string — **256 bits** of entropy
-- **Hashed at rest; the plaintext is never stored** (issue #24). Only the unsalted SHA-256 hex
-  digest is persisted, in `environments.api_key_hash`. `util/ApiKeyHasher.hash()` is called by both
-  the write path (`EnvironmentServiceImpl.create` / `rotateApiKey`) and the read path
+- **Hashed at rest; the plaintext is never stored** (issue #24). Keys live in their own table,
+  `environment_api_key` (migration `019`), one row per key: `key_hash` (unsalted SHA-256 hex,
+  `UNIQUE`), an 8-char `key_prefix` so an operator can tell keys apart, optional `expires_at`,
+  `revoked_at` (soft revoke — rows are never deleted) and `last_used_at`. An environment can hold
+  several keys. `util/ApiKeyHasher.hash()` is used by both the mint path and the read path
   (`ApiKeyAuthenticationFilter`), so there is no bypass gap.
 - **Why unsalted SHA-256 and not bcrypt/argon2.** The key is already a 256-bit high-entropy random
   value, so brute force and rainbow tables are infeasible; a slow/salted hash would buy nothing and
-  would break the O(1) indexed `findByApiKeyHash` lookup on the SDK hot path. Salting and slow
+  would break the O(1) indexed `findByKeyHash` lookup on the SDK hot path. Salting and slow
   hashing are for low-entropy secrets (passwords).
-- **One-time reveal.** The plaintext is returned exactly once — on create and on rotate — via the
-  dedicated `EnvironmentSecretResponse`. `EnvironmentResponse` (get / list / update) carries no key
-  field at all. A lost key cannot be recovered; rotate instead.
-- Rotatable at any time via `POST /api/v1/environments/{id}/api-key/rotate`. Rotation publishes an
-  `ApiKeyRotatedEvent` (Slack / webhook consumers) and writes an audit record of the **event only**
-  — never the key. On a PRODUCTION environment it requires OWNER and a change window (§6.3).
-- A clone (`POST /api/v1/environments/{id}/clone`) always mints its own fresh key — the source
-  environment's key is never copied.
-- `environments.last_used_at` records the last successful SDK authentication, throttled to at most
-  one write per 5 minutes (in-memory check plus a `WHERE last_used_at < :threshold` guard on the
-  bulk update) so the evaluation path does not take a DB write per request.
-- `UNIQUE` on `api_key_hash` prevents accidental collision.
+- **One construction point.** `util/EnvironmentApiKeyFactory.mint(...)` generates, hashes and
+  prefixes every key — environment create, clone (a clone always mints its own key; the source's
+  is never copied) and rotate.
+- **One-time reveal.** The plaintext is returned exactly once, at mint time, via the dedicated
+  `EnvironmentSecretResponse`. `EnvironmentResponse` (get / list / update) carries no key field at
+  all. A lost key cannot be recovered; rotate instead.
+- **Authentication.** `ApiKeyAuthenticationFilter` looks the key up by hash and rejects unknown,
+  revoked and expired keys with a problem+json 401 (revoked/expired get their own message — only
+  someone holding the key can see it; all three share one metric). The principal is the key row,
+  and the environment is taken from it.
+- Rotatable at any time via `POST /api/v1/environments/{id}/api-key/rotate`, which revokes the
+  environment's active key(s) and mints a new one. Rotation publishes an `ApiKeyRotatedEvent`
+  (Slack / webhook consumers) and writes an audit record of the **event only** — never the key.
+  On a PRODUCTION environment it requires OWNER and a change window (§6.3).
+- `environment_api_key.last_used_at` records the last successful authentication with that key,
+  throttled to at most one write per 5 minutes (in-memory check plus a `WHERE last_used_at <
+  :threshold` guard on the bulk update, in its own `REQUIRES_NEW` transaction) so the evaluation
+  path does not take a DB write per request. A failed stamp is logged, never a 500.
 
-Migration `009-hash-api-keys.xml` backfilled existing rows in place with
-`encode(digest(api_key,'sha256'),'hex')` (Postgres / pgcrypto, byte-identical to `ApiKeyHasher`)
-and then dropped the plaintext column, so live SDK keys kept working across the change.
+Migration history: `009-hash-api-keys.xml` hashed the original plaintext column in place; `020`
+then **copied** each `environments.api_key_hash` into `environment_api_key` (hash copied, never
+recomputed, so every deployed key kept working) and dropped the column. Per-key management
+endpoints (create / list / revoke, grace-period rotation, default expiry and expiry warnings) are
+phase 2 of the key lifecycle and not merged yet.
 
 ---
 
