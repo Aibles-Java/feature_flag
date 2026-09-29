@@ -6,6 +6,8 @@ import java.util.Objects;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.FeatureFlag;
+import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
@@ -20,8 +22,11 @@ import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
+import org.aibles.feature_flag.repository.FeatureFlagRepository;
+import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EnvironmentService;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.EnvironmentApiKeyFactory;
 import org.aibles.feature_flag.util.EnvironmentApiKeyFactory.MintedKey;
 import org.springframework.context.ApplicationEventPublisher;
@@ -39,8 +44,11 @@ public class EnvironmentServiceImpl implements EnvironmentService {
   private final ProjectRepository projectRepository;
   private final PermissionService permissionService;
   private final ApplicationEventPublisher eventPublisher;
+  private final EvaluationCacheService evaluationCacheService;
   private final AuditService auditService;
   private final Clock clock;
+  private final FeatureFlagRepository featureFlagRepository;
+  private final FlagEnvironmentStateRepository flagStateRepository;
 
   @Override
   @Transactional
@@ -63,6 +71,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
             .type(request.getType() != null ? request.getType() : EnvType.DEVELOPMENT)
             .changeWindowStartHour(request.getChangeWindowStartHour())
             .changeWindowEndHour(request.getChangeWindowEndHour())
+            .changeWindowTimezone(request.getChangeWindowTimezone())
             .build();
     Environment saved = environmentRepository.save(env);
     MintedKey minted =
@@ -72,6 +81,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
             null,
             permissionService.currentUserId());
     apiKeyRepository.save(minted.key());
+    backfillFlagStates(project, saved);
     // Audit the non-secret view only — never the plaintext key.
     auditService.record(
         AuditEntityType.ENVIRONMENT,
@@ -111,7 +121,12 @@ public class EnvironmentServiceImpl implements EnvironmentService {
                 && !Objects.equals(
                     request.getChangeWindowStartHour(), env.getChangeWindowStartHour()))
             || (request.getChangeWindowEndHour() != null
-                && !Objects.equals(request.getChangeWindowEndHour(), env.getChangeWindowEndHour()));
+                && !Objects.equals(request.getChangeWindowEndHour(), env.getChangeWindowEndHour()))
+            // The zone moves the window as surely as the hours do: offsets span ~26h, so an
+            // unguarded zone change can slide any wall-clock hour into (or out of) the window.
+            || (request.getChangeWindowTimezone() != null
+                && !Objects.equals(
+                    request.getChangeWindowTimezone(), env.getChangeWindowTimezone()));
     if (changingType || changingWindow) {
       permissionService.check(
           Action.ENV_MANAGE_PROTECTION,
@@ -129,6 +144,9 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     if (request.getChangeWindowEndHour() != null) {
       env.setChangeWindowEndHour(request.getChangeWindowEndHour());
     }
+    if (request.getChangeWindowTimezone() != null) {
+      env.setChangeWindowTimezone(request.getChangeWindowTimezone());
+    }
     EnvironmentResponse after = toResponse(environmentRepository.save(env));
     auditService.record(AuditEntityType.ENVIRONMENT, id, AuditAction.UPDATE, orgId, before, after);
     return after;
@@ -144,6 +162,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     UUID orgId = env.getProject().getOrganization().getId();
     EnvironmentResponse before = toResponse(env);
     environmentRepository.deleteById(id);
+    evaluationCacheService.evictAfterCommit(id);
     auditService.record(AuditEntityType.ENVIRONMENT, id, AuditAction.DELETE, orgId, before, null);
   }
 
@@ -182,6 +201,33 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     return toSecretResponse(env, minted.plaintext());
   }
 
+  /**
+   * Gives every flag already in the project a state row in the new environment.
+   *
+   * <p>Mirror image of {@code FeatureFlagServiceImpl.create()}, which does the same in the other
+   * direction for every existing environment. The invariant both sides maintain is that each (flag,
+   * environment) pair has exactly one row: the SDK reads flags <em>through</em> that table, so a
+   * flag with no row for this environment is simply absent from {@code GET /api/v1/sdk/flags} and
+   * 404s on the single-flag endpoint — silently, with no error anywhere to explain it. The admin
+   * API cannot rescue it either, since updating a state requires the row to exist.
+   *
+   * <p>Archived flags are included. They are still flags in the project, and skipping them would
+   * reopen the same gap the moment one is unarchived.
+   *
+   * <p>New rows start disabled. An environment never inherits another environment's values —
+   * copying state is what {@code EnvironmentTransferServiceImpl.clone()} is for.
+   */
+  private void backfillFlagStates(Project project, Environment environment) {
+    for (FeatureFlag flag : featureFlagRepository.findAllByProjectId(project.getId())) {
+      flagStateRepository.save(
+          FlagEnvironmentState.builder()
+              .featureFlag(flag)
+              .environment(environment)
+              .enabled(false)
+              .build());
+    }
+  }
+
   private Environment findById(UUID id) {
     return environmentRepository
         .findById(id)
@@ -197,6 +243,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
         .type(env.getType())
         .changeWindowStartHour(env.getChangeWindowStartHour())
         .changeWindowEndHour(env.getChangeWindowEndHour())
+        .changeWindowTimezone(env.getChangeWindowTimezone())
         .createdAt(env.getCreatedAt())
         .build();
   }

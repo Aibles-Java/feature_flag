@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        MEMBER: in the organisation, reaching no project of its own.
+
+        The role lives in two places - the Java enum and this CHECK constraint - and adding it to
+        only the enum is silent until the first insert, which fails at runtime with a constraint
+        violation rather than at startup. That is exactly how this changeset came to be written:
+        the code shipped, the tests passed against mocks, and the first real invite returned 500.
+
+        Numbered 021, not 019: feature/api-key-lifecycle already holds 019 and 020 on an unmerged
+        branch. Liquibase would not complain, but both changesets would claim the same slot and
+        one would have to be renumbered at merge time.
+    -->
+    <changeSet id="021-allow-member-role" author="dev">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="1">
+                SELECT COUNT(*) FROM information_schema.table_constraints
+                WHERE constraint_name = 'chk_org_member_role'
+            </sqlCheck>
+        </preConditions>
+
+        <sql>ALTER TABLE organization_members DROP CONSTRAINT chk_org_member_role</sql>
+        <sql>ALTER TABLE organization_members ADD CONSTRAINT chk_org_member_role
+            CHECK (role IN ('OWNER', 'ADMIN', 'VIEWER', 'MEMBER'))</sql>
+
+        <!--
+            Rolling back re-narrows the constraint, which fails outright if any row already holds
+            MEMBER. That is the correct behaviour: silently rewriting those rows to VIEWER would
+            hand every one of those people read access to every project in the organisation, which
+            is the precise thing MEMBER exists to withhold. Demote them deliberately first.
+        -->
+        <rollback>
+            <sql>ALTER TABLE organization_members DROP CONSTRAINT chk_org_member_role</sql>
+            <sql>ALTER TABLE organization_members ADD CONSTRAINT chk_org_member_role
+                CHECK (role IN ('OWNER', 'ADMIN', 'VIEWER'))</sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

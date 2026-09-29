@@ -3,6 +3,7 @@ package org.aibles.feature_flag.security;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -17,6 +18,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
+import org.aibles.feature_flag.logging.MdcKeys;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.util.ApiKeyHasher;
@@ -26,6 +28,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.MDC;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -61,6 +65,7 @@ class ApiKeyAuthenticationFilterTest {
   @AfterEach
   void tearDown() {
     SecurityContextHolder.clearContext();
+    MDC.clear();
   }
 
   private EnvironmentApiKey key(LocalDateTime expiresAt, LocalDateTime revokedAt) {
@@ -84,7 +89,7 @@ class ApiKeyAuthenticationFilterTest {
     filter.doFilter(request, response, filterChain);
 
     assertThat(response.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
-    assertThat(response.getContentType()).contains(MediaType.APPLICATION_JSON_VALUE);
+    assertThat(response.getContentType()).contains(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
     assertThat(response.getContentAsString()).contains("Missing X-Environment-Key header");
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     verify(filterChain, never()).doFilter(request, response);
@@ -206,6 +211,77 @@ class ApiKeyAuthenticationFilterTest {
     verify(apiKeyRepository)
         .touchLastUsedAt(eq(neverUsed.getId()), eq(NOW), any(LocalDateTime.class));
     verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void proceedsWhenLastUsedStampFails() throws Exception {
+    EnvironmentApiKey neverUsed = key(null, null);
+    when(apiKeyRepository.findByKeyHash(ApiKeyHasher.hash("plaintext")))
+        .thenReturn(Optional.of(neverUsed));
+    doThrow(new CannotAcquireLockException("row is locked"))
+        .when(apiKeyRepository)
+        .touchLastUsedAt(any(), any(), any());
+    MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/sdk/flags");
+    request.addHeader(HEADER, "plaintext");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    filter.doFilter(request, response, filterChain);
+
+    // last_used_at is audit bookkeeping: a failed stamp must never cost the caller its flags.
+    verify(filterChain).doFilter(request, response);
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+    assertThat(response.getStatus()).isEqualTo(HttpStatus.OK.value());
+  }
+
+  @Test
+  void unauthorizedBodyMatchesTheProblemDetailShapeUsedElsewhere() throws Exception {
+    MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/sdk/flags");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getContentType()).contains(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+    assertThat(response.getContentAsString())
+        // Same flat RFC-7807 fields GlobalExceptionHandler and the admin entry point emit — a
+        // bare ObjectMapper writing a ProblemDetail nests them under "properties" instead.
+        .contains("\"type\":\"about:blank\"")
+        .contains("\"status\":401")
+        .contains("\"instance\":\"/api/v1/sdk/flags\"")
+        .doesNotContain("properties");
+  }
+
+  @Test
+  void revokedAndExpiredRejectionsUseTheSameProblemDetailShape() throws Exception {
+    // The key-lifecycle rejections go through the same body as "Invalid API key" — a revoked key
+    // must not fall back to a bare-mapper ProblemDetail (the defect #127 fixed).
+    when(apiKeyRepository.findByKeyHash(ApiKeyHasher.hash("plaintext")))
+        .thenReturn(Optional.of(key(null, NOW.minusDays(1))));
+    MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/sdk/flags");
+    request.addHeader(HEADER, "plaintext");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    filter.doFilter(request, response, filterChain);
+
+    assertThat(response.getContentType()).contains(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+    assertThat(response.getContentAsString())
+        .contains("\"instance\":\"/api/v1/sdk/flags\"")
+        .contains("revoked")
+        .doesNotContain("properties");
+  }
+
+  @Test
+  void unauthorizedBodyCarriesTheCorrelationRequestId() throws Exception {
+    MDC.put(MdcKeys.REQUEST_ID, "req-0123456789");
+    MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/sdk/flags");
+    request.addHeader(HEADER, "does-not-exist");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+    when(apiKeyRepository.findByKeyHash(ApiKeyHasher.hash("does-not-exist")))
+        .thenReturn(Optional.empty());
+
+    filter.doFilter(request, response, filterChain);
+
+    // Lets a reported 401 be tied back to its server log lines, as on the admin chain.
+    assertThat(response.getContentAsString()).contains("req-0123456789");
   }
 
   @Test
