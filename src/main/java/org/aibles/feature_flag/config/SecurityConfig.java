@@ -12,6 +12,7 @@ import org.aibles.feature_flag.security.ProblemDetailAuthenticationEntryPoint;
 import org.aibles.feature_flag.security.ratelimit.AuthRateLimitFilter;
 import org.aibles.feature_flag.security.ratelimit.RateLimitProperties;
 import org.aibles.feature_flag.security.ratelimit.RateLimitService;
+import org.aibles.feature_flag.security.ratelimit.SdkIpRateLimitFilter;
 import org.aibles.feature_flag.security.ratelimit.SdkRateLimitFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -34,6 +35,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -127,6 +129,7 @@ public class SecurityConfig {
   public SecurityFilterChain sdkFilterChain(HttpSecurity http) throws Exception {
     ApiKeyAuthenticationFilter apiKeyFilter =
         new ApiKeyAuthenticationFilter(environmentRepository, metrics);
+    SdkIpRateLimitFilter sdkIpRateLimitFilter = new SdkIpRateLimitFilter(rateLimitService);
     SdkRateLimitFilter sdkRateLimitFilter = new SdkRateLimitFilter(rateLimitService);
 
     http.securityMatcher("/api/v1/sdk/**")
@@ -134,6 +137,12 @@ public class SecurityConfig {
         .cors(cors -> cors.configurationSource(corsConfigurationSource()))
         .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+        // Per-IP throttle, anchored one slot after the standard LogoutFilter so it lands strictly
+        // before apiKeyFilter's UsernamePasswordAuthenticationFilter-1 slot. It must run BEFORE
+        // authentication: apiKeyFilter short-circuits a bad key with 401 without calling
+        // doFilter, so anything ordered after it never sees a failed attempt. Anchoring directly
+        // on apiKeyFilter is not possible — a custom filter has no registered order.
+        .addFilterAfter(sdkIpRateLimitFilter, LogoutFilter.class)
         .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
         // Anchor after the standard UsernamePasswordAuthenticationFilter, which sits after
         // apiKeyFilter — so the Environment principal is already resolved when we key the limiter.
