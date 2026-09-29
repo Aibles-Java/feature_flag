@@ -24,6 +24,14 @@ public class RateLimitProperties {
   /** Per-API-key limit for {@code /api/v1/sdk/**} (abuse protection). */
   private Limit sdk = new Limit(300, Duration.ofMinutes(1));
 
+  /**
+   * Per-IP limit for {@code /api/v1/sdk/**}, applied <em>before</em> the API key is authenticated —
+   * the only ceiling on anonymous key-probing, since {@link #sdk} can only bucket a request that
+   * already authenticated. Deliberately looser than {@link #sdk} so that many clients sharing one
+   * egress IP are not throttled ahead of the per-key limit.
+   */
+  private Limit sdkIp = new Limit(600, Duration.ofMinutes(1));
+
   @Data
   public static class Limit {
     /** Max tokens in the bucket (burst size). */

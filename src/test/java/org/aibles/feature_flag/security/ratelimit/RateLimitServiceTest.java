@@ -16,6 +16,7 @@ class RateLimitServiceTest {
     props.setEnabled(true);
     props.setAuth(new RateLimitProperties.Limit(authCapacity, Duration.ofMinutes(1)));
     props.setSdk(new RateLimitProperties.Limit(sdkCapacity, Duration.ofMinutes(1)));
+    props.setSdkIp(new RateLimitProperties.Limit(sdkCapacity, Duration.ofMinutes(1)));
     return new RateLimitService(props);
   }
 
@@ -47,6 +48,11 @@ class RateLimitServiceTest {
     assertThat(service.tryConsume(RateLimitService.Scope.AUTH, "same-key").isConsumed()).isTrue();
     // Same key string, different scope → separate bucket.
     assertThat(service.tryConsume(RateLimitService.Scope.SDK, "same-key").isConsumed()).isTrue();
+    // SDK_IP is a third, independent scope: the pre-auth per-IP throttle must not share a
+    // bucket with the post-auth per-environment one.
+    assertThat(service.tryConsume(RateLimitService.Scope.SDK_IP, "same-key").isConsumed()).isTrue();
+    assertThat(service.tryConsume(RateLimitService.Scope.SDK_IP, "same-key").isConsumed())
+        .isFalse();
   }
 
   @Test
