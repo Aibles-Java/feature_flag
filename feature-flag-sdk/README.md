@@ -169,11 +169,23 @@ try (FlagClient client = new FlagClientBuilder()...build()) {
 
 `close()` is idempotent — safe to call multiple times.
 
-## Known deviation from design / planned v2 update
+## Known deviations from design / planned v2 updates
+
+### Query-param transport for `identifier`
 
 The current SDK sends the `identifier` as a **query parameter** (`?identifier=...`) rather than as the `X-Flag-Identifier` header originally described in the LLD design. This matches the **live server contract**: `EvaluationController` reads identifier via `@RequestParam(required = false) String identifier`.
 
 Moving identifier to an `X-Flag-Identifier` header is deferred to a later phase and requires a coordinated server-side change (`EvaluationController` must read the header instead of / in addition to the query param). Until that coordinated change ships, using the header would silently break rollout evaluation in production.
+
+### Residual DE-07: `identifier` visible in server/proxy/LB access logs
+
+Because `identifier` is transmitted as a query parameter, it **will appear in the flag server's access logs, any reverse-proxy access logs, and load-balancer logs** (DE-07 residual risk). Platform/server owners should:
+
+- Ensure access-log scrubbing rules mask the `identifier=` query parameter value before logs are shipped to a SIEM or long-term storage.
+- Consider access-control on the flag server's access logs (limit to ops team) until the header-transport migration ships.
+- Treat any flag-server log containing `identifier=<userId>` as potentially PII under the data classification policy.
+
+This residual is tracked and will be resolved when the `identifier` transport is migrated to the `X-Flag-Identifier` header in a future coordinated release.
 
 ## Security notes
 

@@ -11,7 +11,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -51,6 +50,25 @@ public final class JdkFlagHttpClient {
 
   /** SDK will only negotiate TLS 1.2 or TLS 1.3 (PCI Req 4.2.1). */
   private static final String[] PINNED_TLS_PROTOCOLS = {"TLSv1.3", "TLSv1.2"};
+
+  /**
+   * Hard ceiling on the HTTP response body size in bytes (HF-4 / DoS guard). The body is bounded
+   * BEFORE Jackson parsing; responses exceeding this limit are rejected with an IOException.
+   * Default: 4 MB (4 * 1024 * 1024 bytes).
+   *
+   * <p>Public so cross-package tests can reference the constant without reflection. It is an inert
+   * numeric safety bound (not a credential or a validation-bypass), so exposing it is safe.
+   */
+  public static final int MAX_RESPONSE_BODY_BYTES = 4 * 1024 * 1024; // 4 MB
+
+  /**
+   * Maximum number of entries accepted in a fetchAll response list (HF-4 / ADR-SDK-002 alignment).
+   * A list exceeding this limit is rejected with an IOException before cache population.
+   *
+   * <p>Public so cross-package tests can reference the constant without reflection. It is an inert
+   * numeric safety bound (not a credential or a validation-bypass), so exposing it is safe.
+   */
+  public static final int MAX_FETCH_ALL_ENTRIES = 5_000;
 
   /** Protocols actually configured on the underlying {@link HttpClient}'s SSLParameters. */
   private final String[] configuredProtocols;
@@ -188,10 +206,21 @@ public final class JdkFlagHttpClient {
   /**
    * Fetches all flags for this environment from the flag server.
    *
-   * <p>Returns an empty list on non-200 response (so the cache retains its existing entries).
-   * Throws {@link InvalidApiKeyException} on 401.
+   * <p>Throws {@link InvalidApiKeyException} on 401. Throws {@link IOException} on any non-200
+   * non-401 response so the {@code FlagClient} retry loop engages and {@code
+   * DiagnosticsCollector.recordServerError()} fires (HF-5).
+   *
+   * <p>The response body is bounded to {@link #MAX_RESPONSE_BODY_BYTES} bytes BEFORE Jackson
+   * parsing (HF-4 / DoS guard). Responses exceeding the cap throw {@link IOException} which is
+   * treated as a transient failure (serve-stale → caller default — never OOM).
+   *
+   * <p>Parsed lists exceeding {@link #MAX_FETCH_ALL_ENTRIES} entries are rejected with {@link
+   * IOException} (HF-4 alignment with ADR-SDK-002 {@code maxEntries=10 000}).
    *
    * @param identifier opaque caller identity; may be null (omitted from request)
+   * @throws IOException on non-200/non-401 HTTP status, network error, oversize body, or oversize
+   *     list
+   * @throws InvalidApiKeyException on HTTP 401
    */
   public List<CacheEntry> fetchAll(String identifier) throws IOException {
     URI uri = buildFlagUri("/api/v1/sdk/flags", identifier);
@@ -206,9 +235,9 @@ public final class JdkFlagHttpClient {
 
     log.debug("SDK fetchAll: GET /api/v1/sdk/flags");
 
-    HttpResponse<String> response;
+    HttpResponse<byte[]> response;
     try {
-      response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+      response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new IOException("SDK HTTP request interrupted", e);
@@ -227,11 +256,28 @@ public final class JdkFlagHttpClient {
     }
 
     if (status != 200) {
-      log.debug("SDK fetchAll: non-200 status {}", status);
-      return Collections.emptyList();
+      // HF-5: throw IOException so the FlagClient retry loop engages and serverError is recorded.
+      throw new IOException("SDK fetchAll: non-200 status " + status);
     }
 
-    return parseEntryList(response.body());
+    // HF-4: bound the body size BEFORE Jackson parsing (DoS guard).
+    byte[] bodyBytes = response.body();
+    if (bodyBytes.length > MAX_RESPONSE_BODY_BYTES) {
+      throw new IOException(
+          "SDK fetchAll: response body exceeds " + MAX_RESPONSE_BODY_BYTES + " byte cap (HF-4)");
+    }
+
+    List<CacheEntry> entries = parseEntryList(new String(bodyBytes, StandardCharsets.UTF_8));
+    // HF-4: cap parsed list size (aligned with ADR-SDK-002 maxEntries).
+    if (entries.size() > MAX_FETCH_ALL_ENTRIES) {
+      throw new IOException(
+          "SDK fetchAll: response contains "
+              + entries.size()
+              + " entries which exceeds cap of "
+              + MAX_FETCH_ALL_ENTRIES
+              + " (HF-4)");
+    }
+    return entries;
   }
 
   // ---------------------------------------------------------------------------

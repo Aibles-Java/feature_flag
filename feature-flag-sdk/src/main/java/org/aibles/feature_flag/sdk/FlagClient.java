@@ -169,9 +169,12 @@ public final class FlagClient implements AutoCloseable {
   // Diagnostics
   // ---------------------------------------------------------------------------
 
-  /** Returns a point-in-time snapshot of SDK diagnostics counters. */
+  /**
+   * Returns a point-in-time snapshot of SDK diagnostics counters, including the current cache size
+   * (SF-2 / D4 heap-monitoring mitigation).
+   */
   public DiagnosticsSnapshot diagnostics() {
-    return diagnostics.snapshot();
+    return diagnostics.snapshot(cache.size());
   }
 
   // ---------------------------------------------------------------------------
@@ -229,7 +232,15 @@ public final class FlagClient implements AutoCloseable {
     }
 
     // Either fetchAll failed or key not present. Try fetchOne directly.
-    return fetchOneWithFallback(flagKey, identifier, null);
+    CacheEntry fallbackEntry = fetchOneWithFallback(flagKey, identifier, null);
+    // HF-1: apply fail-closed check on any path that reaches fetchOne.
+    // If the fetched entry is a rollout AND confidential AND no identifier → return null (default).
+    if (fallbackEntry != null
+        && fallbackEntry.isRollout()
+        && isConfidentialFailClosed(flagKey, identifier)) {
+      return null;
+    }
+    return fallbackEntry;
   }
 
   /**

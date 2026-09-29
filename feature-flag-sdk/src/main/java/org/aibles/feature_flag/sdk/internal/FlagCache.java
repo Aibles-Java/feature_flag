@@ -32,6 +32,12 @@ public interface FlagCache extends AutoCloseable {
   void putAll(List<CacheEntry> entries);
 
   /**
+   * Returns the current number of entries in the cache. Used by {@code FlagClient.diagnostics()} to
+   * populate {@code DiagnosticsSnapshot.cacheSize()} (SF-2 / D4 heap-monitoring mitigation).
+   */
+  int size();
+
+  /**
    * Shuts down the background eviction scheduler and releases resources. Idempotent — safe to call
    * multiple times.
    */

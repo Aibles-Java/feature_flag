@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.aibles.feature_flag.sdk.exception.InvalidApiKeyException;
 import org.aibles.feature_flag.sdk.exception.SdkConfigurationException;
 import org.aibles.feature_flag.sdk.internal.SdkConfig;
+import org.aibles.feature_flag.sdk.internal.TestSdkConfigHelper;
 import org.aibles.feature_flag.sdk.internal.http.JdkFlagHttpClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -133,12 +134,12 @@ class FetchOneSecurityTest {
 
     // buildUnchecked skips https:// scheme check so the plain http:// URL passes.
     SdkConfig cfg =
-        SdkConfig.builder()
-            .serverUrl("http://127.0.0.1:" + serverPort)
-            .apiKey(SYNTHETIC_KEY)
-            .cacheTtlSeconds(60)
-            .onAuthFailure(ex -> hookCalled.set(true))
-            .buildUnchecked();
+        TestSdkConfigHelper.buildUnchecked(
+            SdkConfig.builder()
+                .serverUrl("http://127.0.0.1:" + serverPort)
+                .apiKey(SYNTHETIC_KEY)
+                .cacheTtlSeconds(60)
+                .onAuthFailure(ex -> hookCalled.set(true)));
 
     java.net.http.HttpClient plainClient = java.net.http.HttpClient.newHttpClient();
     JdkFlagHttpClient sdkClient = new JdkFlagHttpClient(cfg, plainClient);
@@ -295,13 +296,13 @@ class FetchOneSecurityTest {
    */
   private JdkFlagHttpClient buildPlainHttpClient(String serverUrl) {
     SdkConfig cfg =
-        SdkConfig.builder()
-            .serverUrl(serverUrl)
-            .apiKey(SYNTHETIC_KEY)
-            .cacheTtlSeconds(60)
-            .connectTimeoutMs(3000)
-            .readTimeoutMs(3000)
-            .buildUnchecked();
+        TestSdkConfigHelper.buildUnchecked(
+            SdkConfig.builder()
+                .serverUrl(serverUrl)
+                .apiKey(SYNTHETIC_KEY)
+                .cacheTtlSeconds(60)
+                .connectTimeoutMs(3000)
+                .readTimeoutMs(3000));
     java.net.http.HttpClient plainClient = java.net.http.HttpClient.newHttpClient();
     return new JdkFlagHttpClient(cfg, plainClient);
   }

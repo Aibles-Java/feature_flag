@@ -3,6 +3,8 @@ package org.aibles.feature_flag.sdk.internal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.aibles.feature_flag.sdk.FlagValueType;
 import org.aibles.feature_flag.sdk.exception.FlagTypeMismatchException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Static utility that coerces raw flag values into typed results.
@@ -13,11 +15,17 @@ import org.aibles.feature_flag.sdk.exception.FlagTypeMismatchException;
  *   <li>When {@code enabled == false} the caller default is returned silently, regardless of type.
  *   <li>When {@code enabled == true} and the actual {@code valueType} does not match the requested
  *       type, {@link FlagTypeMismatchException} is thrown.
+ *   <li>When a value is malformed (server declared INTEGER but value is corrupt, or JSON is
+ *       unparseable) the SDK logs WARN with flag key only (never the raw value) and returns the
+ *       caller default — it does NOT throw (ADR-SDK-003 never-throw-on-transient contract).
  *   <li>JSON values are deserialized with Jackson. Default typing is NEVER enabled (ADR-SDK-003
- *       polymorphic-deserialization safety). Value strings larger than 256 KB are rejected.
+ *       polymorphic-deserialization safety). Value strings larger than 256 KB are capped: WARN
+ *       logged (flag key only) and caller default returned.
  * </ul>
  */
 public final class TypeCoercionEngine {
+
+  private static final Logger log = LoggerFactory.getLogger(TypeCoercionEngine.class);
 
   /** 256 KB cap on JSON value strings (ADR-SDK-003). */
   public static final int JSON_VALUE_MAX_BYTES = 256 * 1024;
@@ -99,8 +107,14 @@ public final class TypeCoercionEngine {
     try {
       return Integer.parseInt(value);
     } catch (NumberFormatException e) {
-      throw new FlagTypeMismatchException(
-          flagKey, FlagValueType.INTEGER.name(), "unparseable: " + e.getMessage());
+      // ADR-SDK-003: malformed value is an operational fault (server sent corrupt data).
+      // Degrade gracefully — WARN with flag key only (never the raw value, never e.getMessage()
+      // which would contain the value). Do NOT throw FlagTypeMismatchException.
+      log.warn(
+          "SDK flag [key] has valueType=INTEGER but value is unparseable — returning default."
+              + " Flag key: [{}]",
+          flagKey);
+      return defaultValue;
     }
   }
 
@@ -129,14 +143,25 @@ public final class TypeCoercionEngine {
     assertType(flagKey, FlagValueType.JSON, valueType);
     if (value != null
         && value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > JSON_VALUE_MAX_BYTES) {
-      throw new FlagTypeMismatchException(
-          flagKey, FlagValueType.JSON.name(), "value exceeds 256 KB cap (ADR-SDK-003)");
+      // ADR-SDK-003: cap breach is an operational fault. Degrade — WARN with flag key only.
+      // Never include the raw value or its length in the log (DE-04 / HF-2).
+      log.warn(
+          "SDK flag [key] JSON value exceeds 256 KB cap (ADR-SDK-003) — returning default."
+              + " Flag key: [{}]",
+          flagKey);
+      return defaultValue;
     }
     try {
       return MAPPER.readValue(value, targetClass);
     } catch (Exception e) {
-      throw new FlagTypeMismatchException(
-          flagKey, FlagValueType.JSON.name(), "JSON parse error: " + e.getMessage());
+      // ADR-SDK-003: malformed JSON is an operational fault (server sent corrupt data).
+      // Degrade gracefully — WARN with flag key only. Never include e.getMessage() which
+      // may contain the raw value (HF-2 / DE-04). Do NOT throw FlagTypeMismatchException.
+      log.warn(
+          "SDK flag [key] has valueType=JSON but value is unparseable — returning default."
+              + " Flag key: [{}]",
+          flagKey);
+      return defaultValue;
     }
   }
 

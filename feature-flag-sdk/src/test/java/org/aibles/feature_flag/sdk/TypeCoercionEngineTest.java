@@ -166,14 +166,17 @@ class TypeCoercionEngineTest {
   }
 
   @Test
-  @DisplayName("coerceJson throws FlagTypeMismatchException when value exceeds 256 KB cap")
+  @DisplayName(
+      "coerceJson degrades to caller default (no throw) when value exceeds 256 KB cap (HF-3/ADR-SDK-003)")
   void coerceJsonRejectsOversizedValue() {
-    // Build a JSON string that exceeds 256 KB
+    // Per ADR-SDK-003 an over-cap value is an operational fault (DoS guard), so the SDK degrades to
+    // the caller default rather than throwing — matching the malformed-JSON policy and the
+    // never-throw-on-non-caller-error contract.
     String bigValue = "\"" + "x".repeat(TypeCoercionEngine.JSON_VALUE_MAX_BYTES + 1) + "\"";
-    assertThrows(
-        FlagTypeMismatchException.class,
-        () ->
-            TypeCoercionEngine.coerceJson(
-                "flag-o", true, bigValue, FlagValueType.JSON, String.class, null));
+    String fallback = "DEFAULT";
+    String result =
+        TypeCoercionEngine.coerceJson(
+            "flag-o", true, bigValue, FlagValueType.JSON, String.class, fallback);
+    assertEquals(fallback, result, "over-cap JSON value must return the caller default, not throw");
   }
 }

@@ -15,6 +15,7 @@ import org.aibles.feature_flag.sdk.internal.DiagnosticsCollector.DiagnosticsSnap
 import org.aibles.feature_flag.sdk.internal.FlagCache;
 import org.aibles.feature_flag.sdk.internal.RetryPolicy;
 import org.aibles.feature_flag.sdk.internal.SdkConfig;
+import org.aibles.feature_flag.sdk.internal.TestSdkConfigHelper;
 import org.aibles.feature_flag.sdk.internal.TtlFlagCache;
 import org.aibles.feature_flag.sdk.internal.http.JdkFlagHttpClient;
 import org.junit.jupiter.api.AfterEach;
@@ -498,13 +499,13 @@ class FlagClientTest {
 
   private FlagClient buildClientWithFreshCache() {
     SdkConfig cfg =
-        SdkConfig.builder()
-            .serverUrl("http://127.0.0.1:" + serverPort)
-            .apiKey(SYNTHETIC_KEY)
-            .cacheTtlSeconds(60)
-            .connectTimeoutMs(3000)
-            .readTimeoutMs(3000)
-            .buildUnchecked();
+        TestSdkConfigHelper.buildUnchecked(
+            SdkConfig.builder()
+                .serverUrl("http://127.0.0.1:" + serverPort)
+                .apiKey(SYNTHETIC_KEY)
+                .cacheTtlSeconds(60)
+                .connectTimeoutMs(3000)
+                .readTimeoutMs(3000));
     TtlFlagCache cache = new TtlFlagCache(cfg.getCacheTtlSeconds(), cfg.getMaxStaleSeconds());
     java.net.http.HttpClient plainHttp = java.net.http.HttpClient.newHttpClient();
     JdkFlagHttpClient httpClient = new JdkFlagHttpClient(cfg, plainHttp);
@@ -513,13 +514,13 @@ class FlagClientTest {
 
   private FlagClient buildClient(FlagCache cache, RetryPolicy retryPolicy) {
     SdkConfig cfg =
-        SdkConfig.builder()
-            .serverUrl("http://127.0.0.1:" + serverPort)
-            .apiKey(SYNTHETIC_KEY)
-            .cacheTtlSeconds(60)
-            .connectTimeoutMs(3000)
-            .readTimeoutMs(3000)
-            .buildUnchecked();
+        TestSdkConfigHelper.buildUnchecked(
+            SdkConfig.builder()
+                .serverUrl("http://127.0.0.1:" + serverPort)
+                .apiKey(SYNTHETIC_KEY)
+                .cacheTtlSeconds(60)
+                .connectTimeoutMs(3000)
+                .readTimeoutMs(3000));
     java.net.http.HttpClient plainHttp = java.net.http.HttpClient.newHttpClient();
     JdkFlagHttpClient httpClient = new JdkFlagHttpClient(cfg, plainHttp);
     return new FlagClient(cfg, httpClient, cache, new DiagnosticsCollector(), retryPolicy);

@@ -123,10 +123,44 @@ public final class TtlFlagCache implements FlagCache {
     }
   }
 
-  /** Removes entries that have exceeded their TTL. Called by the background scheduler. */
+  /**
+   * Removes entries that should no longer be kept. An entry is removed only when it has exceeded
+   * its TTL AND is also outside the serve-stale window (SF-1 fix):
+   *
+   * <ul>
+   *   <li>If {@code maxStaleNanos > 0}: remove when age &gt; maxStaleNanos (outside stale window).
+   *   <li>If {@code maxStaleNanos == 0} (unlimited): never evict expired entries — they may be
+   *       served stale indefinitely per ADR-SDK-002.
+   * </ul>
+   *
+   * <p>Called by the background scheduler. Also exposed as {@link #evictExpiredForTest()} for unit
+   * tests.
+   */
   private void evictExpired() {
+    if (maxStaleNanos == 0) {
+      // Unlimited stale: never evict — entries may be served stale forever (ADR-SDK-002).
+      return;
+    }
     long now = System.nanoTime();
-    store.entrySet().removeIf(e -> e.getValue().isExpired(ttlNanos, now));
+    store
+        .entrySet()
+        .removeIf(
+            e -> {
+              CacheEntry entry = e.getValue();
+              // Remove only when the entry is beyond both the TTL AND the stale window.
+              long ageNanos = now - entry.getCachedAtNanos();
+              return ageNanos > maxStaleNanos;
+            });
+  }
+
+  /**
+   * Test hook that triggers {@link #evictExpired()} synchronously. Exists solely to allow unit
+   * tests (in a sibling package) to verify eviction behaviour without waiting for the scheduler.
+   * Public visibility is required because the tests live in a different package; it performs no
+   * security-sensitive action (it only runs the same sweep the scheduler runs).
+   */
+  public void evictExpiredForTest() {
+    evictExpired();
   }
 
   /** Returns the current number of entries in the cache. Visible for testing. */

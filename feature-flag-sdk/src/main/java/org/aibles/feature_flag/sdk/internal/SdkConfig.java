@@ -194,10 +194,15 @@ public final class SdkConfig {
      * at plain-HTTP loopback servers. Never call from production code — production callers must use
      * {@link #build()}.
      *
+     * <p>Access is package-private (SF-4): this path bypasses TLS enforcement and must never be
+     * reachable from outside the SDK module. Tests in {@code src/test} are in the same package
+     * {@code org.aibles.feature_flag.sdk.internal} or gain access via the outer SDK package test
+     * helpers — all of which are within the module's test classpath only.
+     *
      * @return a new {@link SdkConfig} with {@code apiKey} and {@code serverUrl} validated for
      *     non-blank only
      */
-    public SdkConfig buildUnchecked() {
+    SdkConfig buildUnchecked() {
       if (apiKey == null || apiKey.isBlank()) {
         throw new IllegalArgumentException("apiKey must not be blank (buildUnchecked)");
       }

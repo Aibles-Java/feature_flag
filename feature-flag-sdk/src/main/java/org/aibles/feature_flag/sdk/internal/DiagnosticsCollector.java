@@ -31,10 +31,22 @@ public final class DiagnosticsCollector {
     invalidKeyEvents.incrementAndGet();
   }
 
-  /** Returns an immutable snapshot of current counter values. */
+  /**
+   * Returns an immutable snapshot of current counter values with {@code cacheSize} set to 0. Prefer
+   * {@link #snapshot(int)} from {@code FlagClient} which supplies the real cache size.
+   */
   public DiagnosticsSnapshot snapshot() {
+    return snapshot(0);
+  }
+
+  /**
+   * Returns an immutable snapshot of current counter values.
+   *
+   * @param cacheSize current number of entries in the cache (D4 heap-monitoring mitigation / SF-2)
+   */
+  public DiagnosticsSnapshot snapshot(int cacheSize) {
     return new DiagnosticsSnapshot(
-        serverErrors.get(), cacheHits.get(), cacheMisses.get(), invalidKeyEvents.get());
+        serverErrors.get(), cacheHits.get(), cacheMisses.get(), invalidKeyEvents.get(), cacheSize);
   }
 
   /**
@@ -44,13 +56,18 @@ public final class DiagnosticsCollector {
    * @param cacheHits number of times a fresh cache entry was returned
    * @param cacheMisses number of times the cache was consulted and no fresh entry was found
    * @param invalidKeyEvents number of HTTP 401 responses received
+   * @param cacheSize current number of entries in the cache at snapshot time (SF-2 / D4)
    */
   public record DiagnosticsSnapshot(
-      long serverErrors, long cacheHits, long cacheMisses, long invalidKeyEvents) {
+      long serverErrors, long cacheHits, long cacheMisses, long invalidKeyEvents, int cacheSize) {
 
     /**
      * Returns the cache hit ratio as a value in [0.0, 1.0], or {@code 0.0} when no lookups have
      * been made.
+     *
+     * <p>Note: rollout-flag evaluations that bypass the cache are NOT counted in {@code cacheHits}
+     * or {@code cacheMisses} because they always go to {@code fetchOne} (ADR-SDK-004). The ratio
+     * therefore reflects only non-rollout lookups.
      */
     public double hitRatio() {
       long total = cacheHits + cacheMisses;

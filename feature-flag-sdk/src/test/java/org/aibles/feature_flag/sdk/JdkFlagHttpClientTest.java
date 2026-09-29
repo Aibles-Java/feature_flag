@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.aibles.feature_flag.sdk.exception.InvalidApiKeyException;
 import org.aibles.feature_flag.sdk.internal.CacheEntry;
 import org.aibles.feature_flag.sdk.internal.SdkConfig;
+import org.aibles.feature_flag.sdk.internal.TestSdkConfigHelper;
 import org.aibles.feature_flag.sdk.internal.http.JdkFlagHttpClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -257,8 +258,8 @@ class JdkFlagHttpClientTest {
   }
 
   @Test
-  @DisplayName("fetchAll returns empty list on 500 server error")
-  void fetchAllReturnsEmptyListOn500() throws Exception {
+  @DisplayName("fetchAll throws IOException on 500 server error (HF-5: signals retryable error)")
+  void fetchAllThrowsIOExceptionOn500() throws Exception {
     httpServer.createContext(
         "/api/v1/sdk/flags",
         exchange -> {
@@ -267,9 +268,11 @@ class JdkFlagHttpClientTest {
         });
 
     JdkFlagHttpClient client = buildClient();
-    List<CacheEntry> entries = client.fetchAll(null);
-    assertNotNull(entries);
-    assertTrue(entries.isEmpty());
+    // HF-5 fix: fetchAll now throws IOException on non-200 so the FlagClient retry loop fires.
+    assertThrows(
+        IOException.class,
+        () -> client.fetchAll(null),
+        "fetchAll must throw IOException on 500 so retry loop and serverError counter engage");
   }
 
   @Test
@@ -326,13 +329,13 @@ class JdkFlagHttpClientTest {
 
   private JdkFlagHttpClient buildClient() {
     SdkConfig cfg =
-        SdkConfig.builder()
-            .serverUrl("http://127.0.0.1:" + serverPort)
-            .apiKey(SYNTHETIC_KEY)
-            .cacheTtlSeconds(60)
-            .connectTimeoutMs(3000)
-            .readTimeoutMs(3000)
-            .buildUnchecked();
+        TestSdkConfigHelper.buildUnchecked(
+            SdkConfig.builder()
+                .serverUrl("http://127.0.0.1:" + serverPort)
+                .apiKey(SYNTHETIC_KEY)
+                .cacheTtlSeconds(60)
+                .connectTimeoutMs(3000)
+                .readTimeoutMs(3000));
     java.net.http.HttpClient plainClient = java.net.http.HttpClient.newHttpClient();
     return new JdkFlagHttpClient(cfg, plainClient);
   }
