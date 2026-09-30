@@ -26,7 +26,9 @@ public class ApiKeyExpiryChannelCheck {
 
   @EventListener(ApplicationReadyEvent.class)
   public void checkChannels() {
-    if (apiKeyProperties.expiryWarning().enabled() && !anyChannelActive()) {
+    // enabled() is a boxed Boolean so an unset property can default to true; ExpiryWarning's
+    // constructor guarantees it is never null, but unboxing it directly is what S5411 flags.
+    if (Boolean.TRUE.equals(apiKeyProperties.expiryWarning().enabled()) && !anyChannelActive()) {
       log.warn(
           "API key expiry warnings are enabled but no notification channel is active — keys will"
               + " expire without notice. Enable app.slack (with a webhook URL) or app.webhook.");
