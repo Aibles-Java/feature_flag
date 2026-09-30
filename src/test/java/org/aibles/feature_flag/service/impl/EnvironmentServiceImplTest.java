@@ -16,13 +16,14 @@ import java.util.UUID;
 import org.aibles.feature_flag.config.ApiKeyProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
+import org.aibles.feature_flag.domain.entity.FeatureFlag;
+import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.EnvType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
 import org.aibles.feature_flag.dto.response.EnvironmentResponse;
@@ -32,8 +33,11 @@ import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
+import org.aibles.feature_flag.repository.FeatureFlagRepository;
+import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EnvironmentApiKeyService;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,8 +61,11 @@ class EnvironmentServiceImplTest {
   @Mock EnvironmentRepository environmentRepository;
   @Mock EnvironmentApiKeyRepository apiKeyRepository;
   @Mock ProjectRepository projectRepository;
+  @Mock FeatureFlagRepository featureFlagRepository;
+  @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
+  @Mock EvaluationCacheService evaluationCacheService;
   @Mock AuditService auditService;
 
   EnvironmentServiceImpl service;
@@ -93,16 +100,75 @@ class EnvironmentServiceImplTest {
             projectRepository,
             permissionService,
             apiKeyService,
+            evaluationCacheService,
             auditService,
-            clock);
+            clock,
+            featureFlagRepository,
+            flagStateRepository);
     Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
     env = Environment.builder().id(envId).project(project).name("prod").build();
-    doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
-    doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
     // Needed so the real apiKeyService (wired above) can round-trip a saved key back to its
     // caller instead of getting null, the way JPA's save() behaves in practice.
     when(apiKeyRepository.save(any(EnvironmentApiKey.class))).thenAnswer(inv -> inv.getArgument(0));
+  }
+
+  @Test
+  void create_backfillsAFlagStateForEveryFlagAlreadyInTheProject() {
+    // Mirror image of FeatureFlagServiceImpl.create(), which creates one state per existing
+    // environment. Without this, flags that predate the environment have no state row there:
+    // the SDK returns them as if they did not exist and the admin API cannot toggle them.
+    FeatureFlag active =
+        FeatureFlag.builder().id(UUID.randomUUID()).project(project).key("checkout-v2").build();
+    FeatureFlag archived =
+        FeatureFlag.builder()
+            .id(UUID.randomUUID())
+            .project(project)
+            .key("legacy-banner")
+            .archived(true)
+            .build();
+    when(featureFlagRepository.findAllByProjectId(projectId)).thenReturn(List.of(active, archived));
+    when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+    when(environmentRepository.existsByProjectIdAndName(projectId, "staging")).thenReturn(false);
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(i -> i.getArgument(0));
+
+    CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+    req.setProjectId(projectId);
+    req.setName("staging");
+
+    service.create(req);
+
+    ArgumentCaptor<FlagEnvironmentState> saved =
+        ArgumentCaptor.forClass(FlagEnvironmentState.class);
+    verify(flagStateRepository, times(2)).save(saved.capture());
+    assertThat(saved.getAllValues())
+        .extracting(s -> s.getFeatureFlag().getKey())
+        // Archived flags get a row too: unarchiving one later must not resurrect the gap.
+        .containsExactlyInAnyOrder("checkout-v2", "legacy-banner");
+    assertThat(saved.getAllValues())
+        .allSatisfy(
+            s -> {
+              assertThat(s.getEnvironment().getName()).isEqualTo("staging");
+              // A brand new environment starts with everything off, never inheriting another
+              // environment's state — that is what clone() is for.
+              assertThat(s.isEnabled()).isFalse();
+            });
+  }
+
+  @Test
+  void create_savesNoFlagState_whenTheProjectHasNoFlagsYet() {
+    when(featureFlagRepository.findAllByProjectId(projectId)).thenReturn(List.of());
+    when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+    when(environmentRepository.existsByProjectIdAndName(projectId, "staging")).thenReturn(false);
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(i -> i.getArgument(0));
+
+    CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+    req.setProjectId(projectId);
+    req.setName("staging");
+
+    service.create(req);
+
+    verify(flagStateRepository, never()).save(any());
   }
 
   @Test
@@ -342,6 +408,7 @@ class EnvironmentServiceImplTest {
     service.delete(envId);
 
     verify(environmentRepository).deleteById(envId);
+    verify(evaluationCacheService).evictAfterCommit(envId);
   }
 
   // --- ABAC: protection attributes are OWNER-only (rules B/D cannot be stripped by an ADMIN) ---
@@ -383,6 +450,22 @@ class EnvironmentServiceImplTest {
     UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
     req.setChangeWindowStartHour(9);
     req.setChangeWindowEndHour(17);
+
+    assertThatThrownBy(() -> service.update(envId, req))
+        .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class);
+    verify(environmentRepository, never()).save(any());
+  }
+
+  @Test
+  void update_changingChangeWindowTimezone_requiresManageProtection() {
+    productionEnv();
+    doThrow(new org.aibles.feature_flag.exception.UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ENV_MANAGE_PROTECTION), any());
+
+    // Hours untouched: shifting only the zone still moves when the window is open.
+    UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+    req.setChangeWindowTimezone("Pacific/Kiritimati");
 
     assertThatThrownBy(() -> service.update(envId, req))
         .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class);

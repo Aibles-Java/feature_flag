@@ -131,7 +131,7 @@ defaults**, so prod can never fall back to dev values. `config/JwtProperties` (t
 is missing, an unresolved `${...}` placeholder, shorter than 512 bits (64 UTF-8 bytes), or
 contains the `change-me` placeholder marker.
 
-DB schema is managed entirely by Liquibase (`db/changelog/migrations/001–020` and `023`, included via `db.changelog-core.xml` for 001–019 plus `020` and `023` on top — see below; `021`/`022` belong to `feature/invite-member-by-email`). Never modify a changeset that has already run; always add a new one.
+DB schema is managed entirely by Liquibase. `db.changelog-master.xml` includes `db.changelog-core.xml` (001–019), then `020`, `021`, `022`, `024` and `023`. The numbers are out of order because they reached production in that order; this is fine because Liquibase identifies a changeset by id/author/path, not by its number. Migration numbers are claimed on long-lived branches, so check open PRs before picking one. Never modify a changeset that has already run; always add a new one. A test-only changelog (`src/test/resources/db/changelog/db.changelog-backfill-test.xml`) mirrors the master order around a seed fixture, so a new changeset has to be added there too.
 
 ## API Key generation
 
@@ -151,6 +151,10 @@ environment cloning (`EnvironmentTransferServiceImpl.clone()` — a clone always
 never copies the source's), and `POST /api/v1/environments/{envId}/api-keys` (create). A plaintext
 key is returned exactly once, at mint time; every read endpoint returns the hash-and-plaintext-free
 view.
+
+`ApiKeyAuthenticationFilter` resolves the key row and rejects unknown, revoked and expired keys (all counted under one metric). It sets an `ApiKeyAuthenticationToken` carrying the key, and code resolves the environment from that token. Two #127 rules still hold:
+- every rejection answers with the explicit problem+json 401 body;
+- a failed `last_used_at` stamp is logged, never turned into a 500.
 
 Key lifecycle (create / list / revoke / rotate) lives under
 `/api/v1/environments/{envId}/api-keys` and is authorized through the ABAC actions `ENV_KEY_CREATE`

@@ -6,6 +6,14 @@
 
     <include file="db/changelog/db.changelog-core.xml"/>
     <include file="db/changelog/migrations/020-migrate-api-keys-to-key-table.xml"/>
+    <!--
+      021, 022 and 024 were merged to develop (and ran in production) before 019/020, and 023
+      after all of them. Liquibase identifies a changeset by id/author/file path, not by its
+      number, so each database only runs what it has not run yet, in the order listed here.
+    -->
+    <include file="db/changelog/migrations/021-allow-member-role.xml"/>
+    <include file="db/changelog/migrations/022-add-change-window-timezone.xml"/>
+    <include file="db/changelog/migrations/024-backfill-missing-flag-environment-states.xml"/>
     <include file="db/changelog/migrations/023-add-api-key-expiry-notice.xml"/>
 
 </databaseChangeLog>

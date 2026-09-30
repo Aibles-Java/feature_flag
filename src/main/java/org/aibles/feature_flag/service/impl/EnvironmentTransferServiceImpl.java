@@ -18,7 +18,6 @@ import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.ImportConflictStrategy;
 import org.aibles.feature_flag.domain.enums.ImportOutcome;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CloneEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.ImportEnvironmentRequest;
 import org.aibles.feature_flag.dto.response.EnvironmentResponse;
@@ -33,6 +32,7 @@ import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.service.EnvironmentTransferService;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.EnvironmentApiKeyFactory;
 import org.aibles.feature_flag.util.EnvironmentApiKeyFactory.MintedKey;
 import org.springframework.stereotype.Service;
@@ -49,15 +49,23 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
   private final FlagEnvironmentStateRepository flagStateRepository;
   private final PermissionService permissionService;
   private final AuditService auditService;
+  private final EvaluationCacheService evaluationCacheService;
 
   @Override
   @Transactional
   public EnvironmentSecretResponse clone(
       UUID sourceEnvironmentId, CloneEnvironmentRequest request) {
-    permissionService.requireRoleForEnvironment(
-        sourceEnvironmentId, MemberRole.OWNER, MemberRole.ADMIN);
     Environment source = findEnvironment(sourceEnvironmentId);
     Project project = source.getProject();
+    // Copying the source and creating a new environment are two capabilities, so both are asked
+    // for. The source side is ENV_EXPORT, not ENV_READ: a clone copies every flag state and hands
+    // back a key that reads them, so it is an export by another route — a custom role holding
+    // ENV_READ + ENV_CREATE but not ENV_EXPORT must not get one. Built-in roles land where the old
+    // OWNER/ADMIN adapter did.
+    permissionService.check(
+        Action.ENV_EXPORT, PermissionService.ResourceRef.environment(project.getId(), source));
+    permissionService.check(
+        Action.ENV_CREATE, PermissionService.ResourceRef.project(project.getId()));
 
     if (environmentRepository.existsByProjectIdAndName(project.getId(), request.getName())) {
       throw new DuplicateResourceException("Environment name already exists in this project");
@@ -115,8 +123,12 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
   @Override
   @Transactional(readOnly = true)
   public EnvironmentSnapshotResponse export(UUID environmentId) {
-    permissionService.requireRoleForEnvironment(environmentId, MemberRole.OWNER, MemberRole.ADMIN);
     Environment env = findEnvironment(environmentId);
+    // ENV_EXPORT rather than ENV_READ: an export dumps every flag state in the environment, and
+    // ENV_READ sits in VIEWER while this has always been OWNER/ADMIN only.
+    permissionService.check(
+        Action.ENV_EXPORT,
+        PermissionService.ResourceRef.environment(env.getProject().getId(), env));
 
     List<EnvironmentSnapshotResponse.FlagSnapshot> flags =
         flagStateRepository.findAllByEnvironmentIdOrderByFlagKey(environmentId).stream()
@@ -175,6 +187,11 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
 
     boolean changed = result.getSummary().getCreated() > 0 || result.getSummary().getUpdated() > 0;
     if (!dryRun && changed) {
+      // Every environment, not just the target: a CREATED entry also writes a default state row
+      // into each sibling environment, which their cached snapshots would otherwise miss until TTL.
+      environmentRepository
+          .findAllByProjectId(project.getId())
+          .forEach(env -> evaluationCacheService.evictAfterCommit(env.getId()));
       auditService.record(
           AuditEntityType.ENVIRONMENT,
           environmentId,

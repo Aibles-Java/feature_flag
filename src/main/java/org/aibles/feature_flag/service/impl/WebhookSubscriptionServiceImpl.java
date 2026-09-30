@@ -4,9 +4,10 @@ import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.WebhookDeliveryAttempt;
 import org.aibles.feature_flag.domain.entity.WebhookSubscription;
-import org.aibles.feature_flag.domain.enums.MemberRole;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.WebhookEventType;
 import org.aibles.feature_flag.dto.request.CreateWebhookSubscriptionRequest;
 import org.aibles.feature_flag.dto.request.UpdateWebhookSubscriptionRequest;
@@ -40,11 +41,8 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
   @Override
   @Transactional
   public WebhookSubscriptionSecretResponse create(CreateWebhookSubscriptionRequest request) {
-    permissionService.requireRoleForEnvironment(
-        request.getEnvironmentId(), MemberRole.OWNER, MemberRole.ADMIN);
-    if (!environmentRepository.existsById(request.getEnvironmentId())) {
-      throw new ResourceNotFoundException("Environment", request.getEnvironmentId());
-    }
+    // refFor loads the environment, so the old existsById probe would just repeat the lookup.
+    permissionService.check(Action.WEBHOOK_MANAGE, refFor(request.getEnvironmentId()));
     // Reject an internal URL up front so the operator gets a 400 now, rather than a
     // subscription that silently fails every delivery. Re-checked at delivery time
     // because DNS can change — see SsrfGuard.
@@ -73,8 +71,7 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
   @Transactional(readOnly = true)
   public Page<WebhookSubscriptionResponse> listByEnvironment(
       UUID environmentId, Pageable pageable) {
-    permissionService.requireRoleForEnvironment(
-        environmentId, MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(Action.WEBHOOK_READ, refFor(environmentId));
     return subscriptionRepository
         .findAllByEnvironmentId(environmentId, pageable)
         .map(this::toResponse);
@@ -84,8 +81,7 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
   @Transactional(readOnly = true)
   public WebhookSubscriptionResponse get(UUID id) {
     WebhookSubscription subscription = findById(id);
-    permissionService.requireRoleForEnvironment(
-        subscription.getEnvironmentId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(Action.WEBHOOK_READ, refFor(subscription.getEnvironmentId()));
     return toResponse(subscription);
   }
 
@@ -93,8 +89,7 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
   @Transactional
   public WebhookSubscriptionResponse update(UUID id, UpdateWebhookSubscriptionRequest request) {
     WebhookSubscription subscription = findById(id);
-    permissionService.requireRoleForEnvironment(
-        subscription.getEnvironmentId(), MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(Action.WEBHOOK_MANAGE, refFor(subscription.getEnvironmentId()));
 
     if (request.getUrl() != null) {
       ssrfGuard.verifyAllowed(request.getUrl());
@@ -113,8 +108,7 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
   @Transactional
   public void delete(UUID id) {
     WebhookSubscription subscription = findById(id);
-    permissionService.requireRoleForEnvironment(
-        subscription.getEnvironmentId(), MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(Action.WEBHOOK_MANAGE, refFor(subscription.getEnvironmentId()));
     // Delivery attempts cascade at the DB level (migration 012).
     subscriptionRepository.delete(subscription);
   }
@@ -123,8 +117,7 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
   @Transactional
   public WebhookSubscriptionSecretResponse rotateSecret(UUID id) {
     WebhookSubscription subscription = findById(id);
-    permissionService.requireRoleForEnvironment(
-        subscription.getEnvironmentId(), MemberRole.OWNER, MemberRole.ADMIN);
+    permissionService.check(Action.WEBHOOK_MANAGE, refFor(subscription.getEnvironmentId()));
 
     String plaintextSecret = ApiKeyGenerator.generate();
     subscription.setSecretCiphertext(secretCipher.encrypt(plaintextSecret));
@@ -135,8 +128,7 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
   @Transactional(readOnly = true)
   public Page<WebhookDeliveryAttemptResponse> listDeliveryAttempts(UUID id, Pageable pageable) {
     WebhookSubscription subscription = findById(id);
-    permissionService.requireRoleForEnvironment(
-        subscription.getEnvironmentId(), MemberRole.OWNER, MemberRole.ADMIN, MemberRole.VIEWER);
+    permissionService.check(Action.WEBHOOK_READ, refFor(subscription.getEnvironmentId()));
     return deliveryAttemptRepository.findAllBySubscriptionId(id, pageable).map(this::toResponse);
   }
 
@@ -149,6 +141,23 @@ public class WebhookSubscriptionServiceImpl implements WebhookSubscriptionServic
     Set<WebhookEventType> copy = EnumSet.noneOf(WebhookEventType.class);
     copy.addAll(types);
     return copy;
+  }
+
+  /**
+   * Builds the resource the PDP measures against.
+   *
+   * <p>These call sites used to go through {@code requireRoleForEnvironment}, which loaded the
+   * environment only to read its project id and threw the entity away. That discarded exactly the
+   * two attributes the authorization rules need — {@code type} and the change window — so a webhook
+   * on a PRODUCTION environment was never production-elevated, and a grant carrying a custom role
+   * could not reach these operations at all.
+   */
+  private PermissionService.ResourceRef refFor(UUID environmentId) {
+    Environment environment =
+        environmentRepository
+            .findById(environmentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Environment", environmentId));
+    return PermissionService.ResourceRef.environment(environment.getProject().getId(), environment);
   }
 
   private WebhookSubscription findById(UUID id) {

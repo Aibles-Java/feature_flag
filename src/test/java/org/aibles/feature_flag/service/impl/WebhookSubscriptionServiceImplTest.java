@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -14,8 +15,11 @@ import java.util.EnumSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.entity.WebhookSubscription;
-import org.aibles.feature_flag.domain.enums.MemberRole;
+import org.aibles.feature_flag.domain.enums.Action;
+import org.aibles.feature_flag.domain.enums.EnvType;
 import org.aibles.feature_flag.domain.enums.WebhookEventType;
 import org.aibles.feature_flag.dto.request.CreateWebhookSubscriptionRequest;
 import org.aibles.feature_flag.dto.request.UpdateWebhookSubscriptionRequest;
@@ -56,6 +60,7 @@ class WebhookSubscriptionServiceImplTest {
   WebhookSubscriptionServiceImpl service;
 
   UUID envId = UUID.randomUUID();
+  UUID projectId = UUID.randomUUID();
   UUID subscriptionId = UUID.randomUUID();
 
   @BeforeEach
@@ -68,10 +73,15 @@ class WebhookSubscriptionServiceImplTest {
             permissionService,
             secretCipher,
             ssrfGuard);
-    when(environmentRepository.existsById(envId)).thenReturn(true);
+    // refFor() loads the environment so the PDP can read its type and change window, which is
+    // the whole point of routing these calls through check() instead of the role adapter.
+    Project project = Project.builder().id(projectId).build();
+    Environment environment =
+        Environment.builder().id(envId).project(project).type(EnvType.DEVELOPMENT).build();
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(environment));
     when(subscriptionRepository.save(any(WebhookSubscription.class)))
         .thenAnswer(inv -> inv.getArgument(0));
-    doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
+    doNothing().when(permissionService).check(any(Action.class), any());
   }
 
   private CreateWebhookSubscriptionRequest createRequest() {
@@ -201,7 +211,7 @@ class WebhookSubscriptionServiceImplTest {
   void createRequiresOwnerOrAdmin() {
     doThrow(new UnauthorizedException("nope"))
         .when(permissionService)
-        .requireRoleForEnvironment(any(), any(MemberRole[].class));
+        .check(eq(Action.WEBHOOK_MANAGE), any());
 
     assertThatThrownBy(() -> service.create(createRequest()))
         .isInstanceOf(UnauthorizedException.class);
@@ -213,7 +223,7 @@ class WebhookSubscriptionServiceImplTest {
     when(subscriptionRepository.findById(subscriptionId)).thenReturn(Optional.of(existing()));
     doThrow(new UnauthorizedException("nope"))
         .when(permissionService)
-        .requireRoleForEnvironment(any(), any(MemberRole[].class));
+        .check(eq(Action.WEBHOOK_MANAGE), any());
 
     assertThatThrownBy(() -> service.delete(subscriptionId))
         .isInstanceOf(UnauthorizedException.class);
@@ -224,7 +234,8 @@ class WebhookSubscriptionServiceImplTest {
 
   @Test
   void createRejectsUnknownEnvironment() {
-    when(environmentRepository.existsById(envId)).thenReturn(false);
+    // The lookup moved from existsById to findById when the check started needing the entity.
+    when(environmentRepository.findById(envId)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.create(createRequest()))
         .isInstanceOf(ResourceNotFoundException.class);
