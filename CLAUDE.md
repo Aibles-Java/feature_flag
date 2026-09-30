@@ -131,7 +131,7 @@ defaults**, so prod can never fall back to dev values. `config/JwtProperties` (t
 is missing, an unresolved `${...}` placeholder, shorter than 512 bits (64 UTF-8 bytes), or
 contains the `change-me` placeholder marker.
 
-DB schema is managed entirely by Liquibase. `db.changelog-master.xml` includes `db.changelog-core.xml` (001–019), then `020`, `021`, `022`, `024` and `023`. The numbers are out of order because they reached production in that order; this is fine because Liquibase identifies a changeset by id/author/path, not by its number. Migration numbers are claimed on long-lived branches, so check open PRs before picking one. Never modify a changeset that has already run; always add a new one. A test-only changelog (`src/test/resources/db/changelog/db.changelog-backfill-test.xml`) mirrors the master order around a seed fixture, so a new changeset has to be added there too.
+DB schema is managed entirely by Liquibase. `db.changelog-master.xml` includes `db.changelog-core.xml` (001–019), then `020`, `021`, `022`, `024`, `023` and `025`. The numbers are out of order because they reached production in that order; this is fine because Liquibase identifies a changeset by id/author/path, not by its number. Migration numbers are claimed on long-lived branches, so check open PRs before picking one. Never modify a changeset that has already run; always add a new one. A test-only changelog (`src/test/resources/db/changelog/db.changelog-backfill-test.xml`) mirrors the master order around a seed fixture, so a new changeset has to be added there too.
 
 ## API Key generation
 
@@ -175,8 +175,12 @@ deadline would make rotation useless against an expiring key. `ApiKeyExpirySched
 and `ApiKeyExpiryNotifier` warns once per threshold (30/7/1 days) through Slack and the
 `API_KEY_EXPIRING` webhook event, claiming the threshold with a conditional UPDATE on
 `expiry_notice_sent_days` (migration `023`). When a rotation has a grace period
-(`graceHours > 0`), the old key's `expires_at` is rewritten to the new deadline, and that key's
-`expiry_notice_sent_days` is cleared, re-arming its warnings for the new deadline. Two rules that are easy to break:
+(`graceHours > 0`), the old key's `expires_at` becomes `min(expires_at, now + graceHours)` (a grace
+period can shorten a key's life, never extend it), and when that moves the deadline its
+`expiry_notice_sent_days` is cleared, re-arming its warnings. A key can be rotated **once**: the
+replaced key is stamped `rotated_at` (migration `025`) and a second rotation of it is refused, and a
+grace rotation may take an environment at most one key over the 10-key cap. Without these, rotating
+the same grace-kept key repeatedly kept it alive indefinitely and minted unlimited keys. Two rules that are easy to break:
 
 1. **Publish the event inside the notifier's transaction.** The listeners are
    `@TransactionalEventListener(AFTER_COMMIT)` without `fallbackExecution`; an event published with

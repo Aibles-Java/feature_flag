@@ -57,6 +57,13 @@ public class EnvironmentApiKey {
   @Column(name = "revoked_at")
   private LocalDateTime revokedAt;
 
+  /**
+   * When this key was replaced by a rotation; {@code null} if it never was. A rotated key may still
+   * authenticate until its grace deadline, but it can never be rotated again (migration 025).
+   */
+  @Column(name = "rotated_at")
+  private LocalDateTime rotatedAt;
+
   /** Last time this key successfully authenticated an SDK request. Coarse — throttled in filter. */
   @Column(name = "last_used_at")
   private LocalDateTime lastUsedAt;

@@ -21,6 +21,10 @@ public class ApiKeyResponse {
 
   private LocalDateTime expiresAt;
   private LocalDateTime revokedAt;
+
+  /** When a rotation replaced this key; {@code null} if it never was. */
+  private LocalDateTime rotatedAt;
+
   private LocalDateTime lastUsedAt;
   private UUID createdBy;
   private LocalDateTime createdAt;

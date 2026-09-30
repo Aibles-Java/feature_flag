@@ -111,11 +111,13 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
   @Override
   @Transactional
   public void revoke(UUID environmentId, UUID keyId) {
-    EnvironmentApiKey key = findKeyIn(environmentId, keyId);
-    Environment env = key.getEnvironment();
+    // Authorize on the environment before looking the key up, so a caller without access cannot
+    // tell a key of this environment (403) from any other id (404).
+    Environment env = findEnvironment(environmentId);
     permissionService.check(
         Action.ENV_KEY_REVOKE,
         PermissionService.ResourceRef.environment(env.getProject().getId(), env));
+    EnvironmentApiKey key = findKeyIn(environmentId, keyId);
 
     if (key.isRevoked()) {
       throw new DuplicateResourceException("API key is already revoked");
@@ -133,21 +135,29 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
   }
 
   /**
-   * Deliberately does not consult {@link #MAX_ACTIVE_KEYS_PER_ENVIRONMENT}: rotation replaces one
-   * key with another, so an environment already at the cap must still be able to rotate — it cannot
-   * free a slot without revoking the very key it is trying to rotate. During the grace window the
-   * environment transiently holds one more active key than the cap; that count returns to its prior
-   * value once the old key's grace period ends (or is revoked with graceHours=0).
+   * Replaces a key with a new one. Three rules keep a grace period from becoming a way to extend a
+   * credential's life:
+   *
+   * <ul>
+   *   <li>A key can be rotated <b>once</b>. The replaced key is stamped {@code rotatedAt}; a second
+   *       rotation of it is refused, so a key kept alive by a grace period cannot be rotated again
+   *       to push its deadline out indefinitely. Rotate the replacement instead.
+   *   <li>The grace deadline never extends the old key: it is {@code min(expiresAt, now + grace)}.
+   *   <li>An environment already at {@link #MAX_ACTIVE_KEYS_PER_ENVIRONMENT} may still rotate — it
+   *       cannot free a slot without revoking the key it is rotating — and so may briefly hold one
+   *       key over the cap during a grace period, but never more than one.
+   * </ul>
    */
   @Override
   @Transactional
   public ApiKeySecretResponse rotate(UUID environmentId, UUID keyId, RotateApiKeyRequest request) {
-    EnvironmentApiKey old = findKeyIn(environmentId, keyId);
-    Environment env = old.getEnvironment();
-    // ENV_ROTATE_KEY, not CREATE+REVOKE: one door, and rotation stays fully windowed.
+    Environment env = findEnvironment(environmentId);
+    // ENV_ROTATE_KEY, not CREATE+REVOKE: one door, and rotation stays fully windowed. Checked
+    // before the key lookup for the same reason as revoke().
     permissionService.check(
         Action.ENV_ROTATE_KEY,
         PermissionService.ResourceRef.environment(env.getProject().getId(), env));
+    EnvironmentApiKey old = findKeyIn(environmentId, keyId);
 
     // isRevoked()/isExpired() checked separately, not old.isActive(clock) collapsed into one
     // branch, so the 409 message tells an operator which of the two dead states they hit.
@@ -159,19 +169,39 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
       // push this key's already-past expiresAt into the future, resurrecting a dead credential.
       throw new DuplicateResourceException("API key has already expired");
     }
+    if (old.getRotatedAt() != null) {
+      throw new DuplicateResourceException(
+          "API key has already been rotated; rotate its replacement instead");
+    }
 
     LocalDateTime now = LocalDateTime.now(clock);
+    // The old key stays active through a grace period, so this rotation adds one active key.
+    // Allow that once over the cap (see the Javadoc), never beyond it.
+    if (request.getGraceHours() > 0
+        && apiKeyRepository.countActiveByEnvironmentId(environmentId, now)
+            > MAX_ACTIVE_KEYS_PER_ENVIRONMENT) {
+      throw new DuplicateResourceException(
+          "Environment is over the maximum of "
+              + MAX_ACTIVE_KEYS_PER_ENVIRONMENT
+              + " active API keys; rotate with graceHours=0 or revoke a key first");
+    }
     MintedKey minted =
         EnvironmentApiKeyFactory.mint(
             env, old.getName(), freshExpiry(old, now), permissionService.currentUserId());
     EnvironmentApiKey fresh = apiKeyRepository.save(minted.key());
 
+    old.setRotatedAt(now);
     if (request.getGraceHours() == 0) {
       old.setRevokedAt(now);
     } else {
-      old.setExpiresAt(now.plusHours(request.getGraceHours()));
-      // The deadline just moved, so any threshold already warned about is stale — re-arm it.
-      old.setExpiryNoticeSentDays(null);
+      // Never later than the key's own deadline: a grace period shortens a key's life, it does
+      // not extend it.
+      LocalDateTime graceDeadline = now.plusHours(request.getGraceHours());
+      if (old.getExpiresAt() == null || graceDeadline.isBefore(old.getExpiresAt())) {
+        old.setExpiresAt(graceDeadline);
+        // The deadline just moved, so any threshold already warned about is stale — re-arm it.
+        old.setExpiryNoticeSentDays(null);
+      }
     }
     apiKeyRepository.save(old);
 
@@ -236,6 +266,7 @@ public class EnvironmentApiKeyServiceImpl implements EnvironmentApiKeyService {
         .keyPrefix(key.getKeyPrefix())
         .expiresAt(key.getExpiresAt())
         .revokedAt(key.getRevokedAt())
+        .rotatedAt(key.getRotatedAt())
         .lastUsedAt(key.getLastUsedAt())
         .createdBy(key.getCreatedBy())
         .createdAt(key.getCreatedAt())

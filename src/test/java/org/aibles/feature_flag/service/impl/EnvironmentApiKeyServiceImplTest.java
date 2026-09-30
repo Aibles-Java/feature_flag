@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -33,6 +34,7 @@ import org.aibles.feature_flag.dto.response.ApiKeyResponse;
 import org.aibles.feature_flag.dto.response.ApiKeySecretResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.util.ApiKeyHasher;
@@ -221,7 +223,8 @@ class EnvironmentApiKeyServiceImplTest {
             r -> {
               assertThat(r.getKeyPrefix()).isEqualTo("abcd1234");
               assertThat(r)
-                  .hasNoNullFieldsOrPropertiesExcept("expiresAt", "revokedAt", "lastUsedAt");
+                  .hasNoNullFieldsOrPropertiesExcept(
+                      "expiresAt", "revokedAt", "rotatedAt", "lastUsedAt");
             });
     assertThat(page.getContent().toString()).doesNotContain(ACTIVE_KEY_HASH);
   }
@@ -282,10 +285,29 @@ class EnvironmentApiKeyServiceImplTest {
     // 404, not 403: a guessed key id must not confirm that the key exists elsewhere.
     assertThatThrownBy(() -> service.revoke(ENV_ID, KEY_ID))
         .isInstanceOf(ResourceNotFoundException.class);
-    // The ownership guard must run before any permission check — otherwise a caller with no
-    // access to the foreign environment could still learn (via a 403 vs 404 distinction) that
-    // the key exists there.
-    verify(permissionService, never()).check(any(), any());
+    // Authorization is against the environment in the URL, never the key's own environment.
+    verify(permissionService)
+        .check(eq(Action.ENV_KEY_REVOKE), argThat(ref -> ref.environment() == environment));
+  }
+
+  @Test
+  void revokeAuthorizesBeforeLookingTheKeyUp() {
+    // Check first, then look up: a caller without access to this environment gets the same 403
+    // whether or not the key id belongs to it, so the response cannot confirm key membership.
+    doThrow(new UnauthorizedException("nope")).when(permissionService).check(any(), any());
+
+    assertThatThrownBy(() -> service.revoke(ENV_ID, KEY_ID))
+        .isInstanceOf(UnauthorizedException.class);
+    verify(apiKeyRepository, never()).findById(any());
+  }
+
+  @Test
+  void rotateAuthorizesBeforeLookingTheKeyUp() {
+    doThrow(new UnauthorizedException("nope")).when(permissionService).check(any(), any());
+
+    assertThatThrownBy(() -> service.rotate(ENV_ID, KEY_ID, grace(0)))
+        .isInstanceOf(UnauthorizedException.class);
+    verify(apiKeyRepository, never()).findById(any());
   }
 
   @Test
@@ -319,14 +341,64 @@ class EnvironmentApiKeyServiceImplTest {
   @Test
   void rotateWithGraceReArmsExpiryWarningsForTheOldKeysNewDeadline() {
     EnvironmentApiKey old = activeKey();
+    old.setExpiresAt(NOW.plusDays(60));
+    old.setExpiryNoticeSentDays(30);
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    service.rotate(ENV_ID, KEY_ID, grace(24));
+
+    assertThat(old.getExpiresAt()).isEqualTo(NOW.plusHours(24));
+    assertThat(old.getExpiryNoticeSentDays()).isNull();
+  }
+
+  @Test
+  void aGracePeriodNeverExtendsTheOldKeysOwnDeadline() {
+    // A key due in 5 days rotated with 30 days of grace keeps its 5-day deadline. Before this, the
+    // grace deadline replaced it outright, so rotation could lengthen a credential's life.
+    EnvironmentApiKey old = activeKey();
     old.setExpiresAt(NOW.plusDays(5));
     old.setExpiryNoticeSentDays(7);
     when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
 
     service.rotate(ENV_ID, KEY_ID, grace(720));
 
-    assertThat(old.getExpiresAt()).isEqualTo(NOW.plusHours(720));
-    assertThat(old.getExpiryNoticeSentDays()).isNull();
+    assertThat(old.getExpiresAt()).isEqualTo(NOW.plusDays(5));
+    // The deadline did not move, so the warnings already sent for it still stand.
+    assertThat(old.getExpiryNoticeSentDays()).isEqualTo(7);
+  }
+
+  @Test
+  void aKeyCanOnlyBeRotatedOnce() {
+    // Rotating the same (grace-kept) key again used to push its deadline out another grace period
+    // and mint another active key, indefinitely. The replaced key is now marked and refused.
+    EnvironmentApiKey old = activeKey();
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(old));
+
+    service.rotate(ENV_ID, KEY_ID, grace(24));
+    assertThat(old.getRotatedAt()).isEqualTo(NOW);
+
+    assertThatThrownBy(() -> service.rotate(ENV_ID, KEY_ID, grace(24)))
+        .isInstanceOf(DuplicateResourceException.class)
+        .hasMessageContaining("already been rotated");
+    assertThat(old.getExpiresAt()).isEqualTo(NOW.plusHours(24));
+  }
+
+  @Test
+  void aGraceRotationMayGoOneKeyOverTheCapButNoFurther() {
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(activeKey()));
+
+    // At the cap (10 active, the rotated key among them): allowed, briefly 11 during the grace.
+    when(apiKeyRepository.countActiveByEnvironmentId(eq(ENV_ID), any())).thenReturn(10L);
+    service.rotate(ENV_ID, KEY_ID, grace(24));
+
+    // Already one over: another grace rotation would add a twelfth.
+    when(apiKeyRepository.findById(KEY_ID)).thenReturn(Optional.of(activeKey()));
+    when(apiKeyRepository.countActiveByEnvironmentId(eq(ENV_ID), any())).thenReturn(11L);
+    assertThatThrownBy(() -> service.rotate(ENV_ID, KEY_ID, grace(24)))
+        .isInstanceOf(DuplicateResourceException.class);
+
+    // A hard cutover adds nothing, so it stays available even over the cap.
+    service.rotate(ENV_ID, KEY_ID, grace(0));
   }
 
   @Test
