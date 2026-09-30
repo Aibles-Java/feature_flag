@@ -57,9 +57,27 @@ public class EnvironmentApiKey {
   @Column(name = "revoked_at")
   private LocalDateTime revokedAt;
 
+  /**
+   * When this key was replaced by a rotation; {@code null} if it never was. A rotated key may still
+   * authenticate until its grace deadline, but it can never be rotated again (migration 025).
+   */
+  @Column(name = "rotated_at")
+  private LocalDateTime rotatedAt;
+
   /** Last time this key successfully authenticated an SDK request. Coarse — throttled in filter. */
   @Column(name = "last_used_at")
   private LocalDateTime lastUsedAt;
+
+  /**
+   * Smallest expiry-warning threshold, in days, already sent for this key; {@code null} when none
+   * has been. Normally written only by the conditional UPDATE in {@code
+   * EnvironmentApiKeyRepository#claimExpiryNotice}, never through the entity — except that a grace
+   * rotation (see {@code EnvironmentApiKeyServiceImpl#rotate}) moves the old key's {@code
+   * expiresAt} forward and clears this field on the entity directly, re-arming its warnings for the
+   * new deadline.
+   */
+  @Column(name = "expiry_notice_sent_days")
+  private Integer expiryNoticeSentDays;
 
   /** Nulled rather than cascaded: the key outlives the person who minted it. */
   @Column(name = "created_by")

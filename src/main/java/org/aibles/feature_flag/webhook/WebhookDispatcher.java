@@ -11,6 +11,7 @@ import org.aibles.feature_flag.config.WebhookProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.WebhookSubscription;
 import org.aibles.feature_flag.domain.enums.WebhookEventType;
+import org.aibles.feature_flag.notification.event.ApiKeyExpiringEvent;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
 import org.aibles.feature_flag.notification.event.FlagCreatedEvent;
@@ -74,6 +75,23 @@ public class WebhookDispatcher {
     // does the webhook payload.
 
     dispatchToEnvironment(WebhookEventType.API_KEY_ROTATED, event.environmentId(), data);
+  }
+
+  @Async
+  @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+  public void onApiKeyExpiring(ApiKeyExpiringEvent event) {
+    Map<String, Object> data = new HashMap<>();
+    data.put("environmentName", event.environmentName());
+    data.put("projectName", event.projectName());
+    data.put("keyId", event.keyId() == null ? null : event.keyId().toString());
+    data.put("keyName", event.keyName());
+    data.put("keyPrefix", event.keyPrefix());
+    data.put("expiresAt", event.expiresAt() == null ? null : event.expiresAt().toString());
+    data.put("lastUsedAt", event.lastUsedAt() == null ? null : event.lastUsedAt().toString());
+    data.put("daysLeft", event.daysLeft());
+    // Deliberately no key/hash, as with rotation.
+
+    dispatchToEnvironment(WebhookEventType.API_KEY_EXPIRING, event.environmentId(), data);
   }
 
   @Async

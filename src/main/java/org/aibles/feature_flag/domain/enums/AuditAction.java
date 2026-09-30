@@ -10,6 +10,10 @@ public enum AuditAction {
   INVITE_MEMBER,
   REMOVE_MEMBER,
   ROTATE_API_KEY,
+  /** A new SDK key was minted for an environment (never records the key itself). */
+  CREATE_API_KEY,
+  /** An SDK key was withdrawn. Soft: the row survives so the audit trail keeps its referent. */
+  REVOKE_API_KEY,
   CHANGE_STATE,
   GRANT_PERMISSION,
   REVOKE_PERMISSION,

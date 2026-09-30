@@ -66,6 +66,35 @@ public interface EnvironmentApiKeyRepository extends JpaRepository<EnvironmentAp
   Optional<LocalDateTime> findLastUsedAtByEnvironmentId(@Param("environmentId") UUID environmentId);
 
   /**
+   * Keys the expiry-warning scan considers: not revoked, not yet expired, and expiring no later
+   * than {@code horizon}. Fetches environment and project because the notifier reads their names
+   * after this query's transaction has closed.
+   */
+  @Query(
+      "SELECT k FROM EnvironmentApiKey k JOIN FETCH k.environment e JOIN FETCH e.project "
+          + "WHERE k.revokedAt IS NULL AND k.expiresAt > :now AND k.expiresAt <= :horizon")
+  List<EnvironmentApiKey> findExpiryCandidates(
+      @Param("now") LocalDateTime now, @Param("horizon") LocalDateTime horizon);
+
+  /**
+   * Claims one expiry-warning threshold for one key. Returns 1 when this caller won and must send
+   * the warning; 0 when this or a smaller threshold was already claimed (possibly by another
+   * instance), or the key was revoked or expired meanwhile. The WHERE clause is what makes the
+   * claim safe across instances — do not replace it with a read followed by a write.
+   *
+   * <p>{@code REQUIRED}, deliberately not {@code REQUIRES_NEW}: it must join the notifier's
+   * transaction, so the warning event is published in the same commit as the claim.
+   */
+  @Transactional
+  @Modifying
+  @Query(
+      "UPDATE EnvironmentApiKey k SET k.expiryNoticeSentDays = :threshold "
+          + "WHERE k.id = :id AND k.revokedAt IS NULL AND k.expiresAt > :now "
+          + "AND (k.expiryNoticeSentDays IS NULL OR k.expiryNoticeSentDays > :threshold)")
+  int claimExpiryNotice(
+      @Param("id") UUID id, @Param("threshold") int threshold, @Param("now") LocalDateTime now);
+
+  /**
    * Stamps {@code last_used_at}. The {@code threshold} guard makes this a no-op when the timestamp
    * was updated recently, so it stays race-safe under concurrent SDK calls and lets the caller
    * throttle writes on the hot path. Must stay a bulk UPDATE — setting the field on a managed

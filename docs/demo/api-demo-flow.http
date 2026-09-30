@@ -594,10 +594,62 @@ X-Environment-Key: {{devApiKey}}
 
 
 ### ---------------------------------------------------------------------
+### PHẦN 10b — NHIỀU API KEY / MÔI TRƯỜNG (issue: api-key-lifecycle)
+###   Đây mới là trọng tâm của tính năng: một environment có thể giữ NHIỀU
+###   key sống song song — mỗi consumer (mobile app, batch job...) một key
+###   riêng — nên rút một key không làm chết các consumer khác.
+### ---------------------------------------------------------------------
+
+### 56. Tạo thêm 1 key thứ 2 cho DEV, đặt tên theo consumer — 201 + apiKey (chỉ hiện lần này)
+POST {{baseUrl}}/api/v1/environments/{{devEnvId}}/api-keys
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "mobile-app"
+}
+
+> {%
+    client.global.set("devKeyId2", response.body.key.id);
+    client.global.set("devApiKey2", response.body.apiKey);
+    client.log("devKeyId2  = " + response.body.key.id);
+    client.log("devApiKey2 = " + response.body.apiKey);
+%}
+
+### 57. Danh sách key của DEV — 2 key đang active, không key nào lộ plaintext/hash
+GET {{baseUrl}}/api/v1/environments/{{devEnvId}}/api-keys?page=0&size=20
+Authorization: Bearer {{accessToken}}
+
+### 58. SDK dùng key GỐC (đã rotate ở bước 53) → vẫn 200
+GET {{baseUrl}}/api/v1/sdk/flags
+X-Environment-Key: {{devApiKey}}
+
+### 59. SDK dùng key THỨ 2 (mobile-app) → cũng 200 — hai key cùng sống song song
+GET {{baseUrl}}/api/v1/sdk/flags
+X-Environment-Key: {{devApiKey2}}
+
+### 60. Thu hồi (revoke) riêng key thứ 2 — 204, không đụng tới key gốc
+DELETE {{baseUrl}}/api/v1/environments/{{devEnvId}}/api-keys/{{devKeyId2}}
+Authorization: Bearer {{accessToken}}
+
+### 61. (Case lỗi) SDK dùng key vừa bị revoke → 401 "API key has been revoked"
+GET {{baseUrl}}/api/v1/sdk/flags
+X-Environment-Key: {{devApiKey2}}
+
+### 62. SDK dùng key GỐC → vẫn 200 — revoke 1 key không ảnh hưởng các key còn lại
+GET {{baseUrl}}/api/v1/sdk/flags
+X-Environment-Key: {{devApiKey}}
+
+### 63. (Case lỗi) Revoke lại đúng key đã revoke → 409 "API key is already revoked"
+DELETE {{baseUrl}}/api/v1/environments/{{devEnvId}}/api-keys/{{devKeyId2}}
+Authorization: Bearer {{accessToken}}
+
+
+### ---------------------------------------------------------------------
 ### PHẦN 11 — AUDIT LOG (mọi thao tác ở trên đều đã được ghi nhận)
 ### ---------------------------------------------------------------------
 
-### 56. Xem audit log của organisation (mới nhất trước, VIEWER trở lên xem được)
+### 64. Xem audit log của organisation (mới nhất trước, VIEWER trở lên xem được)
 GET {{baseUrl}}/api/v1/organisations/{{orgId}}/audit-log?page=0&size=50
 Authorization: Bearer {{accessToken}}
 
@@ -606,13 +658,13 @@ Authorization: Bearer {{accessToken}}
 ### PHẦN 12 — MONITORING (không cần JWT)
 ### ---------------------------------------------------------------------
 
-### 57. Health check (public)
+### 65. Health check (public)
 GET {{baseUrl}}/actuator/health
 
-### 58. Readiness probe
+### 66. Readiness probe
 GET {{baseUrl}}/actuator/health/readiness
 
-### 59. Prometheus metrics — cần HTTP Basic user `metrics`
+### 67. Prometheus metrics — cần HTTP Basic user `metrics`
 ###     Chỉ chạy được khi đã set env APP_METRICS_PASSWORD (mặc định blank = account bị disable)
 GET {{baseUrl}}/actuator/prometheus
 Authorization: Basic metrics:CHANGE_ME
@@ -622,23 +674,23 @@ Authorization: Basic metrics:CHANGE_ME
 ### PHẦN 13 — DỌN DẸP (tuỳ chọn — chạy ngược từ trong ra ngoài)
 ### ---------------------------------------------------------------------
 
-### 60. Xoá environment Staging (OWNER)
+### 68. Xoá environment Staging (OWNER)
 DELETE {{baseUrl}}/api/v1/environments/{{stagingEnvId}}
 Authorization: Bearer {{accessToken}}
 
-### 61. Gỡ thành viên khỏi organisation (không gỡ được OWNER cuối cùng)
+### 69. Gỡ thành viên khỏi organisation (không gỡ được OWNER cuối cùng)
 DELETE {{baseUrl}}/api/v1/organisations/{{orgId}}/members/{{teammateUserId}}
 Authorization: Bearer {{accessToken}}
 
-### 62. Xoá project (OWNER)
+### 70. Xoá project (OWNER)
 DELETE {{baseUrl}}/api/v1/projects/{{projectId}}
 Authorization: Bearer {{accessToken}}
 
-### 63. Xoá organisation (OWNER)
+### 71. Xoá organisation (OWNER)
 DELETE {{baseUrl}}/api/v1/organisations/{{orgId}}
 Authorization: Bearer {{accessToken}}
 
-### 64. Logout — thu hồi refresh token (luôn trả 204 dù token có tồn tại hay không)
+### 72. Logout — thu hồi refresh token (luôn trả 204 dù token có tồn tại hay không)
 POST {{baseUrl}}/api/v1/auth/logout
 Content-Type: application/json
 

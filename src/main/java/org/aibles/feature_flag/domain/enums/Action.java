@@ -21,6 +21,10 @@ public enum Action {
   ENV_ROTATE_KEY,
   ENV_ROTATE_KEY_PRODUCTION,
   ENV_MANAGE_PROTECTION,
+  ENV_KEY_CREATE,
+  ENV_KEY_CREATE_PRODUCTION,
+  ENV_KEY_REVOKE,
+  ENV_KEY_REVOKE_PRODUCTION,
   // Dumps every flag state in an environment, so it is deliberately not ENV_READ: that sits in
   // VIEWER, and export has always been OWNER/ADMIN only.
   ENV_EXPORT,

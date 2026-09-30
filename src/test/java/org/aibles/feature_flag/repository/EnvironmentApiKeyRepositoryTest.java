@@ -180,4 +180,53 @@ class EnvironmentApiKeyRepositoryTest {
 
     assertThat(repository.countActiveByEnvironmentId(UUID.randomUUID(), now)).isZero();
   }
+
+  @Test
+  void findExpiryCandidatesReturnsOnlyLiveKeysInsideTheHorizon() {
+    EnvironmentApiKey inside = save("inside", "exp0cand1", now.plusDays(5), null);
+    EnvironmentApiKey never = save("never", "exp0cand2", null, null);
+    EnvironmentApiKey beyond = save("beyond", "exp0cand3", now.plusDays(31), null);
+    EnvironmentApiKey expired = save("expired", "exp0cand4", now.minusMinutes(1), null);
+    EnvironmentApiKey revoked = save("revoked", "exp0cand5", now.plusDays(5), now.minusDays(1));
+
+    // The table is shared with the other tests in this class (no rollback — see the class
+    // Javadoc), so assert membership rather than an exact list.
+    assertThat(repository.findExpiryCandidates(now, now.plusDays(30)))
+        .extracting(EnvironmentApiKey::getId)
+        .contains(inside.getId())
+        .doesNotContain(never.getId(), beyond.getId(), expired.getId(), revoked.getId());
+  }
+
+  @Test
+  void findExpiryCandidatesFetchesTheEnvironmentAndItsProject() {
+    EnvironmentApiKey key = save("ios", "exp0cand6", now.plusDays(2), null);
+
+    EnvironmentApiKey found =
+        repository.findExpiryCandidates(now, now.plusDays(30)).stream()
+            .filter(k -> k.getId().equals(key.getId()))
+            .findFirst()
+            .orElseThrow();
+
+    // The notifier reads these after this query's transaction has closed.
+    assertThat(found.getEnvironment().getProject().getName()).isEqualTo("Web");
+  }
+
+  @Test
+  void claimExpiryNoticeSucceedsOncePerThresholdAndAgainForASmallerOne() {
+    EnvironmentApiKey key = save("ios", "exp0clm01", now.plusDays(5), null);
+
+    assertThat(repository.claimExpiryNotice(key.getId(), 7, now)).isEqualTo(1);
+    assertThat(repository.claimExpiryNotice(key.getId(), 7, now)).isZero();
+    assertThat(repository.claimExpiryNotice(key.getId(), 30, now)).isZero();
+    assertThat(repository.claimExpiryNotice(key.getId(), 1, now)).isEqualTo(1);
+    assertThat(repository.findById(key.getId()).orElseThrow().getExpiryNoticeSentDays())
+        .isEqualTo(1);
+  }
+
+  @Test
+  void claimExpiryNoticeRefusesARevokedKey() {
+    EnvironmentApiKey key = save("ios", "exp0clm02", now.plusDays(5), now.minusMinutes(1));
+
+    assertThat(repository.claimExpiryNotice(key.getId(), 7, now)).isZero();
+  }
 }
