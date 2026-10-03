@@ -1,61 +1,55 @@
 # Handoff
 
+*Ephemeral — overwritten by `/save-memory` at the end of each session. Read this first.*
+
 ## Current WIP
 
-Two branches, both committed, tested and **not yet pushed**. Neither has a PR.
+Feature `client-sdk` — building a **Feature Flag Client SDK** for external backend apps, WITHOUT
+modifying this app's server code. Work is on a **git worktree** at
+`.claude/worktrees/agent-a7cb0859c34b7699c`, branch **`feature/client-sdk`** (renamed from the
+worktree branch), 5 commits ahead of `develop`:
 
-**`feature/api-key-hardening`** (2 commits off `develop`)
-- `cd3db5b docs:` — syncs `docs/architecture-design-v1.md` §4/§6/§7 with the code. It
-  claimed API keys were stored in plaintext (hashed since #24), ~192 bits of entropy (it
-  is 256), two filter chains (three since #29), a single 24h JWT (access 15m + refresh
-  14d), and pagination as a v2 concern (shipped in #33).
-- `ab9f200 fix:` — the three defects in [[0036-sdk-api-key-auth-hardening]].
-  New file `security/ratelimit/SdkIpRateLimitFilter.java`; `SecurityConfig`,
-  `ApiKeyAuthenticationFilter`, `RateLimitService`, `RateLimitProperties`,
-  `application.properties` modified. 478 tests pass, spotless clean, security review
-  found no HIGH/MEDIUM.
+- `538bb83` scaffold + TLS enforcement tests (G1 evidence)
+- `93864df` resolve 1st code-review CRIT/HIGH; SDK tests gate CI
+- `5522fa1` full SDK impl (cache, retry, coercion, diagnostics, FlagClient facade)
+- `461abcc` resolve merged 2nd-round code+security review (5 HIGH + should-fixes)
+- `9d4c9d1` cap fetchOne response body before parse (HF-4 completion)
 
-**`feature/env-create-backfills-flag-states`** (1 commit off `develop`)
-- `601e5e1 fix:` — `EnvironmentServiceImpl.create()` now backfills a state row per
-  existing flag, plus migration `024` (was `019`, renumbered to avoid PR #122) to repair existing data. See
-  [[flag-environment-state-invariant-has-two-sides]]. 472 tests pass.
+State: **136 tests green, coverage ~86%, Spotless clean, BUILD SUCCESS**, verified independently.
+Only `feature-flag-sdk/` + `.github/workflows/workflow.yml` changed — NO app code touched.
+Module is standalone (build: `./mvnw -f feature-flag-sdk/pom.xml verify`).
 
-## Context to Load
+SDK has passed 2 full independent review rounds (code + security, SoD) + 1 final re-review; all
+CRITICAL/HIGH closed. `feature-flag-sdk/README.md` has the integration guide.
 
-- `decisions/0036-sdk-api-key-auth-hardening.md`
-- `conventions/short-circuiting-filter-hides-everything-after-it.md`
-- `conventions/flag-environment-state-invariant-has-two-sides.md`
-- `conventions/spring-security-filter-order-anchor.md` (why the new filter anchors on
-  `LogoutFilter`)
+## Immediate next step: OPEN THE PR
 
-## Next steps
+The user approved pushing + opening the PR. Branch is already renamed to `feature/client-sdk`.
+Steps:
+1. This `/save-memory` run satisfies the pre-push memory gate (memory files change alongside code).
+   Commit the memory changes (they live in the MAIN checkout — the gate checks the pushing repo).
+2. Push `feature/client-sdk` to origin.
+3. Open PR into `develop` using the `create-pr` skill (repo's 6-section format). Reviewer ≠ author
+   (SoD — a human reviews/merges; AI does not self-merge).
 
-1. **Push the two branches and open PRs** against `develop`. The user also asked for a PR
-   on the pre-existing `feature/api-key-lifecycle` (11 commits unpushed, 28 ahead of
-   develop). That branch is stacked on `feat/api-key-table` (PR #123) and
-   `docs/api-key-design` (PR #122) — **base its PR on `feat/api-key-table`, not
-   `develop`**, or the diff swallows both open PRs.
+## Context to load first
 
-2. **Resolve the collision before either side merges.** `feature/api-key-lifecycle`
-   rewrites `ApiKeyAuthenticationFilter` for the new `environment_api_key` table and still
-   has all three defects: unguarded `touchLastUsedAt`, `APPLICATION_JSON_VALUE` +
-   `ProblemDetail` through a bare mapper, and no pre-auth IP rate limit. Whichever merges
-   second must re-apply the fixes by hand — they conflict on the same file.
+- `decisions/0036-client-sdk-standalone-module.md` — the whole SDK build + contracts.
+- `conventions/sdk-must-match-live-server-contract.md` — why identifier is a query param; build cmd.
+- `docs/sdk/` — PRD, HLD, LLD, 7 ADRs, OpenAPI, threat-model, security-review, walkthrough notes.
+- `.chapter-forge/sdlc-state.json` + `.chapter-forge/memory/episodic/gate-log.jsonl` — SDLC state
+  and the full review→fix loop history (iterations 1–8).
 
-3. **Three review findings still open**, all in `EnvironmentServiceImpl`, none started:
-   - `create()` accepts `type` and the change window behind `ENV_CREATE` (ADMIN), while
-     `update()` gates the same attributes on OWNER-only `ENV_MANAGE_PROTECTION`. An ADMIN
-     can create a `PRODUCTION` env with a 1-hour change window, and because
-     `productionEnvironments` resolves *every* prod env under the project for
-     project-scoped archive, that blocks archive/unarchive project-wide 23 hours a day —
-     for OWNERs too.
-   - `update()` renames without the `existsByProjectIdAndName` check that `create()` and
-     `clone()` both do, so a duplicate name returns 500 (no `DataIntegrityViolationException`
-     handler in `GlobalExceptionHandler`) instead of the 409 the create path returns.
-   - A change window cannot be cleared once set: `update()` skips null fields and
-     `isChangeWindowComplete()` rejects sending one half. Only `start == end` (zero-width,
-     treated as unrestricted) neutralises it, which is undiscoverable from the API.
+## After the PR — Gate G1 (still pending, HUMAN authority)
 
-4. Migration `024`'s SQL is **unverified against real data** — it runs on an empty H2 in
-   CI, proving only that the syntax is valid. Run it against a local Postgres with a
-   project that has flags and a late-created environment before trusting it.
+SDK code is clean, but Gate G1 (design) still needs human sign-off. Remaining G1 blockers are all
+human/cross-team (not Maker-closeable):
+- Risk/Compliance sign-off (data-residency / AI-tooling).
+- Architect architecture-review record + sign-off; Security to lift conditions + approve ADRs
+  (still `PROPOSED`).
+- Server-side ticket: `EvaluationController` to accept `X-Flag-Identifier` header (deferred v2).
+
+## Planned later-phase update
+
+Move `identifier` from query param → `X-Flag-Identifier` header (needs coordinated server change).
+Tracked in README "Known deviation" and decision 0036.
