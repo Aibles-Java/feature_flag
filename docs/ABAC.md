@@ -8,8 +8,10 @@ This document describes the Admin-API authorization model: how a request is auth
 data model behind it, the decision algorithm, the management APIs, and the security guards.
 
 > Scope: this covers the **Admin API** (JWT-secured, human users). The **SDK API**
-> (`/api/v1/sdk/**`, API-key-secured) is unaffected — it authenticates an `Environment`, not a
-> user, and does no per-action authorization.
+> (`/api/v1/sdk/**`, API-key-secured) is unaffected — it authenticates an `EnvironmentApiKey`
+> (one of possibly several live keys per environment; see `CLAUDE.md` "API Key generation"), not
+> a user, and does no per-action authorization. Creating and revoking those keys, however, *is*
+> authorized through this PDP — see the `ENV_KEY_CREATE` / `ENV_KEY_REVOKE` rows below.
 
 ---
 
@@ -138,13 +140,27 @@ Notes:
 
 | # | File | Adds |
 |---|---|---|
-| 013 | `013-add-environment-type.xml` | `environments.type` (default `DEVELOPMENT`) |
-| 014 | `014-create-permission-grants.xml` | `permission_grant` table |
-| 015 | `015-create-custom-roles.xml` | `custom_role`, `custom_role_action` |
-| 016 | `016-permission-grant-custom-role.xml` | `permission_grant.custom_role_id`, `role` made nullable, XOR check |
-| 017 | `017-add-environment-change-window.xml` | `environments.change_window_start_hour` / `_end_hour` |
+| 014 | `014-add-environment-type.xml` | `environments.type` (default `DEVELOPMENT`) |
+| 015 | `015-create-permission-grants.xml` | `permission_grant` table |
+| 016 | `016-create-custom-roles.xml` | `custom_role`, `custom_role_action` |
+| 017 | `017-permission-grant-custom-role.xml` | `permission_grant.custom_role_id`, `role` made nullable, XOR check |
+| 018 | `018-add-environment-change-window.xml` | `environments.change_window_start_hour` / `_end_hour` |
 
-No previously-run changeset was modified; no data was migrated.
+*(Numbering corrected: `013` is `013-add-flag-hygiene-columns.xml`, issue #37, unrelated to ABAC —
+this table previously listed these five changesets one number too low.)*
+
+No previously-run changeset was modified; no data was migrated by 013–018.
+
+Two more changesets, added by the API-key-lifecycle branch, are **adjacent** to this model
+(`ENV_KEY_CREATE`/`ENV_KEY_REVOKE` guard the endpoints they back) but not part of it:
+
+| # | File | Adds |
+|---|---|---|
+| 019 | `019-create-environment-api-keys.xml` | `environment_api_key` table (multiple keys per environment) |
+| 020 | `020-migrate-api-keys-to-key-table.xml` | backfills from `environments.api_key_hash`, then drops that column and `environments.last_used_at` |
+
+See `CLAUDE.md` ("API Key generation") for the key lifecycle itself; this document only covers who
+is allowed to call it.
 
 ---
 
@@ -199,6 +215,8 @@ elevated counterpart. `PermissionService.PRODUCTION_ELEVATED` is the whole table
 | `FLAG_ARCHIVE` | `FLAG_ARCHIVE_PRODUCTION` | archived flags are filtered out of every evaluation response, so archiving is an off-switch |
 | `ENV_ROTATE_KEY` | `ENV_ROTATE_KEY_PRODUCTION` | invalidates the key every production SDK authenticates with |
 | `ENV_DELETE` | `ENV_DELETE_PRODUCTION` | removes the environment outright |
+| `ENV_KEY_CREATE` | `ENV_KEY_CREATE_PRODUCTION` | issues a new credential a production SDK can authenticate with |
+| `ENV_KEY_REVOKE` | `ENV_KEY_REVOKE_PRODUCTION` | withdraws a credential a production SDK is authenticating with — an off-switch, like archiving |
 
 `POST /environments/{id}/import` is not a separate action: it is authorized as the operations it
 performs — `FLAG_CREATE` plus `FLAG_STATE_UPDATE` against the target environment — so a real
@@ -233,10 +251,49 @@ action that alters production behaviour must be added to the table.
 If a production environment in scope sets both `changeWindowStartHour` and
 `changeWindowEndHour`, an elevated action against it is only permitted when the current local
 hour is inside `[start, end)`. The window applies to **every** action rule B elevates, not just
-state changes.
+state changes — with exactly one exception, below.
 Windows may wrap past midnight (`start > end`, e.g. `22–06`). `start == end` (or an unset
 window) means **no restriction** — never a permanent lock-out. Time comes from an injectable
 `Clock` bean, so it is unit-testable.
+
+#### The one exception: revoking a production key skips the window
+
+`PermissionService.WINDOW_EXEMPT` is a `Set<Action>` containing exactly one member,
+`ENV_KEY_REVOKE_PRODUCTION`. `check()` still requires the elevated action (rule B is untouched —
+this is not a way around OWNER-only), but for an action in `WINDOW_EXEMPT` it does **not** also
+require the current hour to fall inside the environment's change window.
+
+**Why revocation and not the others.** Every other row in `PRODUCTION_ELEVATED` *grants or
+changes* what a production SDK can do — toggling a flag, archiving one, rotating a key, deleting
+an environment, minting a new key. The change window exists to keep those inside a reviewed,
+predictable maintenance slot. Revoking a key is the opposite kind of operation: it is
+**monotonically restrictive** — the set of things a caller can do after a revocation is a subset
+of what they could do before, never a superset. There is no attack the window prevents by
+delaying a revocation, and there is a very concrete cost to delaying one: a key leaked at 03:00
+has to be withdrawable at 03:00. Waiting for the next window is exactly the extra runway an
+attacker holding that key wants. Widening or clearing the window is itself gated behind
+`ENV_MANAGE_PROTECTION` (OWNER), so a strict, no-exceptions reading of rule D would leave **no**
+break-glass path for revocation at all outside the configured hours — which is worse than the
+narrow exemption.
+
+**Why rotation is deliberately not exempt.** `ENV_ROTATE_KEY_PRODUCTION` was considered and
+rejected for `WINDOW_EXEMPT`. Rotation *issues a new production credential* — that is a planned
+change with exactly the same shape as toggling a flag or archiving one, so it stays fully
+windowed. Collapsing rotation into "create + revoke" so it could ride the revoke exemption was
+also rejected (see the design spec): that would open a second door to the same operation under a
+different action name, and would smuggle rotation's credential-issuing half under revocation's
+break-glass reasoning, which does not apply to it.
+
+**This is the first exception to rule D**, and it is meant to stay singular: the rule's value
+comes from being uniform, so a future addition to `WINDOW_EXEMPT` needs the same property this one
+has — the action must be *incapable* of increasing what a production SDK can do — not merely
+"urgent" or "inconvenient to delay". The exemption is pinned by
+`PermissionServiceTest.ownerCanRevokeAProductionKeyOutsideTheChangeWindow`, which asserts an OWNER
+revoking a production key succeeds even when the clock is outside the window. Two companion tests
+guard the boundary: `ownerBlockedFromRotatingProductionKeyOutsideChangeWindow` confirms
+`ENV_ROTATE_KEY_PRODUCTION` stays fully windowed, and `theWindowExemptionDoesNotLeakToKeyCreation`
+confirms `ENV_KEY_CREATE_PRODUCTION` does too — the exemption is `ENV_KEY_REVOKE_PRODUCTION`
+specifically, not "key management" in general.
 
 ### End-to-end sequences
 
@@ -361,18 +418,20 @@ ADMIN can neither create nor destroy an OWNER-level grant.
 |---|:---:|:---:|:---:|
 | `*_READ` (FLAG/ENV/PROJECT) + `AUDIT_READ` | ✅ | ✅ | ✅ |
 | `FLAG_CREATE` `FLAG_UPDATE` `FLAG_ARCHIVE` `FLAG_STATE_UPDATE` | | ✅ | ✅ |
-| `ENV_CREATE` `ENV_UPDATE` `ENV_ROTATE_KEY` | | ✅ | ✅ |
+| `ENV_CREATE` `ENV_UPDATE` `ENV_ROTATE_KEY` `ENV_KEY_CREATE` `ENV_KEY_REVOKE` | | ✅ | ✅ |
 | `PROJECT_CREATE` `PROJECT_UPDATE` | | ✅ | ✅ |
 | `ORG_UPDATE` `MEMBER_INVITE` `MEMBER_MANAGE` | | ✅ | ✅ |
 | `GRANT_MANAGE` `ROLE_MANAGE` | | ✅ | ✅ |
 | `FLAG_DELETE` `ENV_DELETE` `PROJECT_DELETE` `ORG_DELETE` | | | ✅ |
 | `FLAG_STATE_UPDATE_PRODUCTION` `FLAG_ARCHIVE_PRODUCTION` | | | ✅ |
 | `ENV_ROTATE_KEY_PRODUCTION` `ENV_DELETE_PRODUCTION` | | | ✅ |
+| `ENV_KEY_CREATE_PRODUCTION` `ENV_KEY_REVOKE_PRODUCTION` | | | ✅ |
 | `ENV_MANAGE_PROTECTION` (edit env `type` / change window) | | | ✅ |
 
 This matrix preserves the pre-ABAC role behavior of every call site apart from production:
-toggling, archiving or rotating a key against a `PRODUCTION` environment now needs the
-OWNER-only elevated counterpart from the rule-B table.
+toggling, archiving, creating a key, revoking a key, or rotating a key against a `PRODUCTION`
+environment now needs the OWNER-only elevated counterpart from the rule-B table — except that
+`ENV_KEY_REVOKE_PRODUCTION` additionally skips the change window (rule D §4 above).
 
 ---
 
@@ -412,6 +471,22 @@ back through its edits.
 
 `POST`/`PUT /api/v1/environments/...` accept `type` (`DEVELOPMENT`/`STAGING`/`PRODUCTION`) and
 the optional `changeWindowStartHour` / `changeWindowEndHour` (0–23, validated).
+
+### API keys — `/api/v1/environments/{envId}/api-keys`
+
+The other place this PDP guards SDK-facing state, even though the keys themselves authenticate a
+separate, unrelated chain (see the scope note in §1).
+
+| Method | Path | Action | Effect |
+|---|---|---|---|
+| POST | `/api-keys` | `ENV_KEY_CREATE` (→ `_PRODUCTION` on a PRODUCTION environment) | mint a key, return the plaintext once |
+| GET | `/api-keys` | `ENV_READ` | list keys (paginated), never the plaintext or hash |
+| DELETE | `/api-keys/{keyId}` | `ENV_KEY_REVOKE` (→ `_PRODUCTION`, **window-exempt** — see rule D above) | soft-revoke (`revoked_at`) |
+| POST | `/api-keys/{keyId}/rotate` | `ENV_ROTATE_KEY` (→ `_PRODUCTION`, fully windowed) | mint a replacement, apply `graceHours` to the old key |
+
+`POST /api/v1/environments/{envId}/api-key/rotate` (the pre-lifecycle, environment-level route) is
+kept and authorizes the same way, but only resolves when the environment has exactly one active
+key; with zero or several it returns `409` naming the endpoint above instead of guessing.
 
 ---
 
@@ -486,10 +561,13 @@ their own:
 ## 11. Tests
 
 - `service/impl/PermissionServiceTest` — action matrix, effective-action resolution (org ∪
-  grant, built-in & custom), production capability (B/C) across **all four** elevated actions,
-  change window (D, incl. wrap, zero-width and the strictest-wins case for a project with two
-  production environments), the no-extra-query guarantee for non-production actions, **plus**
-  the retained `requireRole*` adapter cases including grant elevation.
+  grant, built-in & custom), production capability (B/C) across all six elevated actions
+  (including `ENV_KEY_CREATE`/`ENV_KEY_REVOKE`), change window (D, incl. wrap, zero-width and the
+  strictest-wins case for a project with two production environments), the no-extra-query
+  guarantee for non-production actions, **plus** the retained `requireRole*` adapter cases
+  including grant elevation. `ownerCanRevokeAProductionKeyOutsideTheChangeWindow` pins the rule-D
+  exemption; `ownerBlockedFromRotatingProductionKeyOutsideChangeWindow` and
+  `theWindowExemptionDoesNotLeakToKeyCreation` pin its boundary.
 - `service/impl/ProjectGrantServiceImplTest` — grant subset ceiling, tenant-membership
   requirement, cross-org custom role rejection.
 - `service/impl/CustomRoleServiceImplTest` — custom-role ceiling on create/update/delete.
@@ -499,7 +577,11 @@ their own:
 - `service/impl/OrganizationServiceImplTest` — invite ceiling and grant revocation on member
   removal, alongside develop's coverage.
 - `security/SecurityChainIntegrationTest` — `@SpringBootTest`; boots the full context and runs
-  migrations 001–011 and 013–017 on H2.
+  migrations 001–020 on H2 (via `db.changelog-master.xml`).
+- `migration/ApiKeyBackfillTest` — seeds a pre-`019` row via the test-only
+  `db.changelog-backfill-test.xml` fixture and asserts it survives migration `020`'s backfill with
+  its hash unchanged; the highest-consequence test in the API-key-lifecycle change, since getting
+  it wrong logs out every SDK in production.
 
 ---
 

@@ -9,9 +9,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup;
 
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.OrganizationRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
@@ -24,6 +27,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.web.context.WebApplicationContext;
 
 /**
@@ -45,7 +49,11 @@ import org.springframework.web.context.WebApplicationContext;
       "app.rate-limit.auth.capacity=2",
       "app.rate-limit.auth.refill-period=1m",
       "app.rate-limit.sdk.capacity=2",
-      "app.rate-limit.sdk.refill-period=1m"
+      "app.rate-limit.sdk.refill-period=1m",
+      // Deliberately above `sdk.capacity` so the per-key test below is never throttled by the
+      // per-IP filter that now runs in front of it.
+      "app.rate-limit.sdk-ip.capacity=10",
+      "app.rate-limit.sdk-ip.refill-period=1m"
     })
 @ActiveProfiles("test")
 class RateLimitIntegrationTest {
@@ -53,11 +61,13 @@ class RateLimitIntegrationTest {
   private static final String AUTH_LOGIN = "/api/v1/auth/login";
   private static final String SDK_ENDPOINT = "/api/v1/sdk/flags";
   private static final int CAPACITY = 2;
+  private static final int IP_CAPACITY = 10;
 
   @Autowired private WebApplicationContext webApplicationContext;
   @Autowired private OrganizationRepository organizationRepository;
   @Autowired private ProjectRepository projectRepository;
   @Autowired private EnvironmentRepository environmentRepository;
+  @Autowired private EnvironmentApiKeyRepository apiKeyRepository;
 
   private MockMvc mockMvc;
 
@@ -70,7 +80,7 @@ class RateLimitIntegrationTest {
 
   @Test
   void authLoginIsRateLimitedPerIpWith429AndRetryAfter() throws Exception {
-    String clientIp = "203.0.113." + (int) (UUID.randomUUID().getLeastSignificantBits() & 0xFF);
+    String clientIp = uniqueTestIp();
     String body = "{\"email\":\"nobody@example.com\",\"password\":\"whatever\"}";
 
     // First `capacity` requests are not rate-limited (they fail auth, but never with 429).
@@ -115,10 +125,12 @@ class RateLimitIntegrationTest {
 
     // First `capacity` requests pass the limiter (they may 500 on the unrelated H2 `key`
     // column quirk, but never 429).
+    String clientIp = uniqueTestIp();
+
     for (int i = 0; i < CAPACITY; i++) {
       int status =
           mockMvc
-              .perform(get(SDK_ENDPOINT).header("X-Environment-Key", apiKey))
+              .perform(get(SDK_ENDPOINT).header("X-Environment-Key", apiKey).with(from(clientIp)))
               .andReturn()
               .getResponse()
               .getStatus();
@@ -127,9 +139,67 @@ class RateLimitIntegrationTest {
 
     // The next request with the same key is throttled.
     mockMvc
-        .perform(get(SDK_ENDPOINT).header("X-Environment-Key", apiKey))
+        .perform(get(SDK_ENDPOINT).header("X-Environment-Key", apiKey).with(from(clientIp)))
         .andExpect(status().isTooManyRequests())
         .andExpect(header().exists("Retry-After"));
+  }
+
+  @Test
+  void sdkTrafficWithAnInvalidKeyIsRateLimitedPerIp() throws Exception {
+    String clientIp = uniqueTestIp();
+
+    // These never authenticate, so SdkRateLimitFilter (per environment id) can never see them:
+    // ApiKeyAuthenticationFilter short-circuits with 401 before it runs. Without a pre-auth
+    // per-IP filter an anonymous caller could probe keys without any ceiling at all.
+    for (int i = 0; i < IP_CAPACITY; i++) {
+      int status =
+          mockMvc
+              .perform(get(SDK_ENDPOINT).header("X-Environment-Key", "nope").with(from(clientIp)))
+              .andReturn()
+              .getResponse()
+              .getStatus();
+      assertThat(status).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    mockMvc
+        .perform(get(SDK_ENDPOINT).header("X-Environment-Key", "nope").with(from(clientIp)))
+        .andExpect(status().isTooManyRequests())
+        .andExpect(header().exists("Retry-After"));
+  }
+
+  @Test
+  void sdkTrafficWithNoKeyAtAllIsRateLimitedPerIp() throws Exception {
+    String clientIp = uniqueTestIp();
+
+    for (int i = 0; i < IP_CAPACITY; i++) {
+      int status =
+          mockMvc
+              .perform(get(SDK_ENDPOINT).with(from(clientIp)))
+              .andReturn()
+              .getResponse()
+              .getStatus();
+      assertThat(status).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    mockMvc.perform(get(SDK_ENDPOINT).with(from(clientIp))).andExpect(status().isTooManyRequests());
+  }
+
+  private static final AtomicInteger NEXT_TEST_IP = new AtomicInteger(1);
+
+  /**
+   * A source IP unique to one test method, so the shared in-memory buckets never collide. A counter
+   * rather than a random octet: three random picks from 256 collide ~1% of the time, and a shared
+   * bucket makes the invalid-key test see its 429 early.
+   */
+  private static String uniqueTestIp() {
+    return "203.0.113." + NEXT_TEST_IP.getAndIncrement();
+  }
+
+  private static RequestPostProcessor from(String clientIp) {
+    return r -> {
+      r.setRemoteAddr(clientIp);
+      return r;
+    };
   }
 
   /** Persists a minimal Org → Project → Environment chain and returns the environment's API key. */
@@ -144,11 +214,14 @@ class RateLimitIntegrationTest {
     // Store only the SHA-256 hash (issue #24); the plaintext key is what the SDK sends in the
     // header.
     String apiKey = "ratelimit-key-" + unique;
-    environmentRepository.save(
-        Environment.builder()
-            .project(project)
-            .name("env-" + unique)
-            .apiKeyHash(ApiKeyHasher.hash(apiKey))
+    Environment env =
+        environmentRepository.save(
+            Environment.builder().project(project).name("env-" + unique).build());
+    apiKeyRepository.save(
+        EnvironmentApiKey.builder()
+            .environment(env)
+            .name("default")
+            .keyHash(ApiKeyHasher.hash(apiKey))
             .build());
     return apiKey;
   }

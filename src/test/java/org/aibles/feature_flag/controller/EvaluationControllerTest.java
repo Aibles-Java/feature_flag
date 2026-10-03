@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.UUID;
 import org.aibles.feature_flag.controller.sdk.EvaluationController;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.dto.response.FlagEvaluationResponse;
@@ -44,18 +45,15 @@ class EvaluationControllerTest {
 
   private Environment testEnvironment() {
     Project project = Project.builder().id(UUID.randomUUID()).name("proj").build();
-    return Environment.builder()
-        .id(UUID.randomUUID())
-        .project(project)
-        .name("prod")
-        .apiKeyHash("test-key")
-        .build();
+    return Environment.builder().id(UUID.randomUUID()).project(project).name("prod").build();
   }
 
   // Sets request.userPrincipal so PrincipalMethodArgumentResolver resolves Authentication parameter
   private MockHttpServletRequestBuilder withAuth(
       MockHttpServletRequestBuilder builder, Environment env) {
-    ApiKeyAuthenticationToken auth = new ApiKeyAuthenticationToken(env);
+    EnvironmentApiKey key =
+        EnvironmentApiKey.builder().id(UUID.randomUUID()).environment(env).name("default").build();
+    ApiKeyAuthenticationToken auth = new ApiKeyAuthenticationToken(key);
     return builder.with(
         request -> {
           request.setUserPrincipal(auth);

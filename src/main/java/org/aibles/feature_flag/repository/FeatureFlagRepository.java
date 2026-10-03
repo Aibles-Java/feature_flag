@@ -9,6 +9,13 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface FeatureFlagRepository extends JpaRepository<FeatureFlag, UUID> {
+  /**
+   * Every flag in the project, archived included — used when a new environment backfills its
+   * FlagEnvironmentState rows. Archived flags need a row too, or unarchiving one later would
+   * resurrect the missing-state gap.
+   */
+  List<FeatureFlag> findAllByProjectId(UUID projectId);
+
   List<FeatureFlag> findAllByProjectIdAndArchivedFalse(UUID projectId);
 
   List<FeatureFlag> findAllByProjectIdAndArchivedTrue(UUID projectId);

@@ -16,7 +16,6 @@ import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
@@ -31,6 +30,7 @@ import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,6 +54,7 @@ class FeatureFlagServiceImplTest {
   @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
+  @Mock EvaluationCacheService evaluationCacheService;
   @Mock AuditService auditService;
 
   FeatureFlagServiceImpl service;
@@ -71,11 +72,11 @@ class FeatureFlagServiceImplTest {
             flagStateRepository,
             permissionService,
             eventPublisher,
+            evaluationCacheService,
             new FeatureFlagMetrics(new SimpleMeterRegistry()),
             auditService);
     Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
-    doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
     // updateState resolves the target Environment so the PDP can read its production attributes.
     when(environmentRepository.findById(any()))
         .thenAnswer(
@@ -87,10 +88,8 @@ class FeatureFlagServiceImplTest {
   void create_autoCreatesOneStateRowPerEnvironment() {
     UUID env1Id = UUID.randomUUID();
     UUID env2Id = UUID.randomUUID();
-    Environment env1 =
-        Environment.builder().id(env1Id).name("prod").project(project).apiKeyHash("k1").build();
-    Environment env2 =
-        Environment.builder().id(env2Id).name("staging").project(project).apiKeyHash("k2").build();
+    Environment env1 = Environment.builder().id(env1Id).name("prod").project(project).build();
+    Environment env2 = Environment.builder().id(env2Id).name("staging").project(project).build();
 
     when(featureFlagRepository.existsByProjectIdAndKey(projectId, "my-flag")).thenReturn(false);
     when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
@@ -120,6 +119,8 @@ class FeatureFlagServiceImplTest {
     List<UUID> savedEnvIds =
         captor.getAllValues().stream().map(s -> s.getEnvironment().getId()).toList();
     assertThat(savedEnvIds).containsExactlyInAnyOrder(env1Id, env2Id);
+    verify(evaluationCacheService).evictAfterCommit(env1Id);
+    verify(evaluationCacheService).evictAfterCommit(env2Id);
   }
 
   @Test
@@ -191,6 +192,7 @@ class FeatureFlagServiceImplTest {
   @Test
   void archive_setsArchivedTrue() {
     UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
     FeatureFlag flag =
         FeatureFlag.builder()
             .id(flagId)
@@ -200,16 +202,18 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
+    Environment env = Environment.builder().id(envId).name("prod").project(project).build();
 
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(featureFlagRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
+    when(environmentRepository.findAllByProjectId(projectId)).thenReturn(List.of(env));
     when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
 
     service.archive(flagId);
 
     assertThat(flag.isArchived()).isTrue();
     verify(featureFlagRepository).save(flag);
+    verify(evaluationCacheService).evictAfterCommit(envId);
 
     ArgumentCaptor<FlagArchivedEvent> captor = ArgumentCaptor.forClass(FlagArchivedEvent.class);
     verify(eventPublisher).publishEvent(captor.capture());
@@ -223,6 +227,7 @@ class FeatureFlagServiceImplTest {
   @Test
   void unarchive_setsArchivedFalse() {
     UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
     FeatureFlag flag =
         FeatureFlag.builder()
             .id(flagId)
@@ -232,13 +237,17 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(true)
             .build();
+    Environment env = Environment.builder().id(envId).name("prod").project(project).build();
 
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(featureFlagRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    when(environmentRepository.findAllByProjectId(projectId)).thenReturn(List.of(env));
+    when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
 
     service.unarchive(flagId);
 
     assertThat(flag.isArchived()).isFalse();
+    verify(evaluationCacheService).evictAfterCommit(envId);
 
     ArgumentCaptor<FlagArchivedEvent> captor = ArgumentCaptor.forClass(FlagArchivedEvent.class);
     verify(eventPublisher).publishEvent(captor.capture());
@@ -287,7 +296,7 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    Environment env = Environment.builder().id(envId).name("prod").apiKeyHash("k").build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
     FlagEnvironmentState state =
         FlagEnvironmentState.builder()
             .id(UUID.randomUUID())
@@ -349,7 +358,7 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    Environment env = Environment.builder().id(envId).name("prod").apiKeyHash("k").build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
     FlagEnvironmentState state =
         FlagEnvironmentState.builder()
             .id(UUID.randomUUID())
@@ -373,6 +382,7 @@ class FeatureFlagServiceImplTest {
     assertThat(result.getValue()).isEqualTo("true");
     assertThat(result.getRolloutPercent())
         .isEqualTo(50); // unchanged since request.rolloutPercent is null
+    verify(evaluationCacheService).evictAfterCommit(envId);
   }
 
   @Test
@@ -388,7 +398,7 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    Environment env = Environment.builder().id(envId).name("prod").apiKeyHash("k").build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
     FlagEnvironmentState state =
         FlagEnvironmentState.builder()
             .id(UUID.randomUUID())
@@ -436,7 +446,7 @@ class FeatureFlagServiceImplTest {
             .valueType(FlagValueType.BOOLEAN)
             .archived(false)
             .build();
-    Environment env = Environment.builder().id(envId).name("prod").apiKeyHash("k").build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
     FlagEnvironmentState state =
         FlagEnvironmentState.builder()
             .id(UUID.randomUUID())

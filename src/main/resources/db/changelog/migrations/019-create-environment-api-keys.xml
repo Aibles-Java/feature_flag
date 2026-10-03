@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Multiple SDK API keys per environment, each with its own expiry and revocation state.
+      Step 1 of 3 creates the table; the backfill and the drop of environments.api_key_hash
+      follow in the next task, so this changeset alone changes no behaviour.
+    -->
+
+    <changeSet id="019-1-create-environment-api-key" author="dev">
+        <createTable tableName="environment_api_key">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="environment_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_environment_api_key_environment"
+                             references="environments(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="name" type="VARCHAR(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="key_hash" type="VARCHAR(64)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_environment_api_key_hash"/>
+            </column>
+            <column name="key_prefix" type="VARCHAR(8)" defaultValue="">
+                <constraints nullable="false"/>
+            </column>
+            <column name="expires_at" type="TIMESTAMPTZ"/>
+            <column name="revoked_at" type="TIMESTAMPTZ"/>
+            <column name="last_used_at" type="TIMESTAMPTZ"/>
+            <!--
+              No FK to users(id): a deleted user must not take their environment's live SDK
+              credential down with them, and Liquibase's addForeignKeyConstraint SET NULL
+              behaviour is not expressible inline here. The column is advisory metadata.
+            -->
+            <column name="created_by" type="UUID"/>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createIndex tableName="environment_api_key" indexName="idx_environment_api_key_env">
+            <column name="environment_id"/>
+        </createIndex>
+
+        <rollback>
+            <dropTable tableName="environment_api_key"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

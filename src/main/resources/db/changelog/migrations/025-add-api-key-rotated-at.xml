@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Marks a key as already rotated, so it cannot be rotated a second time.
+
+      Without it, a key kept in service by a grace rotation stayed active and could be rotated
+      again, and each rotation pushed its expires_at another graceHours into the future and minted
+      one more active key. Repeating that kept an expiring (or leaked) key alive indefinitely and
+      took an environment past the 10-active-key cap. Rotation now stamps rotated_at on the key it
+      replaces and refuses a key that already has one.
+
+      Nullable, no default: existing keys have never been rotated through this path, so NULL is
+      the correct value for every current row and adding the column is metadata-only.
+    -->
+
+    <changeSet id="025-1-add-api-key-rotated-at" author="dev">
+        <addColumn tableName="environment_api_key">
+            <column name="rotated_at" type="TIMESTAMPTZ"/>
+        </addColumn>
+
+        <rollback>
+            <dropColumn tableName="environment_api_key" columnName="rotated_at"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

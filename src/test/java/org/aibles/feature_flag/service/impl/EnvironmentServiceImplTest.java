@@ -7,17 +7,23 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.aibles.feature_flag.config.ApiKeyProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
+import org.aibles.feature_flag.domain.entity.FeatureFlag;
+import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.AuditAction;
 import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.EnvType;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CreateEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.UpdateEnvironmentRequest;
 import org.aibles.feature_flag.dto.response.EnvironmentResponse;
@@ -25,8 +31,13 @@ import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
+import org.aibles.feature_flag.repository.FeatureFlagRepository;
+import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
+import org.aibles.feature_flag.service.EnvironmentApiKeyService;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,13 +56,24 @@ import org.springframework.data.domain.PageRequest;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class EnvironmentServiceImplTest {
 
+  private static final LocalDateTime NOW = LocalDateTime.of(2026, 9, 5, 12, 0);
+
   @Mock EnvironmentRepository environmentRepository;
+  @Mock EnvironmentApiKeyRepository apiKeyRepository;
   @Mock ProjectRepository projectRepository;
+  @Mock FeatureFlagRepository featureFlagRepository;
+  @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock PermissionService permissionService;
   @Mock ApplicationEventPublisher eventPublisher;
+  @Mock EvaluationCacheService evaluationCacheService;
   @Mock AuditService auditService;
 
   EnvironmentServiceImpl service;
+
+  // The legacy env-level rotate endpoint delegates to the real key service (task 5), wired here
+  // with the same mocked collaborators so side effects (revocation, the single event publish,
+  // the single audit row) are observable end-to-end rather than swallowed by a mock.
+  EnvironmentApiKeyService apiKeyService;
 
   UUID projectId = UUID.randomUUID();
   UUID envId = UUID.randomUUID();
@@ -60,24 +82,93 @@ class EnvironmentServiceImplTest {
 
   @BeforeEach
   void setUp() {
+    Clock clock =
+        Clock.fixed(NOW.atZone(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+    apiKeyService =
+        new EnvironmentApiKeyServiceImpl(
+            apiKeyRepository,
+            environmentRepository,
+            permissionService,
+            eventPublisher,
+            auditService,
+            clock,
+            new ApiKeyProperties(null, null));
     service =
         new EnvironmentServiceImpl(
             environmentRepository,
+            apiKeyRepository,
             projectRepository,
             permissionService,
-            eventPublisher,
-            auditService);
+            apiKeyService,
+            evaluationCacheService,
+            auditService,
+            clock,
+            featureFlagRepository,
+            flagStateRepository);
     Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
-    env =
-        Environment.builder()
-            .id(envId)
+    env = Environment.builder().id(envId).project(project).name("prod").build();
+    // Needed so the real apiKeyService (wired above) can round-trip a saved key back to its
+    // caller instead of getting null, the way JPA's save() behaves in practice.
+    when(apiKeyRepository.save(any(EnvironmentApiKey.class))).thenAnswer(inv -> inv.getArgument(0));
+  }
+
+  @Test
+  void create_backfillsAFlagStateForEveryFlagAlreadyInTheProject() {
+    // Mirror image of FeatureFlagServiceImpl.create(), which creates one state per existing
+    // environment. Without this, flags that predate the environment have no state row there:
+    // the SDK returns them as if they did not exist and the admin API cannot toggle them.
+    FeatureFlag active =
+        FeatureFlag.builder().id(UUID.randomUUID()).project(project).key("checkout-v2").build();
+    FeatureFlag archived =
+        FeatureFlag.builder()
+            .id(UUID.randomUUID())
             .project(project)
-            .name("prod")
-            .apiKeyHash(ApiKeyHasher.hash("old-key"))
+            .key("legacy-banner")
+            .archived(true)
             .build();
-    doNothing().when(permissionService).requireRoleForProject(any(), any(MemberRole[].class));
-    doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
+    when(featureFlagRepository.findAllByProjectId(projectId)).thenReturn(List.of(active, archived));
+    when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+    when(environmentRepository.existsByProjectIdAndName(projectId, "staging")).thenReturn(false);
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(i -> i.getArgument(0));
+
+    CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+    req.setProjectId(projectId);
+    req.setName("staging");
+
+    service.create(req);
+
+    ArgumentCaptor<FlagEnvironmentState> saved =
+        ArgumentCaptor.forClass(FlagEnvironmentState.class);
+    verify(flagStateRepository, times(2)).save(saved.capture());
+    assertThat(saved.getAllValues())
+        .extracting(s -> s.getFeatureFlag().getKey())
+        // Archived flags get a row too: unarchiving one later must not resurrect the gap.
+        .containsExactlyInAnyOrder("checkout-v2", "legacy-banner");
+    assertThat(saved.getAllValues())
+        .allSatisfy(
+            s -> {
+              assertThat(s.getEnvironment().getName()).isEqualTo("staging");
+              // A brand new environment starts with everything off, never inheriting another
+              // environment's state — that is what clone() is for.
+              assertThat(s.isEnabled()).isFalse();
+            });
+  }
+
+  @Test
+  void create_savesNoFlagState_whenTheProjectHasNoFlagsYet() {
+    when(featureFlagRepository.findAllByProjectId(projectId)).thenReturn(List.of());
+    when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+    when(environmentRepository.existsByProjectIdAndName(projectId, "staging")).thenReturn(false);
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(i -> i.getArgument(0));
+
+    CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+    req.setProjectId(projectId);
+    req.setName("staging");
+
+    service.create(req);
+
+    verify(flagStateRepository, never()).save(any());
   }
 
   @Test
@@ -106,9 +197,9 @@ class EnvironmentServiceImplTest {
 
     assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
 
-    ArgumentCaptor<Environment> saved = ArgumentCaptor.forClass(Environment.class);
-    verify(environmentRepository).save(saved.capture());
-    assertThat(saved.getValue().getApiKeyHash())
+    ArgumentCaptor<EnvironmentApiKey> saved = ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository).save(saved.capture());
+    assertThat(saved.getValue().getKeyHash())
         .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
         .isNotEqualTo(response.getApiKey());
   }
@@ -126,21 +217,40 @@ class EnvironmentServiceImplTest {
   }
 
   @Test
-  void rotate_replacesHashAndReturnsNewPlaintextOnce() {
+  void legacyRotateRotatesTheSingleActiveKey() {
     when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
-    when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
-
+    EnvironmentApiKey theOnlyKey =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(env)
+            .name("default")
+            .keyHash(ApiKeyHasher.hash("old-key"))
+            .build();
+    when(apiKeyRepository.findActiveByEnvironmentId(eq(envId), any()))
+        .thenReturn(List.of(theOnlyKey));
+    when(apiKeyRepository.findById(theOnlyKey.getId())).thenReturn(Optional.of(theOnlyKey));
     when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
 
     EnvironmentSecretResponse response = service.rotateApiKey(envId);
 
-    assertThat(response.getApiKey()).matches("[0-9a-f]{64}");
-    assertThat(env.getApiKeyHash())
+    // The old key is now revoked (graceHours=0, today's hard-cutover behaviour), so it can no
+    // longer authenticate.
+    assertThat(theOnlyKey.getRevokedAt()).isEqualTo(NOW);
+    assertThat(response.getApiKey()).isNotNull();
+
+    // Rotation saves the fresh key first, then the updated old key — the fresh one is the
+    // first save() call.
+    ArgumentCaptor<EnvironmentApiKey> newKeyCaptor =
+        ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository, times(2)).save(newKeyCaptor.capture());
+    assertThat(newKeyCaptor.getAllValues().get(0).getKeyHash())
         .isEqualTo(ApiKeyHasher.hash(response.getApiKey()))
         .isNotEqualTo(ApiKeyHasher.hash("old-key"));
 
+    // apiKeyService.rotate() publishes the event and audits the rotation itself — the legacy
+    // endpoint must not do so a second time.
     ArgumentCaptor<ApiKeyRotatedEvent> captor = ArgumentCaptor.forClass(ApiKeyRotatedEvent.class);
-    verify(eventPublisher).publishEvent(captor.capture());
+    verify(eventPublisher, times(1)).publishEvent(captor.capture());
     ApiKeyRotatedEvent event = captor.getValue();
     assertThat(event.environmentName()).isEqualTo("prod");
     assertThat(event.projectName()).isEqualTo("proj");
@@ -148,14 +258,121 @@ class EnvironmentServiceImplTest {
 
     // Security: the rotation is audited as an event only — the key must never reach the audit row
     // (before/after are both null).
-    verify(auditService)
+    verify(auditService, times(1))
         .record(
             eq(AuditEntityType.API_KEY),
-            eq(envId),
+            any(),
             eq(AuditAction.ROTATE_API_KEY),
             any(),
             isNull(),
             isNull());
+  }
+
+  @Test
+  void legacyRotateGivesTheFreshKeyAFullLifetimeOfTheSameLength() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    EnvironmentApiKey theOnlyKey =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(env)
+            .name("default")
+            .keyHash(ApiKeyHasher.hash("old-key"))
+            .createdAt(NOW.minusDays(83))
+            .expiresAt(NOW.plusDays(7))
+            .build();
+    when(apiKeyRepository.findActiveByEnvironmentId(eq(envId), any()))
+        .thenReturn(List.of(theOnlyKey));
+    when(apiKeyRepository.findById(theOnlyKey.getId())).thenReturn(Optional.of(theOnlyKey));
+    when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
+
+    service.rotateApiKey(envId);
+
+    ArgumentCaptor<EnvironmentApiKey> captor = ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository, times(2)).save(captor.capture());
+    assertThat(captor.getAllValues().get(0).getExpiresAt()).isEqualTo(NOW.plusDays(90));
+  }
+
+  @Test
+  void legacyRotateRefusesWhenTheEnvironmentHasSeveralActiveKeys() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    EnvironmentApiKey keyA =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(env)
+            .name("a")
+            .keyHash(ApiKeyHasher.hash("a"))
+            .build();
+    EnvironmentApiKey keyB =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(env)
+            .name("b")
+            .keyHash(ApiKeyHasher.hash("b"))
+            .build();
+    when(apiKeyRepository.findActiveByEnvironmentId(eq(envId), any()))
+        .thenReturn(List.of(keyA, keyB));
+
+    assertThatThrownBy(() -> service.rotateApiKey(envId))
+        .isInstanceOf(DuplicateResourceException.class)
+        .hasMessageContaining("/api-keys/{keyId}/rotate");
+    verify(eventPublisher, never()).publishEvent(any());
+  }
+
+  @Test
+  void legacyRotateRefusesWhenTheEnvironmentHasNoActiveKey() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    when(apiKeyRepository.findActiveByEnvironmentId(eq(envId), any())).thenReturn(List.of());
+
+    assertThatThrownBy(() -> service.rotateApiKey(envId))
+        .isInstanceOf(DuplicateResourceException.class);
+    verify(eventPublisher, never()).publishEvent(any());
+  }
+
+  @Test
+  void legacyRotateChecksEnvRotateKeyBeforeRevealingAnything() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    doThrow(new org.aibles.feature_flag.exception.UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ENV_ROTATE_KEY), any());
+
+    assertThatThrownBy(() -> service.rotateApiKey(envId))
+        .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class);
+
+    // Asserting only the exception type would pass against code that queried first and threw
+    // afterwards — the actual bug. An unauthorized caller must not learn whether this
+    // environment has any active keys at all.
+    verify(apiKeyRepository, never()).findActiveByEnvironmentId(any(), any());
+  }
+
+  @Test
+  void legacyRotateChecksEnvRotateKeyBeforeRevealingTheActiveKeyCount() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    EnvironmentApiKey keyA =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(env)
+            .name("a")
+            .keyHash(ApiKeyHasher.hash("a"))
+            .build();
+    EnvironmentApiKey keyB =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(env)
+            .name("b")
+            .keyHash(ApiKeyHasher.hash("b"))
+            .build();
+    when(apiKeyRepository.findActiveByEnvironmentId(eq(envId), any()))
+        .thenReturn(List.of(keyA, keyB));
+    doThrow(new org.aibles.feature_flag.exception.UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ENV_ROTATE_KEY), any());
+
+    // Even though the environment actually has several active keys, an unauthorized caller must
+    // get 403, never the 409 that would disclose the count.
+    assertThatThrownBy(() -> service.rotateApiKey(envId))
+        .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class)
+        .isNotInstanceOf(DuplicateResourceException.class);
+    verify(apiKeyRepository, never()).findActiveByEnvironmentId(any(), any());
   }
 
   @Test
@@ -191,6 +408,7 @@ class EnvironmentServiceImplTest {
     service.delete(envId);
 
     verify(environmentRepository).deleteById(envId);
+    verify(evaluationCacheService).evictAfterCommit(envId);
   }
 
   // --- ABAC: protection attributes are OWNER-only (rules B/D cannot be stripped by an ADMIN) ---
@@ -202,7 +420,6 @@ class EnvironmentServiceImplTest {
             .project(project)
             .name("prod")
             .type(EnvType.PRODUCTION)
-            .apiKeyHash(ApiKeyHasher.hash("old-key"))
             .build();
     when(environmentRepository.findById(envId)).thenReturn(Optional.of(prod));
     return prod;
@@ -240,6 +457,22 @@ class EnvironmentServiceImplTest {
   }
 
   @Test
+  void update_changingChangeWindowTimezone_requiresManageProtection() {
+    productionEnv();
+    doThrow(new org.aibles.feature_flag.exception.UnauthorizedException("nope"))
+        .when(permissionService)
+        .check(eq(Action.ENV_MANAGE_PROTECTION), any());
+
+    // Hours untouched: shifting only the zone still moves when the window is open.
+    UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+    req.setChangeWindowTimezone("Pacific/Kiritimati");
+
+    assertThatThrownBy(() -> service.update(envId, req))
+        .isInstanceOf(org.aibles.feature_flag.exception.UnauthorizedException.class);
+    verify(environmentRepository, never()).save(any());
+  }
+
+  @Test
   void update_nonProtectionChange_doesNotRequireManageProtection() {
     productionEnv();
     when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -259,15 +492,28 @@ class EnvironmentServiceImplTest {
   @Test
   void rotate_passesTheEnvironmentToThePdpSoProductionRulesApply() {
     Environment prod = productionEnv();
-    when(environmentRepository.save(any(Environment.class))).thenAnswer(inv -> inv.getArgument(0));
+    EnvironmentApiKey theOnlyKey =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(prod)
+            .name("default")
+            .keyHash(ApiKeyHasher.hash("old-key"))
+            .build();
+    when(apiKeyRepository.findActiveByEnvironmentId(eq(envId), any()))
+        .thenReturn(List.of(theOnlyKey));
+    when(apiKeyRepository.findById(theOnlyKey.getId())).thenReturn(Optional.of(theOnlyKey));
     when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
 
     service.rotateApiKey(envId);
 
+    // Checked twice by design: once in the legacy endpoint before it reveals the active-key
+    // count, again inside apiKeyService.rotate() on the happy path. Both must carry the
+    // environment, not just the project.
     ArgumentCaptor<PermissionService.ResourceRef> captor =
         ArgumentCaptor.forClass(PermissionService.ResourceRef.class);
-    verify(permissionService).check(eq(Action.ENV_ROTATE_KEY), captor.capture());
-    assertThat(captor.getValue().environment()).isSameAs(prod);
+    verify(permissionService, times(2)).check(eq(Action.ENV_ROTATE_KEY), captor.capture());
+    assertThat(captor.getAllValues())
+        .allSatisfy(ref -> assertThat(ref.environment()).isSameAs(prod));
   }
 
   @Test

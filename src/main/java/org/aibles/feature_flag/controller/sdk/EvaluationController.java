@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.dto.response.FlagEvaluationResponse;
 import org.aibles.feature_flag.service.EvaluationService;
 import org.springframework.security.core.Authentication;
@@ -34,7 +35,7 @@ public class EvaluationController {
   public List<FlagEvaluationResponse> getAllFlags(
       Authentication authentication,
       @Parameter(description = IDENTIFIER_DOC) @RequestParam(required = false) String identifier) {
-    Environment env = (Environment) authentication.getPrincipal();
+    Environment env = ((EnvironmentApiKey) authentication.getPrincipal()).getEnvironment();
     return evaluationService.getAllFlags(env, identifier);
   }
 
@@ -43,7 +44,7 @@ public class EvaluationController {
       Authentication authentication,
       @PathVariable String flagKey,
       @Parameter(description = IDENTIFIER_DOC) @RequestParam(required = false) String identifier) {
-    Environment env = (Environment) authentication.getPrincipal();
+    Environment env = ((EnvironmentApiKey) authentication.getPrincipal()).getEnvironment();
     return evaluationService.getFlag(env, flagKey, identifier);
   }
 }

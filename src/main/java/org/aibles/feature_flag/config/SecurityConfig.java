@@ -1,9 +1,10 @@
 package org.aibles.feature_flag.config;
 
+import java.time.Clock;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
-import org.aibles.feature_flag.repository.EnvironmentRepository;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.security.ApiKeyAuthenticationFilter;
 import org.aibles.feature_flag.security.CustomUserDetailsService;
 import org.aibles.feature_flag.security.JwtAuthenticationFilter;
@@ -12,6 +13,7 @@ import org.aibles.feature_flag.security.ProblemDetailAuthenticationEntryPoint;
 import org.aibles.feature_flag.security.ratelimit.AuthRateLimitFilter;
 import org.aibles.feature_flag.security.ratelimit.RateLimitProperties;
 import org.aibles.feature_flag.security.ratelimit.RateLimitService;
+import org.aibles.feature_flag.security.ratelimit.SdkIpRateLimitFilter;
 import org.aibles.feature_flag.security.ratelimit.SdkRateLimitFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -34,6 +36,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -47,9 +50,10 @@ public class SecurityConfig {
 
   private final JwtTokenProvider jwtTokenProvider;
   private final CustomUserDetailsService userDetailsService;
-  private final EnvironmentRepository environmentRepository;
+  private final EnvironmentApiKeyRepository apiKeyRepository;
   private final RateLimitService rateLimitService;
   private final FeatureFlagMetrics metrics;
+  private final Clock clock;
 
   /**
    * Allowed CORS origins for the browser SPA, supplied as a comma-separated list. Externalized so
@@ -126,7 +130,8 @@ public class SecurityConfig {
   @Order(1)
   public SecurityFilterChain sdkFilterChain(HttpSecurity http) throws Exception {
     ApiKeyAuthenticationFilter apiKeyFilter =
-        new ApiKeyAuthenticationFilter(environmentRepository, metrics);
+        new ApiKeyAuthenticationFilter(apiKeyRepository, metrics, clock);
+    SdkIpRateLimitFilter sdkIpRateLimitFilter = new SdkIpRateLimitFilter(rateLimitService);
     SdkRateLimitFilter sdkRateLimitFilter = new SdkRateLimitFilter(rateLimitService);
 
     http.securityMatcher("/api/v1/sdk/**")
@@ -134,9 +139,16 @@ public class SecurityConfig {
         .cors(cors -> cors.configurationSource(corsConfigurationSource()))
         .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+        // Per-IP throttle, anchored one slot after the standard LogoutFilter so it lands strictly
+        // before apiKeyFilter's UsernamePasswordAuthenticationFilter-1 slot. It must run BEFORE
+        // authentication: apiKeyFilter short-circuits a bad key with 401 without calling
+        // doFilter, so anything ordered after it never sees a failed attempt. Anchoring directly
+        // on apiKeyFilter is not possible — a custom filter has no registered order.
+        .addFilterAfter(sdkIpRateLimitFilter, LogoutFilter.class)
         .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
         // Anchor after the standard UsernamePasswordAuthenticationFilter, which sits after
-        // apiKeyFilter — so the Environment principal is already resolved when we key the limiter.
+        // apiKeyFilter — so the EnvironmentApiKey principal is already resolved when we key the
+        // limiter.
         .addFilterAfter(sdkRateLimitFilter, UsernamePasswordAuthenticationFilter.class);
 
     return http.build();

@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.Environment;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
@@ -25,7 +26,6 @@ import org.aibles.feature_flag.domain.enums.AuditEntityType;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.domain.enums.ImportConflictStrategy;
 import org.aibles.feature_flag.domain.enums.ImportOutcome;
-import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.aibles.feature_flag.dto.request.CloneEnvironmentRequest;
 import org.aibles.feature_flag.dto.request.ImportEnvironmentRequest;
 import org.aibles.feature_flag.dto.response.EnvironmentSecretResponse;
@@ -35,9 +35,11 @@ import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.InvalidRequestException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
+import org.aibles.feature_flag.repository.EnvironmentApiKeyRepository;
 import org.aibles.feature_flag.repository.EnvironmentRepository;
 import org.aibles.feature_flag.repository.FeatureFlagRepository;
 import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
+import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.ApiKeyHasher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,10 +55,12 @@ import org.mockito.quality.Strictness;
 class EnvironmentTransferServiceImplTest {
 
   @Mock EnvironmentRepository environmentRepository;
+  @Mock EnvironmentApiKeyRepository apiKeyRepository;
   @Mock FeatureFlagRepository featureFlagRepository;
   @Mock FlagEnvironmentStateRepository flagStateRepository;
   @Mock PermissionService permissionService;
   @Mock AuditService auditService;
+  @Mock EvaluationCacheService evaluationCacheService;
 
   EnvironmentTransferServiceImpl service;
 
@@ -83,27 +87,17 @@ class EnvironmentTransferServiceImplTest {
     service =
         new EnvironmentTransferServiceImpl(
             environmentRepository,
+            apiKeyRepository,
             featureFlagRepository,
             flagStateRepository,
             permissionService,
-            auditService);
+            auditService,
+            evaluationCacheService);
 
     Organization org = Organization.builder().id(orgId).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
-    sourceEnv =
-        Environment.builder()
-            .id(sourceEnvId)
-            .project(project)
-            .name("production")
-            .apiKeyHash(ApiKeyHasher.hash("source-key"))
-            .build();
-    targetEnv =
-        Environment.builder()
-            .id(targetEnvId)
-            .project(project)
-            .name("staging")
-            .apiKeyHash(ApiKeyHasher.hash("target-key"))
-            .build();
+    sourceEnv = Environment.builder().id(sourceEnvId).project(project).name("production").build();
+    targetEnv = Environment.builder().id(targetEnvId).project(project).name("staging").build();
 
     boolFlag = flag("checkout-v2", "Checkout v2", FlagValueType.BOOLEAN, false);
     stringFlag = flag("banner-text", "Banner text", FlagValueType.STRING, false);
@@ -129,13 +123,22 @@ class EnvironmentTransferServiceImplTest {
             });
     when(flagStateRepository.save(any(FlagEnvironmentState.class)))
         .thenAnswer(inv -> inv.getArgument(0));
-    doNothing().when(permissionService).requireRoleForEnvironment(any(), any(MemberRole[].class));
   }
 
   // ---------------------------------------------------------------- clone
 
   @Test
   void clone_copiesEveryStateAndMintsAFreshApiKey() {
+    // A real key fixture for the source, so "the clone's key differs from the source's" is
+    // actually exercised rather than merely holding true because nothing compares them.
+    EnvironmentApiKey sourceKey =
+        EnvironmentApiKey.builder()
+            .id(UUID.randomUUID())
+            .environment(sourceEnv)
+            .name("default")
+            .keyHash(ApiKeyHasher.hash("source-environment-plaintext-key"))
+            .build();
+
     when(flagStateRepository.findAllByEnvironmentIdOrderByFlagKey(sourceEnvId))
         .thenReturn(
             List.of(
@@ -155,9 +158,16 @@ class EnvironmentTransferServiceImplTest {
     ArgumentCaptor<Environment> envCaptor = ArgumentCaptor.forClass(Environment.class);
     verify(environmentRepository).save(envCaptor.capture());
     Environment created = envCaptor.getValue();
-    // Fresh key: hashed, never copied from the source, and never returned in hashed form.
-    assertThat(created.getApiKeyHash()).isEqualTo(ApiKeyHasher.hash(response.getApiKey()));
-    assertThat(created.getApiKeyHash()).isNotEqualTo(sourceEnv.getApiKeyHash());
+
+    ArgumentCaptor<EnvironmentApiKey> keyCaptor = ArgumentCaptor.forClass(EnvironmentApiKey.class);
+    verify(apiKeyRepository).save(keyCaptor.capture());
+    EnvironmentApiKey mintedKey = keyCaptor.getValue();
+    // Fresh key: hashed, minted for the clone itself (never the source), never returned in hashed
+    // form. verify(environmentRepository, never()) on the source would be redundant — the source
+    // is only ever read, never saved, in this method.
+    assertThat(mintedKey.getEnvironment()).isSameAs(created);
+    assertThat(mintedKey.getKeyHash()).isEqualTo(ApiKeyHasher.hash(response.getApiKey()));
+    assertThat(mintedKey.getKeyHash()).isNotEqualTo(sourceKey.getKeyHash());
 
     ArgumentCaptor<FlagEnvironmentState> stateCaptor =
         ArgumentCaptor.forClass(FlagEnvironmentState.class);
@@ -213,8 +223,10 @@ class EnvironmentTransferServiceImplTest {
 
     service.clone(sourceEnvId, request);
 
-    verify(permissionService)
-        .requireRoleForEnvironment(sourceEnvId, MemberRole.OWNER, MemberRole.ADMIN);
+    // Two capabilities, asked separately: export the source (a clone copies every flag state, so
+    // ENV_READ alone would let it stand in for a denied export), create the copy.
+    verify(permissionService).check(eq(Action.ENV_EXPORT), any());
+    verify(permissionService).check(eq(Action.ENV_CREATE), any());
   }
 
   @Test
@@ -255,8 +267,8 @@ class EnvironmentTransferServiceImplTest {
         .containsExactly(
             tuple("banner-text", false, true, "hello", 30),
             tuple("legacy-cart", true, false, null, 100));
-    verify(permissionService)
-        .requireRoleForEnvironment(sourceEnvId, MemberRole.OWNER, MemberRole.ADMIN);
+    // ENV_EXPORT, not ENV_READ: an export dumps every flag state, and ENV_READ reaches VIEWER.
+    verify(permissionService).check(eq(Action.ENV_EXPORT), any());
   }
 
   /**
@@ -329,6 +341,7 @@ class EnvironmentTransferServiceImplTest {
     verify(flagStateRepository, never()).save(any());
     verify(featureFlagRepository, never()).save(any());
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
+    verify(evaluationCacheService, never()).evictAfterCommit(any());
     assertThat(targetStates.get(0).isEnabled()).isFalse();
   }
 
@@ -411,6 +424,22 @@ class EnvironmentTransferServiceImplTest {
   }
 
   @Test
+  void import_evictsTheEvaluationCacheOfEveryEnvironmentInTheProject() {
+    // A created flag also writes a default state row into each sibling environment, so evicting
+    // only the target would leave the siblings' SDK responses missing the flag until the TTL.
+    FlagEnvironmentState existing = state(stringFlag, targetEnv, false, "old", 100);
+    stubExistingFlags(stringFlag);
+    stubTargetStates(List.of(existing));
+
+    service.importSnapshot(
+        targetEnvId,
+        importRequest(ImportConflictStrategy.OVERWRITE, entry(stringFlag, true, "new", 25)));
+
+    verify(evaluationCacheService).evictAfterCommit(targetEnvId);
+    verify(evaluationCacheService).evictAfterCommit(sourceEnvId);
+  }
+
+  @Test
   void import_reportsUnchangedWhenStateAlreadyMatches() {
     FlagEnvironmentState existing = state(stringFlag, targetEnv, true, "same", 40);
     stubExistingFlags(stringFlag);
@@ -423,8 +452,9 @@ class EnvironmentTransferServiceImplTest {
 
     assertThat(result.getSummary().getUnchanged()).isEqualTo(1);
     verify(flagStateRepository, never()).save(any());
-    // Nothing changed, so there is nothing to audit.
+    // Nothing changed, so there is nothing to audit — and no cached snapshot to invalidate.
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
+    verify(evaluationCacheService, never()).evictAfterCommit(any());
   }
 
   @Test
@@ -533,11 +563,10 @@ class EnvironmentTransferServiceImplTest {
     stubExistingFlags();
     service.importSnapshot(targetEnvId, importRequest(ImportConflictStrategy.SKIP));
 
-    // The pre-ABAC adapter named roles, which left the production rules unreachable; import is now
-    // authorized as the operations it actually performs.
+    // Authorized as the operations it actually performs, so the production rules can see them.
+    // The adapter this used to assert against no longer exists.
     verify(permissionService).check(eq(Action.FLAG_CREATE), any());
     verify(permissionService).check(eq(Action.FLAG_STATE_UPDATE), any());
-    verify(permissionService, never()).requireRoleForEnvironment(any(), any(MemberRole[].class));
   }
 
   // --------------------------------------------------------------- helpers

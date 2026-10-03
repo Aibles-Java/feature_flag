@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
@@ -17,6 +18,7 @@ import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.WebhookSubscription;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.domain.enums.WebhookEventType;
+import org.aibles.feature_flag.notification.event.ApiKeyExpiringEvent;
 import org.aibles.feature_flag.notification.event.ApiKeyRotatedEvent;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
 import org.aibles.feature_flag.notification.event.FlagCreatedEvent;
@@ -232,5 +234,38 @@ class WebhookDispatcherTest {
         new FlagCreatedEvent(null, "k", "n", FlagValueType.BOOLEAN, "dev@example.com"));
 
     verifyNoInteractions(sender);
+  }
+
+  @Test
+  @DisplayName("an API-key-expiring event goes only to the key's environment and carries no secret")
+  void apiKeyExpiringIsEnvironmentScopedAndCarriesNoSecret() {
+    WebhookSubscription sub = subscription(envId, WebhookEventType.API_KEY_EXPIRING);
+    when(subscriptionRepository.findAllByEnvironmentIdAndEnabledTrue(envId))
+        .thenReturn(List.of(sub));
+
+    dispatcher.onApiKeyExpiring(
+        new ApiKeyExpiringEvent(
+            envId,
+            "production",
+            "web",
+            UUID.randomUUID(),
+            "nightly-batch",
+            "a3f9c1d2",
+            LocalDateTime.of(2026, 4, 1, 0, 0),
+            null,
+            7));
+
+    verify(sender)
+        .deliver(
+            eq(sub),
+            org.mockito.ArgumentMatchers.argThat(
+                payload ->
+                    payload.event() == WebhookEventType.API_KEY_EXPIRING
+                        && payload.environmentId().equals(envId.toString())
+                        && "nightly-batch".equals(payload.data().get("keyName"))
+                        && Long.valueOf(7).equals(payload.data().get("daysLeft"))
+                        && !payload.data().containsKey("apiKey")
+                        && !payload.data().containsKey("keyHash")));
+    verify(environmentRepository, never()).findAllByProjectId(any());
   }
 }

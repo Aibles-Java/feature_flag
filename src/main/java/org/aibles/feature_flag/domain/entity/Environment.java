@@ -33,14 +33,6 @@ public class Environment {
   @Column(columnDefinition = "TEXT")
   private String description;
 
-  /** SHA-256 hash (lowercase hex) of the SDK API key. The plaintext is never stored. */
-  @Column(name = "api_key_hash", nullable = false, unique = true, length = 64)
-  private String apiKeyHash;
-
-  /** Last time this key successfully authenticated an SDK request (audit). Coarse — see filter. */
-  @Column(name = "last_used_at")
-  private LocalDateTime lastUsedAt;
-
   @Enumerated(EnumType.STRING)
   @Column(nullable = false, length = 20)
   @Builder.Default
@@ -51,6 +43,17 @@ public class Environment {
 
   @Column(name = "change_window_end_hour")
   private Integer changeWindowEndHour;
+
+  /**
+   * IANA zone the change window hours are read in, e.g. {@code Asia/Ho_Chi_Minh}.
+   *
+   * <p>Null means the server's own zone, which is what every window meant before this column
+   * existed. Storing the zone rather than converting the hours to UTC keeps the window correct
+   * across daylight saving: "09:00 to 17:00 local" stays those local hours all year, where fixed
+   * UTC hours would drift by one twice a year.
+   */
+  @Column(name = "change_window_timezone", length = 64)
+  private String changeWindowTimezone;
 
   @CreationTimestamp
   @Column(name = "created_at", nullable = false, updatable = false)

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Expiry warnings for SDK API keys (docs/superpowers/specs/2026-09-14-api-key-default-expiry-
+      and-warnings-design.md). Numbered 023, not 021: 021 and 022 belong to
+      feature/invite-member-by-email and have already run against shared databases.
+    -->
+
+    <changeSet id="023-1-add-api-key-expiry-notice" author="dev">
+        <addColumn tableName="environment_api_key">
+            <!-- Smallest warning threshold, in days, already sent for this key. NULL = none yet. -->
+            <column name="expiry_notice_sent_days" type="INTEGER"/>
+        </addColumn>
+
+        <!-- The daily scan filters on expires_at; 019 indexed only environment_id. -->
+        <createIndex tableName="environment_api_key" indexName="idx_environment_api_key_expires_at">
+            <column name="expires_at"/>
+        </createIndex>
+
+        <rollback>
+            <dropIndex tableName="environment_api_key" indexName="idx_environment_api_key_expires_at"/>
+            <dropColumn tableName="environment_api_key" columnName="expiry_notice_sent_days"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
