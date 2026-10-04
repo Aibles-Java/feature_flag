@@ -68,4 +68,27 @@ class GlobalExceptionHandlerTest {
         .doesNotContain("some-id");
     assertThat(problem.getInstance()).hasToString("/api/v1/flags/f/environments/e");
   }
+
+  /** Resolves through Spring's real @ExceptionHandler dispatch, so removing the mapping fails. */
+  @Test
+  void optimisticLockFailureThrownFromControllerIsServedAs409NotCatchAll500() throws Exception {
+    org.springframework.test.web.servlet.MockMvc mvc =
+        org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(
+                new ThrowingController())
+            .setControllerAdvice(handler)
+            .build();
+
+    mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/boom"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status()
+                .isConflict());
+  }
+
+  @org.springframework.web.bind.annotation.RestController
+  static class ThrowingController {
+    @org.springframework.web.bind.annotation.GetMapping("/boom")
+    String boom() {
+      throw new ObjectOptimisticLockingFailureException("FlagEnvironmentState", "some-id");
+    }
+  }
 }

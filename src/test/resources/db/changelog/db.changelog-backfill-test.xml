@@ -23,5 +23,6 @@
     <include file="db/changelog/migrations/024-backfill-missing-flag-environment-states.xml"/>
     <include file="db/changelog/migrations/023-add-api-key-expiry-notice.xml"/>
     <include file="db/changelog/migrations/025-add-api-key-rotated-at.xml"/>
+    <include file="db/changelog/migrations/019-add-flag-state-version.xml"/>
 
 </databaseChangeLog>
