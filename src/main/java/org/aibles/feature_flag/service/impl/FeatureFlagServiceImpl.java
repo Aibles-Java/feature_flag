@@ -3,6 +3,7 @@ package org.aibles.feature_flag.service.impl;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.aibles.feature_flag.config.FlagValueProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
@@ -48,6 +49,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   private final EvaluationCacheService evaluationCacheService;
   private final FeatureFlagMetrics metrics;
   private final AuditService auditService;
+  private final FlagValueProperties flagValueProperties;
 
   @Override
   @Transactional
@@ -233,6 +235,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             .orElseThrow(
                 () -> new ResourceNotFoundException("Flag state not found for this environment"));
 
+    FlagValueValidator.validateLength(request.getValue(), flagValueProperties.maxLength());
     FlagValueValidator.validate(flag.getValueType(), request.getValue());
 
     boolean previousEnabled = state.isEnabled();

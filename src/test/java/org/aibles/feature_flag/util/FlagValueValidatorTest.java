@@ -1,5 +1,6 @@
 package org.aibles.feature_flag.util;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -175,5 +176,26 @@ class FlagValueValidatorTest {
     org.assertj.core.api.Assertions.assertThat(
             FlagValueValidator.isValid(FlagValueType.BOOLEAN, "true"))
         .isTrue();
+  }
+
+  // ---- S-0.5 (F19 length part, D-10): characters, not bytes ----
+
+  @Test
+  void validateLength_boundary() {
+    assertThatCode(() -> FlagValueValidator.validateLength("a".repeat(8192), 8192))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> FlagValueValidator.validateLength("a".repeat(8193), 8192))
+        .isInstanceOf(InvalidRequestException.class)
+        .hasMessageContaining("8192")
+        .hasMessageNotContaining("aaaa");
+    assertThatCode(() -> FlagValueValidator.validateLength(null, 8192)).doesNotThrowAnyException();
+  }
+
+  @Test
+  void length_countsCharactersNotBytes() {
+    // 8192 two-byte characters = 16384 bytes, still accepted.
+    String multiByte = "\u00e9".repeat(8192);
+    assertThat(FlagValueValidator.isWithinLength(multiByte, 8192)).isTrue();
+    assertThat(FlagValueValidator.isWithinLength(multiByte + "x", 8192)).isFalse();
   }
 }

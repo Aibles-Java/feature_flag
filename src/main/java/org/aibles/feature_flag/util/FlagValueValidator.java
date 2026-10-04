@@ -16,7 +16,7 @@ import org.aibles.feature_flag.exception.InvalidRequestException;
  *   <li>BOOLEAN: exactly {@code "true"} or {@code "false"};
  *   <li>INTEGER: {@link Long#parseLong(String)};
  *   <li>JSON: one complete, well-formed JSON document;
- *   <li>STRING: anything. The length limit is a separate concern (S-0.5).
+ *   <li>STRING: anything. The length limit is a separate check, {@link #validateLength} (S-0.5).
  * </ul>
  *
  * The error message never echoes the value, which may be mistakenly sensitive.
@@ -38,6 +38,25 @@ public final class FlagValueValidator {
     if (!isValid(type, value)) {
       throw new InvalidRequestException("value is not a valid " + type + " for this flag");
     }
+  }
+
+  /**
+   * Rejects a {@code value} longer than {@code maxLength} (D-10, F19 length part). Length is
+   * counted in characters ({@link String#length()}, UTF-16 code units), not bytes. Cheap, so
+   * callers run it before {@link #validate} to avoid parsing an oversized JSON document. The
+   * message states the limit but never echoes the value.
+   *
+   * @throws InvalidRequestException (HTTP 400) when {@code value} exceeds {@code maxLength}.
+   */
+  public static void validateLength(String value, int maxLength) {
+    if (!isWithinLength(value, maxLength)) {
+      throw new InvalidRequestException("value must be at most " + maxLength + " characters");
+    }
+  }
+
+  /** Non-throwing variant of {@link #validateLength}, for import (entry SKIPPED). */
+  public static boolean isWithinLength(String value, int maxLength) {
+    return value == null || value.length() <= maxLength;
   }
 
   /**

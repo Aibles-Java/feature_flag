@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.aibles.feature_flag.config.FlagValueProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
@@ -35,6 +36,7 @@ import org.aibles.feature_flag.service.EnvironmentTransferService;
 import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.EnvironmentApiKeyFactory;
 import org.aibles.feature_flag.util.EnvironmentApiKeyFactory.MintedKey;
+import org.aibles.feature_flag.util.FlagValueValidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +52,7 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
   private final PermissionService permissionService;
   private final AuditService auditService;
   private final EvaluationCacheService evaluationCacheService;
+  private final FlagValueProperties flagValueProperties;
 
   @Override
   @Transactional
@@ -217,6 +220,13 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
       ImportConflictStrategy strategy,
       boolean dryRun) {
 
+    // Per-entry value check, shared by dry run and real run (identical outcome). S-0.6 extends
+    // invalidValueReason with the valueType check; the reason never echoes the value.
+    String invalidValue = invalidValueReason(entry);
+    if (invalidValue != null) {
+      return item(entry, ImportOutcome.SKIPPED, invalidValue);
+    }
+
     Optional<FeatureFlag> existing =
         featureFlagRepository.findByProjectIdAndKey(project.getId(), entry.getKey());
 
@@ -265,6 +275,14 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
       flagStateRepository.save(state);
     }
     return item(entry, ImportOutcome.UPDATED, "state overwritten");
+  }
+
+  /** Why this entry's {@code value} is unacceptable, or {@code null} when it is fine (S-0.5). */
+  private String invalidValueReason(ImportEnvironmentRequest.FlagEntry entry) {
+    if (!FlagValueValidator.isWithinLength(entry.getValue(), flagValueProperties.maxLength())) {
+      return "invalid value: exceeds " + flagValueProperties.maxLength() + " characters";
+    }
+    return null;
   }
 
   private void createFlagWithStates(
