@@ -294,7 +294,7 @@ class OrganizationServiceImplTest {
     OrganizationMember ownerMember =
         OrganizationMember.builder()
             .organization(org)
-            .user(User.builder().id(targetUserId).email("o@e.com").passwordHash("x").build())
+            .user(User.builder().id(targetUserId).email("o@example.test").passwordHash("x").build())
             .role(MemberRole.OWNER)
             .build();
 
@@ -313,7 +313,7 @@ class OrganizationServiceImplTest {
     OrganizationMember ownerMember =
         OrganizationMember.builder()
             .organization(org)
-            .user(User.builder().id(targetUserId).email("o@e.com").passwordHash("x").build())
+            .user(User.builder().id(targetUserId).email("o@example.test").passwordHash("x").build())
             .role(MemberRole.OWNER)
             .build();
 
