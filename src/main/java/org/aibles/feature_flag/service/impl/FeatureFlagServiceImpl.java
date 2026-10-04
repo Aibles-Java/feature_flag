@@ -299,6 +299,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         .enabled(state.isEnabled())
         .value(state.getValue())
         .rolloutPercent(state.getRolloutPercent())
+        .version(state.getVersion())
         .lastEvaluatedAt(state.getLastEvaluatedAt())
         .build();
   }

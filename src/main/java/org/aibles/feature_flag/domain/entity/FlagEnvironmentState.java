@@ -53,6 +53,16 @@ public class FlagEnvironmentState {
   @Column(name = "last_evaluated_at")
   private LocalDateTime lastEvaluatedAt;
 
+  /**
+   * Optimistic-lock counter (ADR-07, F18). Hibernate increments it on every UPDATE of this row and
+   * rejects a write whose version no longer matches with an optimistic-lock failure, so two
+   * concurrent edits can no longer silently overwrite each other. Starts at 0 (DB default,
+   * changeset 019-add-flag-state-version). Never set it by hand.
+   */
+  @Version
+  @Column(nullable = false)
+  private Long version;
+
   @CreationTimestamp
   @Column(name = "created_at", nullable = false, updatable = false)
   private LocalDateTime createdAt;
