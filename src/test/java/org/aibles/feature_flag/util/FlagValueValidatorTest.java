@@ -73,4 +73,107 @@ class FlagValueValidatorTest {
     assertThatThrownBy(() -> FlagValueValidator.validate(FlagValueType.INTEGER, "s3cr3t-abc"))
         .hasMessageNotContaining("s3cr3t-abc");
   }
+
+  // ---- QA edge cases (independent test pass, S-0.4) ----
+
+  @ParameterizedTest
+  @ValueSource(strings = {"+5", "-9223372036854775808", "007", "-0"})
+  void integer_acceptsLongParseLongForms(String v) {
+    // Spec says Long.parseLong semantics: leading '+', leading zeros are accepted.
+    assertThatCode(() -> FlagValueValidator.validate(FlagValueType.INTEGER, v))
+        .doesNotThrowAnyException();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "5 ",
+        " 5",
+        "\t5",
+        "5\n",
+        "-9223372036854775809",
+        "0x10",
+        "1_000",
+        "--5",
+        "+",
+        "-",
+        "NaN"
+      })
+  void integer_rejectsWhitespaceOverflowAndNonDecimal(String v) {
+    assertThatThrownBy(() -> FlagValueValidator.validate(FlagValueType.INTEGER, v))
+        .isInstanceOf(InvalidRequestException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"TRUE", "FALSE", "true ", "false\n", "\ttrue", " ", "t", "0"})
+  void boolean_isCaseAndWhitespaceStrict(String v) {
+    assertThatThrownBy(() -> FlagValueValidator.validate(FlagValueType.BOOLEAN, v))
+        .isInstanceOf(InvalidRequestException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "{\"a\":1}\n{\"b\":2}",
+        "1 2",
+        "[1,2",
+        "[1,2]]",
+        "{\"a\":1,}",
+        "undefined",
+        "NaN",
+        "{\"a\":1} //c",
+        "\u0000",
+        "tru"
+      })
+  void json_rejectsTrailingTokensAndMalformedScalars(String v) {
+    assertThatThrownBy(() -> FlagValueValidator.validate(FlagValueType.JSON, v))
+        .isInstanceOf(InvalidRequestException.class);
+  }
+
+  @Test
+  void json_acceptsSurroundingWhitespace() {
+    assertThatCode(() -> FlagValueValidator.validate(FlagValueType.JSON, " \n{\"a\": 1}\n "))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void veryLongInputs_doNotCrashAndAreHandledPerType() {
+    String big = "9".repeat(200_000);
+    assertThatThrownBy(() -> FlagValueValidator.validate(FlagValueType.INTEGER, big))
+        .isInstanceOf(InvalidRequestException.class);
+    assertThatThrownBy(() -> FlagValueValidator.validate(FlagValueType.BOOLEAN, big))
+        .isInstanceOf(InvalidRequestException.class);
+    assertThatCode(() -> FlagValueValidator.validate(FlagValueType.STRING, big))
+        .doesNotThrowAnyException();
+    // long but well-formed JSON string / array must be accepted
+    assertThatCode(
+            () ->
+                FlagValueValidator.validate(FlagValueType.JSON, "\"" + "a".repeat(200_000) + "\""))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void json_deeplyNestedOrHugeNumber_isRejectedCleanly_notAnUncheckedCrash() {
+    String deep = "[".repeat(100_000) + "]".repeat(100_000);
+    assertThatCode(() -> FlagValueValidator.isValid(FlagValueType.JSON, deep))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> FlagValueValidator.validate(FlagValueType.JSON, deep))
+        .isInstanceOf(InvalidRequestException.class);
+    String hugeNum = "1" + "0".repeat(100_000);
+    assertThatCode(() -> FlagValueValidator.isValid(FlagValueType.JSON, hugeNum))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void isValid_agreesWithValidate() {
+    org.assertj.core.api.Assertions.assertThat(
+            FlagValueValidator.isValid(FlagValueType.INTEGER, "x"))
+        .isFalse();
+    org.assertj.core.api.Assertions.assertThat(
+            FlagValueValidator.isValid(FlagValueType.INTEGER, null))
+        .isTrue();
+    org.assertj.core.api.Assertions.assertThat(
+            FlagValueValidator.isValid(FlagValueType.BOOLEAN, "true"))
+        .isTrue();
+  }
 }

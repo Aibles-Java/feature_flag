@@ -233,6 +233,37 @@ class FeatureFlagControllerTest {
     verify(featureFlagService, never()).updateState(any(), any(), any());
   }
 
+  /**
+   * S-0.4 AC1 at the HTTP layer: the shared validator's InvalidRequestException, raised from the
+   * service on PUT state, must surface as 400 ProblemDetail via GlobalExceptionHandler, and the
+   * rejected value must not be echoed back.
+   */
+  @Test
+  void updateState_returns400_whenValueDoesNotMatchValueType() throws Exception {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    when(featureFlagService.updateState(eq(flagId), eq(envId), any()))
+        .thenAnswer(
+            inv -> {
+              UpdateFlagStateRequest r = inv.getArgument(2);
+              org.aibles.feature_flag.util.FlagValueValidator.validate(
+                  FlagValueType.INTEGER, r.getValue());
+              return null;
+            });
+
+    mockMvc
+        .perform(
+            put("/api/v1/flags/{flagId}/environments/{envId}", flagId, envId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":true,\"value\":\"s3cr3t-abc\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(
+            jsonPath("$.detail")
+                .value(
+                    org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("s3cr3t-abc"))));
+  }
+
   @Test
   void get_returns200_withFlag() throws Exception {
     UUID flagId = UUID.randomUUID();
