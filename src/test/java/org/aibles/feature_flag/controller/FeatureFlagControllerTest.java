@@ -182,6 +182,44 @@ class FeatureFlagControllerTest {
   }
 
   @Test
+  void updateState_deserializesClearValueAndPassesItToService() throws Exception {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    when(featureFlagService.updateState(eq(flagId), eq(envId), any()))
+        .thenReturn(FlagStateResponse.builder().flagId(flagId).environmentId(envId).build());
+
+    mockMvc
+        .perform(
+            put("/api/v1/flags/{flagId}/environments/{envId}", flagId, envId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":true,\"clearValue\":true}"))
+        .andExpect(status().isOk());
+
+    org.mockito.ArgumentCaptor<UpdateFlagStateRequest> captor =
+        org.mockito.ArgumentCaptor.forClass(UpdateFlagStateRequest.class);
+    verify(featureFlagService).updateState(eq(flagId), eq(envId), captor.capture());
+    org.assertj.core.api.Assertions.assertThat(captor.getValue().getClearValue()).isTrue();
+    org.assertj.core.api.Assertions.assertThat(captor.getValue().getValue()).isNull();
+  }
+
+  @Test
+  void updateState_returns400_whenServiceRejectsClearValueWithValue() throws Exception {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    when(featureFlagService.updateState(eq(flagId), eq(envId), any()))
+        .thenThrow(
+            new org.aibles.feature_flag.exception.InvalidRequestException(
+                "clearValue cannot be combined with value"));
+
+    mockMvc
+        .perform(
+            put("/api/v1/flags/{flagId}/environments/{envId}", flagId, envId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":true,\"clearValue\":true,\"value\":\"y\"}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void updateState_acceptsRolloutPercentAtBothBounds() throws Exception {
     for (int percent : new int[] {0, 100}) {
       UUID flagId = UUID.randomUUID();
