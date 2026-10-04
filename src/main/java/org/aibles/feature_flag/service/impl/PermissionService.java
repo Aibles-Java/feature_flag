@@ -250,6 +250,22 @@ public class PermissionService {
         .collect(java.util.stream.Collectors.toSet());
   }
 
+  /**
+   * Base-permission check at the scope of {@code resource}, with no production elevation or change
+   * window. {@link #check} on a project-scoped ref for an action in {@link #PRODUCTION_ELEVATED}
+   * demands the elevated action for every PRODUCTION env under the project, which is wrong as a
+   * first gate when the caller targets one specific env (it would deny a plain STAGING update). Use
+   * this as step (ii) of the F17 ordering, then {@link #check} with the verified env.
+   *
+   * <p><strong>Never the sole gate for a {@code PRODUCTION_ELEVATED} action</strong>: it skips the
+   * production elevation and change window, so it must always be followed by {@link #check}.
+   */
+  public void checkScope(Action action, ResourceRef resource) {
+    if (!effectiveActions(resource).contains(action)) {
+      throw new UnauthorizedException("Insufficient permissions for action: " + action);
+    }
+  }
+
   public void check(Action action, ResourceRef resource) {
     List<Environment> productionEnvs = productionEnvironments(action, resource);
     Action required =

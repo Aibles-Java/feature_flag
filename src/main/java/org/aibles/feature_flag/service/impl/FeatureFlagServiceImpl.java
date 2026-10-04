@@ -200,11 +200,24 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         .map(this::toResponse);
   }
 
+  /**
+   * Loads the environment and asserts it belongs to the flag's project (F17, IDOR). An unknown
+   * environment and one owned by another project are indistinguishable (same 404, no id echoed), so
+   * a caller cannot probe which environments exist or what type they are.
+   */
+  private Environment requireEnvironmentInProject(FeatureFlag flag, UUID environmentId) {
+    return environmentRepository
+        .findById(environmentId)
+        .filter(e -> e.getProject().getId().equals(flag.getProject().getId()))
+        .orElseThrow(() -> new ResourceNotFoundException("Environment not found for this flag"));
+  }
+
   @Override
   public FlagStateResponse getState(UUID flagId, UUID environmentId) {
     FeatureFlag flag = findById(flagId);
     permissionService.check(
         Action.FLAG_READ, PermissionService.ResourceRef.project(flag.getProject().getId()));
+    requireEnvironmentInProject(flag, environmentId);
     FlagEnvironmentState state =
         flagStateRepository
             .findByFeatureFlagIdAndEnvironmentId(flagId, environmentId)
@@ -219,10 +232,11 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
       UUID flagId, UUID environmentId, UpdateFlagStateRequest request) {
     FeatureFlag flag = findById(flagId);
     UUID orgId = flag.getProject().getOrganization().getId();
-    Environment environment =
-        environmentRepository
-            .findById(environmentId)
-            .orElseThrow(() -> new ResourceNotFoundException("Environment", environmentId));
+    // F17 check order: (ii) project-scope permission -> (iii) env belongs to the flag's project
+    // -> (iv) env-scoped permission (PROD elevation / change window) on the verified env only.
+    permissionService.checkScope(
+        Action.FLAG_STATE_UPDATE, PermissionService.ResourceRef.project(flag.getProject().getId()));
+    Environment environment = requireEnvironmentInProject(flag, environmentId);
     permissionService.check(
         Action.FLAG_STATE_UPDATE,
         PermissionService.ResourceRef.environment(flag.getProject().getId(), environment));
