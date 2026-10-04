@@ -14,6 +14,9 @@ public class FlagStateResponse {
   private String value;
   private int rolloutPercent;
 
+  /** Optimistic-lock version of this state (ADR-07); the client echoes it on update (S-2.2). */
+  private Long version;
+
   /**
    * Last SDK evaluation of this flag in this environment; null means never (issue #37). Admin-only
    * — the SDK's {@code FlagEvaluationResponse} is deliberately unchanged.

@@ -307,6 +307,7 @@ class FeatureFlagServiceImplTest {
             .environment(env)
             .enabled(true)
             .value("true")
+            .version(7L)
             .build();
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
@@ -315,6 +316,7 @@ class FeatureFlagServiceImplTest {
     FlagStateResponse result = service.getState(flagId, envId);
 
     assertThat(result.isEnabled()).isTrue();
+    assertThat(result.getVersion()).isEqualTo(7L);
   }
 
   @Test
