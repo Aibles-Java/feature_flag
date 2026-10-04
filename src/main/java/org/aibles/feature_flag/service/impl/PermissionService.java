@@ -313,10 +313,10 @@ public class PermissionService {
   /**
    * The clock to read the window in.
    *
-   * <p>An unparseable zone falls back to the server's rather than throwing: the stored string is
-   * validated when it is set, so a bad value here means data written before that validation
-   * existed, and refusing every production change until someone fixes a row is a worse failure than
-   * reading the window in the wrong zone.
+   * <p>An unparseable zone falls back to the configured application zone (app.change-window.zone)
+   * rather than throwing: the stored string is validated when it is set, so a bad value here means
+   * data written before that validation existed, and refusing every production change until someone
+   * fixes a row is a worse failure than reading the window in the wrong zone.
    */
   private Clock zonedClock(Environment env) {
     String zone = env.getChangeWindowTimezone();

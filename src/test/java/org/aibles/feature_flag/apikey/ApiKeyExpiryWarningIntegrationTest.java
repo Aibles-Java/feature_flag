@@ -2,6 +2,7 @@ package org.aibles.feature_flag.apikey;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -49,6 +50,7 @@ class ApiKeyExpiryWarningIntegrationTest {
   }
 
   @Autowired ApiKeyExpiryScheduler scheduler;
+  @Autowired Clock clock;
   @Autowired RecordingListener listener;
   @Autowired EnvironmentApiKeyRepository apiKeyRepository;
   @Autowired EnvironmentRepository environmentRepository;
@@ -72,7 +74,7 @@ class ApiKeyExpiryWarningIntegrationTest {
                 .name("nightly-batch")
                 .keyHash("expiry-it-" + System.nanoTime())
                 .keyPrefix("e1a2b3c4")
-                .expiresAt(LocalDateTime.now().plusDays(5))
+                .expiresAt(LocalDateTime.now(clock).plusDays(5))
                 .build());
 
     scheduler.scan();
