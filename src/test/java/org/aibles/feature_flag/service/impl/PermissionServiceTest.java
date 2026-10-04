@@ -220,6 +220,26 @@ class PermissionServiceTest {
         .containsExactlyInAnyOrder(Action.FLAG_STATE_UPDATE, Action.FLAG_READ, Action.PROJECT_READ);
   }
 
+  @Test
+  void checkScopeIgnoresProductionElevationButStillRequiresTheBaseAction() {
+    stubProject();
+    // ADMIN lacks FLAG_STATE_UPDATE_PRODUCTION: check() on the project ref would demand it for the
+    // PROD envs under the project; checkScope() must only require the base action.
+    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
+        .thenReturn(Optional.of(member(MemberRole.ADMIN)));
+    permissionService.checkScope(
+        Action.FLAG_STATE_UPDATE, PermissionService.ResourceRef.project(projectId));
+
+    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
+        .thenReturn(Optional.of(member(MemberRole.VIEWER)));
+    assertThatThrownBy(
+            () ->
+                permissionService.checkScope(
+                    Action.FLAG_STATE_UPDATE, PermissionService.ResourceRef.project(projectId)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessage("Insufficient permissions for action: FLAG_STATE_UPDATE");
+  }
+
   // ── check(): action gate ────────────────────────────────────────────────────────────
 
   @Test
