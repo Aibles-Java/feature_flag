@@ -501,7 +501,11 @@ class FeatureFlagServiceImplTest {
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
     req.setEnabled(true);
+    // S-2.8: PUT for a missing (flag, env) pair is 404 and must NOT lazy-create the state
+    // (ADR-03: lazy-create would turn F17 into a write IDOR and create implicit PROD state).
     assertThatThrownBy(() -> service.updateState(flagId, envId, req))
         .isInstanceOf(ResourceNotFoundException.class);
+    verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAll(any());
   }
 }

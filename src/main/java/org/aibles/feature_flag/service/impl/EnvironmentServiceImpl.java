@@ -8,7 +8,6 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
-import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Project;
 import org.aibles.feature_flag.domain.enums.Action;
@@ -218,13 +217,23 @@ public class EnvironmentServiceImpl implements EnvironmentService {
    * copying state is what {@code EnvironmentTransferServiceImpl.clone()} is for.
    */
   private void backfillFlagStates(Project project, Environment environment) {
-    for (FeatureFlag flag : featureFlagRepository.findAllByProjectId(project.getId())) {
-      flagStateRepository.save(
-          FlagEnvironmentState.builder()
-              .featureFlag(flag)
-              .environment(environment)
-              .enabled(false)
-              .build());
+    // One saveAll (single statement batch inside the caller's transaction) instead of a save per
+    // flag: bounded at the project's flag count (<= 1 000 per ADR-03). Defaults are explicit —
+    // disabled, rolloutPercent 100, no value — so a new (possibly PRODUCTION) environment never
+    // starts live. The optimistic-lock version column (S-2.1) is deliberately not set here.
+    List<FlagEnvironmentState> states =
+        featureFlagRepository.findAllByProjectId(project.getId()).stream()
+            .map(
+                flag ->
+                    FlagEnvironmentState.builder()
+                        .featureFlag(flag)
+                        .environment(environment)
+                        .enabled(false)
+                        .rolloutPercent(100)
+                        .build())
+            .toList();
+    if (!states.isEmpty()) {
+      flagStateRepository.saveAll(states);
     }
   }
 
