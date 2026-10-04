@@ -256,6 +256,9 @@ public class PermissionService {
    * demands the elevated action for every PRODUCTION env under the project, which is wrong as a
    * first gate when the caller targets one specific env (it would deny a plain STAGING update). Use
    * this as step (ii) of the F17 ordering, then {@link #check} with the verified env.
+   *
+   * <p><strong>Never the sole gate for a {@code PRODUCTION_ELEVATED} action</strong>: it skips the
+   * production elevation and change window, so it must always be followed by {@link #check}.
    */
   public void checkScope(Action action, ResourceRef resource) {
     if (!effectiveActions(resource).contains(action)) {
