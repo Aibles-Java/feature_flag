@@ -138,17 +138,18 @@ class EnvironmentServiceImplTest {
 
     service.create(req);
 
-    ArgumentCaptor<FlagEnvironmentState> saved =
-        ArgumentCaptor.forClass(FlagEnvironmentState.class);
-    verify(flagStateRepository, times(2)).save(saved.capture());
-    assertThat(saved.getAllValues())
+    List<FlagEnvironmentState> saved = capturedBulkSave();
+    assertThat(saved)
         .extracting(s -> s.getFeatureFlag().getKey())
         // Archived flags get a row too: unarchiving one later must not resurrect the gap.
         .containsExactlyInAnyOrder("checkout-v2", "legacy-banner");
-    assertThat(saved.getAllValues())
+    assertThat(saved)
         .allSatisfy(
             s -> {
               assertThat(s.getEnvironment().getName()).isEqualTo("staging");
+              // S-2.8 / ADR-03: explicit defaults, never inherited (version is S-2.1's column).
+              assertThat(s.getRolloutPercent()).isEqualTo(100);
+              assertThat(s.getValue()).isNull();
               // A brand new environment starts with everything off, never inheriting another
               // environment's state — that is what clone() is for.
               assertThat(s.isEnabled()).isFalse();
@@ -169,6 +170,49 @@ class EnvironmentServiceImplTest {
     service.create(req);
 
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAll(anyIterable());
+  }
+
+  @Test
+  void create_createsExactlyOneStatePerFlag_inOneBulkSave_forA1000FlagProject() {
+    // S-2.8 AC (T-F11-1): 1 000-flag project -> exactly 1 000 rows, one saveAll call (one
+    // transaction, no per-row save loop). Synthetic flag keys only.
+    List<FeatureFlag> flags =
+        java.util.stream.IntStream.range(0, 1000)
+            .mapToObj(
+                i ->
+                    FeatureFlag.builder()
+                        .id(UUID.randomUUID())
+                        .project(project)
+                        .key("synthetic-flag-" + i)
+                        .build())
+            .toList();
+    when(featureFlagRepository.findAllByProjectId(projectId)).thenReturn(flags);
+    when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+    when(environmentRepository.existsByProjectIdAndName(projectId, "staging")).thenReturn(false);
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(i -> i.getArgument(0));
+
+    CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+    req.setProjectId(projectId);
+    req.setName("staging");
+
+    service.create(req);
+
+    List<FlagEnvironmentState> saved = capturedBulkSave();
+    assertThat(saved).hasSize(1000);
+    assertThat(saved.stream().map(s -> s.getFeatureFlag().getId()).distinct().count())
+        .isEqualTo(1000);
+    assertThat(saved).noneMatch(FlagEnvironmentState::isEnabled);
+    verify(flagStateRepository, never()).save(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  private List<FlagEnvironmentState> capturedBulkSave() {
+    ArgumentCaptor<Iterable<FlagEnvironmentState>> captor = ArgumentCaptor.forClass(Iterable.class);
+    verify(flagStateRepository, times(1)).saveAll(captor.capture());
+    List<FlagEnvironmentState> out = new java.util.ArrayList<>();
+    captor.getValue().forEach(out::add);
+    return out;
   }
 
   @Test

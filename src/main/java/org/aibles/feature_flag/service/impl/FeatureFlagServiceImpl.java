@@ -29,6 +29,7 @@ import org.aibles.feature_flag.repository.FlagEnvironmentStateRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.service.FeatureFlagService;
+import org.aibles.feature_flag.util.FlagValueValidator;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -237,6 +238,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     if (clearValue && request.getValue() != null) {
       throw new InvalidRequestException("clearValue cannot be combined with a non-null value");
     }
+    FlagValueValidator.validate(flag.getValueType(), request.getValue());
 
     boolean previousEnabled = state.isEnabled();
     String previousValue = state.getValue();

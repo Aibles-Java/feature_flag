@@ -22,6 +22,7 @@ import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
 import org.aibles.feature_flag.dto.response.FeatureFlagResponse;
 import org.aibles.feature_flag.dto.response.FlagStateResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
+import org.aibles.feature_flag.exception.InvalidRequestException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
@@ -34,6 +35,8 @@ import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -385,6 +388,77 @@ class FeatureFlagServiceImplTest {
     verify(evaluationCacheService).evictAfterCommit(envId);
   }
 
+  @ParameterizedTest
+  @CsvSource({"INTEGER,abc", "JSON,{bad", "BOOLEAN,yes"})
+  void updateState_rejectsValueNotMatchingValueType_withNoWriteAuditOrEvent(
+      FlagValueType type, String badValue) {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("f")
+            .valueType(type)
+            .archived(false)
+            .build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
+    FlagEnvironmentState state =
+        FlagEnvironmentState.builder()
+            .id(UUID.randomUUID())
+            .featureFlag(flag)
+            .environment(env)
+            .enabled(false)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
+        .thenReturn(Optional.of(state));
+
+    UpdateFlagStateRequest req = new UpdateFlagStateRequest();
+    req.setEnabled(true);
+    req.setValue(badValue);
+
+    assertThatThrownBy(() -> service.updateState(flagId, envId, req))
+        .isInstanceOf(InvalidRequestException.class);
+    verify(flagStateRepository, never()).save(any());
+    verifyNoInteractions(auditService, eventPublisher, evaluationCacheService);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"INTEGER,42", "JSON,'{\"a\":1}'", "BOOLEAN,false", "STRING,anything"})
+  void updateState_acceptsValueMatchingValueType(FlagValueType type, String goodValue) {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("f")
+            .valueType(type)
+            .archived(false)
+            .build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
+    FlagEnvironmentState state =
+        FlagEnvironmentState.builder()
+            .id(UUID.randomUUID())
+            .featureFlag(flag)
+            .environment(env)
+            .enabled(false)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
+        .thenReturn(Optional.of(state));
+    when(flagStateRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    UpdateFlagStateRequest req = new UpdateFlagStateRequest();
+    req.setEnabled(true);
+    req.setValue(goodValue);
+
+    assertThat(service.updateState(flagId, envId, req).getValue()).isEqualTo(goodValue);
+  }
+
   @Test
   void updateState_publishesFlagStateChangedEvent_withOldAndNewValues() {
     UUID flagId = UUID.randomUUID();
@@ -501,7 +575,11 @@ class FeatureFlagServiceImplTest {
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
     req.setEnabled(true);
+    // S-2.8: PUT for a missing (flag, env) pair is 404 and must NOT lazy-create the state
+    // (ADR-03: lazy-create would turn F17 into a write IDOR and create implicit PROD state).
     assertThatThrownBy(() -> service.updateState(flagId, envId, req))
         .isInstanceOf(ResourceNotFoundException.class);
+    verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAll(any());
   }
 }

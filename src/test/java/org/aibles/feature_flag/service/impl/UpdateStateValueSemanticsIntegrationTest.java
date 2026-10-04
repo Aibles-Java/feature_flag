@@ -151,4 +151,28 @@ class UpdateStateValueSemanticsIntegrationTest {
     service.updateState(FLAG, ENV, req(true, null, null));
     assertThat(dbRollout()).isEqualTo(100);
   }
+
+  @Test
+  @DisplayName("edge: empty string is a real value (overwrites), unlike null (keeps)")
+  void emptyStringOverwrites() {
+    service.updateState(FLAG, ENV, req(true, "", null));
+    assertThat(dbValue()).isEmpty();
+  }
+
+  @Test
+  @DisplayName("edge: clearValue:true with empty-string value -> 400, nothing written")
+  void clearValueWithEmptyStringRejected() {
+    assertThatThrownBy(() -> service.updateState(FLAG, ENV, req(false, "", true)))
+        .isInstanceOf(InvalidRequestException.class);
+    assertThat(dbValue()).isEqualTo("blue");
+    assertThat(auditRows()).isZero();
+    assertThat(events.stream(FlagStateChangedEvent.class)).isEmpty();
+  }
+
+  @Test
+  @DisplayName("clearValue:true does not touch rolloutPercent")
+  void clearValueKeepsRollout() {
+    service.updateState(FLAG, ENV, req(true, null, true));
+    assertThat(dbRollout()).isEqualTo(100);
+  }
 }
