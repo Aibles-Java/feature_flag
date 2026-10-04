@@ -217,8 +217,9 @@ public class EnvironmentServiceImpl implements EnvironmentService {
    * copying state is what {@code EnvironmentTransferServiceImpl.clone()} is for.
    */
   private void backfillFlagStates(Project project, Environment environment) {
-    // One saveAll (single statement batch inside the caller's transaction) instead of a save per
-    // flag: bounded at the project's flag count (<= 1 000 per ADR-03). Defaults are explicit —
+    // One saveAll inside the caller's transaction (JDBC batching is not configured, so this is
+    // one call, not one statement) instead of a save per flag: bounded at the project's flag count
+    // (<= 1 000 per ADR-03). Defaults are explicit —
     // disabled, rolloutPercent 100, no value — so a new (possibly PRODUCTION) environment never
     // starts live. The optimistic-lock version column (S-2.1) is deliberately not set here.
     List<FlagEnvironmentState> states =
