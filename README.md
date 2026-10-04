@@ -34,6 +34,7 @@ otherwise slip through as a literal and fail later with an obscure driver error.
 | Variable | Required (prod) | Description |
 |---|---|---|
 | `APP_JWT_SECRET` | yes | JWT signing key. Must be ≥ 64 UTF-8 bytes (512 bits) and not a placeholder — enforced at startup. Generate: `openssl rand -hex 64` |
+| `APP_CHANGE_WINDOW_ZONE` | yes | IANA zone id (e.g. `Asia/Ho_Chi_Minh`) in which the production change window is evaluated when an environment sets no timezone of its own. Missing/invalid aborts startup; never falls back to the JVM zone. **Value must be confirmed by Ops before deploy.** `start == end` hour means unlimited (D-15). Non-prod profiles default to `UTC` |
 | `SPRING_DATASOURCE_URL` | yes | JDBC URL, e.g. `jdbc:postgresql://db:5432/feature_flag_db` |
 | `SPRING_DATASOURCE_USERNAME` | yes | Database user |
 | `SPRING_DATASOURCE_PASSWORD` | yes | Database password |

@@ -17,6 +17,7 @@ import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
 import org.aibles.feature_flag.dto.response.FeatureFlagResponse;
 import org.aibles.feature_flag.dto.response.FlagStateResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
+import org.aibles.feature_flag.exception.InvalidRequestException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
@@ -202,11 +203,24 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
         .map(this::toResponse);
   }
 
+  /**
+   * Loads the environment and asserts it belongs to the flag's project (F17, IDOR). An unknown
+   * environment and one owned by another project are indistinguishable (same 404, no id echoed), so
+   * a caller cannot probe which environments exist or what type they are.
+   */
+  private Environment requireEnvironmentInProject(FeatureFlag flag, UUID environmentId) {
+    return environmentRepository
+        .findById(environmentId)
+        .filter(e -> e.getProject().getId().equals(flag.getProject().getId()))
+        .orElseThrow(() -> new ResourceNotFoundException("Environment not found for this flag"));
+  }
+
   @Override
   public FlagStateResponse getState(UUID flagId, UUID environmentId) {
     FeatureFlag flag = findById(flagId);
     permissionService.check(
         Action.FLAG_READ, PermissionService.ResourceRef.project(flag.getProject().getId()));
+    requireEnvironmentInProject(flag, environmentId);
     FlagEnvironmentState state =
         flagStateRepository
             .findByFeatureFlagIdAndEnvironmentId(flagId, environmentId)
@@ -221,10 +235,11 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
       UUID flagId, UUID environmentId, UpdateFlagStateRequest request) {
     FeatureFlag flag = findById(flagId);
     UUID orgId = flag.getProject().getOrganization().getId();
-    Environment environment =
-        environmentRepository
-            .findById(environmentId)
-            .orElseThrow(() -> new ResourceNotFoundException("Environment", environmentId));
+    // F17 check order: (ii) project-scope permission -> (iii) env belongs to the flag's project
+    // -> (iv) env-scoped permission (PROD elevation / change window) on the verified env only.
+    permissionService.checkScope(
+        Action.FLAG_STATE_UPDATE, PermissionService.ResourceRef.project(flag.getProject().getId()));
+    Environment environment = requireEnvironmentInProject(flag, environmentId);
     permissionService.check(
         Action.FLAG_STATE_UPDATE,
         PermissionService.ResourceRef.environment(flag.getProject().getId(), environment));
@@ -235,6 +250,10 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             .orElseThrow(
                 () -> new ResourceNotFoundException("Flag state not found for this environment"));
 
+    boolean clearValue = Boolean.TRUE.equals(request.getClearValue());
+    if (clearValue && request.getValue() != null) {
+      throw new InvalidRequestException("clearValue cannot be combined with a non-null value");
+    }
     FlagValueValidator.validateLength(request.getValue(), flagValueProperties.maxLength());
     FlagValueValidator.validate(flag.getValueType(), request.getValue());
 
@@ -243,7 +262,13 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     FlagStateResponse before = toStateResponse(state);
 
     state.setEnabled(request.getEnabled());
-    state.setValue(request.getValue());
+    // ADR-05 (F7): value absent/null keeps the stored value; clearValue:true is the only way to
+    // clear.
+    if (clearValue) {
+      state.setValue(null);
+    } else if (request.getValue() != null) {
+      state.setValue(request.getValue());
+    }
     if (request.getRolloutPercent() != null) state.setRolloutPercent(request.getRolloutPercent());
     FlagEnvironmentState saved = flagStateRepository.save(state);
     FlagStateResponse response = toStateResponse(saved);
