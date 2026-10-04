@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -32,7 +34,7 @@ class ChangeWindowZoneConfigTest {
         .run(
             context -> {
               assertThat(context).hasNotFailed();
-              Clock clock = context.getBean(Clock.class);
+              Clock clock = context.getBean(AppConfig.CHANGE_WINDOW_CLOCK, Clock.class);
               assertThat(clock.getZone()).isEqualTo(ZoneId.of("Asia/Ho_Chi_Minh"));
               // Not the JVM zone's view of the instant: 17:30 local at 10:30Z.
               assertThat(Instant.parse("2026-07-02T10:30:00Z").atZone(clock.getZone()).getHour())
@@ -41,10 +43,39 @@ class ChangeWindowZoneConfigTest {
   }
 
   @Test
+  void generalClockStaysOnTheJvmZoneSoApiKeyExpiryIsUnaffected() {
+    // JVM default zone differs from the configured change-window zone on purpose.
+    ZoneId configured =
+        ZoneId.systemDefault().equals(ZoneId.of("Pacific/Kiritimati"))
+            ? ZoneId.of("Pacific/Pago_Pago")
+            : ZoneId.of("Pacific/Kiritimati");
+    runner
+        .withPropertyValues("app.change-window.zone=" + configured.getId())
+        .run(
+            context -> {
+              Clock general = context.getBean(Clock.class); // @Primary general clock
+              assertThat(general.getZone()).isEqualTo(ZoneId.systemDefault());
+              assertThat(context.getBean(AppConfig.CHANGE_WINDOW_CLOCK, Clock.class).getZone())
+                  .isEqualTo(configured);
+              // A key whose zone-less expiry was written in the JVM zone is judged in that zone.
+              LocalDateTime now = LocalDateTime.now(general);
+              EnvironmentApiKey key =
+                  EnvironmentApiKey.builder().expiresAt(now.plusMinutes(30)).build();
+              assertThat(key.isExpired(general)).isFalse();
+              EnvironmentApiKey past =
+                  EnvironmentApiKey.builder().expiresAt(now.minusMinutes(30)).build();
+              assertThat(past.isExpired(general)).isTrue();
+            });
+  }
+
+  @Test
   void utcCanBeConfiguredExplicitly() {
     runner
         .withPropertyValues("app.change-window.zone=UTC")
-        .run(c -> assertThat(c.getBean(Clock.class).getZone()).isEqualTo(ZoneId.of("UTC")));
+        .run(
+            c ->
+                assertThat(c.getBean(AppConfig.CHANGE_WINDOW_CLOCK, Clock.class).getZone())
+                    .isEqualTo(ZoneId.of("UTC")));
   }
 
   @Test

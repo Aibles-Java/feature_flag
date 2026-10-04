@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.aibles.feature_flag.config.AppConfig;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.OrganizationMember;
 import org.aibles.feature_flag.domain.entity.PermissionGrant;
@@ -27,6 +28,7 @@ import org.aibles.feature_flag.repository.OrganizationMemberRepository;
 import org.aibles.feature_flag.repository.PermissionGrantRepository;
 import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.security.UserPrincipal;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
@@ -50,6 +52,9 @@ public class PermissionService {
   private final ProjectRepository projectRepository;
   private final EnvironmentRepository environmentRepository;
   private final PermissionGrantRepository grantRepository;
+
+  /** The change-window clock (app.change-window.zone), not the general application Clock. */
+  @Qualifier(AppConfig.CHANGE_WINDOW_CLOCK)
   private final Clock clock;
 
   private static final Map<MemberRole, Set<Action>> ROLE_ACTIONS = buildRoleActions();
@@ -327,9 +332,10 @@ public class PermissionService {
       return clock.withZone(ZoneId.of(zone));
     } catch (DateTimeException e) {
       log.warn(
-          "Environment {} has an unusable change-window timezone {}; falling back to the server zone",
+          "Environment {} has an unusable change-window timezone {}; falling back to the configured change-window zone ({})",
           env.getId(),
-          zone);
+          zone,
+          clock.getZone());
       return clock;
     }
   }
