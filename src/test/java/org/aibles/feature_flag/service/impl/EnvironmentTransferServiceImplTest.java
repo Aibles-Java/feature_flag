@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.aibles.feature_flag.config.FlagValueProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
@@ -92,7 +93,8 @@ class EnvironmentTransferServiceImplTest {
             flagStateRepository,
             permissionService,
             auditService,
-            evaluationCacheService);
+            evaluationCacheService,
+            new FlagValueProperties(8192));
 
     Organization org = Organization.builder().id(orgId).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
@@ -537,6 +539,43 @@ class EnvironmentTransferServiceImplTest {
     assertThat(result.getItems().get(0).getDetail()).contains("value type mismatch");
     verify(flagStateRepository, never()).save(any());
     assertThat(existing.isEnabled()).isFalse();
+  }
+
+  @Test
+  void import_valueLength_8192Accepted_8193SkippedForNewAndExistingFlags_dryAndRealRun() {
+    FlagEnvironmentState existing = state(stringFlag, targetEnv, false, "old", 100);
+    stubExistingFlags(stringFlag);
+    stubTargetStates(List.of(existing));
+
+    for (boolean dryRun : new boolean[] {true, false}) {
+      ImportEnvironmentRequest.FlagEntry okExisting =
+          entry(stringFlag, true, "a".repeat(8192), 100);
+      ImportEnvironmentRequest.FlagEntry tooLongExisting =
+          entry(stringFlag, true, "a".repeat(8193), 100);
+      ImportEnvironmentRequest.FlagEntry tooLongNew = entry(boolFlag, true, "a".repeat(8193), 100);
+      tooLongNew.setKey("brand-new");
+      tooLongNew.setValueType(FlagValueType.STRING);
+
+      ImportEnvironmentRequest ok = importRequest(ImportConflictStrategy.OVERWRITE, okExisting);
+      ok.setDryRun(dryRun);
+      assertThat(service.importSnapshot(targetEnvId, ok).getItems().get(0).getOutcome())
+          .isEqualTo(ImportOutcome.UPDATED);
+
+      ImportEnvironmentRequest bad =
+          importRequest(ImportConflictStrategy.OVERWRITE, tooLongExisting, tooLongNew);
+      bad.setDryRun(dryRun);
+      ImportResultResponse result = service.importSnapshot(targetEnvId, bad);
+      assertThat(result.getSummary().getSkipped()).isEqualTo(2);
+      assertThat(result.getItems())
+          .allSatisfy(
+              i -> {
+                assertThat(i.getOutcome()).isEqualTo(ImportOutcome.SKIPPED);
+                assertThat(i.getDetail()).contains("invalid value").doesNotContain("aaaa");
+              });
+    }
+    // Only the two accepted (8192) entries may have been persisted: the real-run one.
+    verify(flagStateRepository, times(1)).save(any());
+    verify(featureFlagRepository, never()).save(any());
   }
 
   @Test

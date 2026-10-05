@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.aibles.feature_flag.config.FlagValueProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
@@ -53,6 +54,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   private final EvaluationCacheService evaluationCacheService;
   private final FeatureFlagMetrics metrics;
   private final AuditService auditService;
+  private final FlagValueProperties flagValueProperties;
 
   /** D-05(2) step 2: when true, PUT state without {@code version} is rejected (400). */
   @Value("${app.flag-state.require-version:false}")
@@ -275,6 +277,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
     if (clearValue && request.getValue() != null) {
       throw new InvalidRequestException("clearValue cannot be combined with a non-null value");
     }
+    FlagValueValidator.validateLength(request.getValue(), flagValueProperties.maxLength());
     FlagValueValidator.validate(flag.getValueType(), request.getValue());
 
     boolean previousEnabled = state.isEnabled();

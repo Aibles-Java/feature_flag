@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.aibles.feature_flag.config.FlagValueProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
@@ -77,7 +78,8 @@ class FeatureFlagServiceImplTest {
             eventPublisher,
             evaluationCacheService,
             new FeatureFlagMetrics(new SimpleMeterRegistry()),
-            auditService);
+            auditService,
+            new FlagValueProperties(8192));
     Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
     // updateState resolves the target Environment so the PDP can read its production attributes.
@@ -388,6 +390,51 @@ class FeatureFlagServiceImplTest {
     assertThat(result.getRolloutPercent())
         .isEqualTo(50); // unchanged since request.rolloutPercent is null
     verify(evaluationCacheService).evictAfterCommit(envId);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"STRING,8192,true", "STRING,8193,false", "JSON,8193,false", "INTEGER,8193,false"})
+  void updateState_valueLengthBoundary_8192Accepted_8193Rejected(
+      FlagValueType type, int length, boolean accepted) {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("f")
+            .valueType(type)
+            .archived(false)
+            .build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
+    FlagEnvironmentState state =
+        FlagEnvironmentState.builder()
+            .id(UUID.randomUUID())
+            .featureFlag(flag)
+            .environment(env)
+            .enabled(false)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
+        .thenReturn(Optional.of(state));
+    when(flagStateRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    UpdateFlagStateRequest req = new UpdateFlagStateRequest();
+    req.setEnabled(true);
+    req.setValue("a".repeat(length));
+
+    if (accepted) {
+      service.updateState(flagId, envId, req);
+      verify(flagStateRepository).save(any());
+    } else {
+      assertThatThrownBy(() -> service.updateState(flagId, envId, req))
+          .isInstanceOf(InvalidRequestException.class)
+          .hasMessageContaining("8192")
+          .hasMessageNotContaining("aaaa");
+      verify(flagStateRepository, never()).save(any());
+      verifyNoInteractions(auditService, eventPublisher, evaluationCacheService);
+    }
   }
 
   @ParameterizedTest
