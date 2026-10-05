@@ -103,7 +103,8 @@ class UpdateStateVersionHttpQaTest {
     ReflectionTestUtils.setField(target, "flagStateRepository", stateRepository);
   }
 
-  private org.springframework.test.web.servlet.ResultActions putState(String body) throws Exception {
+  private org.springframework.test.web.servlet.ResultActions putState(String body)
+      throws Exception {
     return mvc.perform(put(URL).contentType(MediaType.APPLICATION_JSON).content(body));
   }
 
@@ -157,7 +158,8 @@ class UpdateStateVersionHttpQaTest {
   void staleIs409BothModes() throws Exception {
     for (boolean on : new boolean[] {false, true}) {
       ReflectionTestUtils.setField(target, "requireVersion", on);
-      putState("{\"enabled\":false,\"value\":\"red\",\"version\":7}").andExpect(status().isConflict());
+      putState("{\"enabled\":false,\"value\":\"red\",\"version\":7}")
+          .andExpect(status().isConflict());
       assertUntouched();
     }
   }
