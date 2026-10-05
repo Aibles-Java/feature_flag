@@ -94,7 +94,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
         AuditAction.CREATE,
         project.getOrganization().getId(),
         null,
-        toResponse(saved));
+        toSnapshot(saved));
     return toSecretResponse(saved, minted.plaintext());
   }
 
@@ -139,7 +139,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     }
 
     UUID orgId = env.getProject().getOrganization().getId();
-    EnvironmentResponse before = toResponse(env);
+    EnvironmentResponse before = toSnapshot(env);
     if (request.getName() != null) env.setName(request.getName());
     if (request.getDescription() != null) env.setDescription(request.getDescription());
     if (request.getType() != null) env.setType(request.getType());
@@ -152,9 +152,10 @@ public class EnvironmentServiceImpl implements EnvironmentService {
     if (request.getChangeWindowTimezone() != null) {
       env.setChangeWindowTimezone(request.getChangeWindowTimezone());
     }
-    EnvironmentResponse after = toResponse(environmentRepository.save(env));
+    Environment saved = environmentRepository.save(env);
+    EnvironmentResponse after = toSnapshot(saved);
     auditService.record(AuditEntityType.ENVIRONMENT, id, AuditAction.UPDATE, orgId, before, after);
-    return after;
+    return toResponse(saved);
   }
 
   @Override
@@ -165,7 +166,7 @@ public class EnvironmentServiceImpl implements EnvironmentService {
         Action.ENV_DELETE,
         PermissionService.ResourceRef.environment(env.getProject().getId(), env));
     UUID orgId = env.getProject().getOrganization().getId();
-    EnvironmentResponse before = toResponse(env);
+    EnvironmentResponse before = toSnapshot(env);
     environmentRepository.deleteById(id);
     evaluationCacheService.evictAfterCommit(id);
     auditService.record(AuditEntityType.ENVIRONMENT, id, AuditAction.DELETE, orgId, before, null);
@@ -244,7 +245,19 @@ public class EnvironmentServiceImpl implements EnvironmentService {
         .orElseThrow(() -> new ResourceNotFoundException("Environment", id));
   }
 
+  /** Response with the live change-window state (S-2.11); never use for audit snapshots. */
   private EnvironmentResponse toResponse(Environment env) {
+    EnvironmentResponse response = toSnapshot(env);
+    response.setChangeWindowZone(permissionService.changeWindowZone(env).getId());
+    response.setChangeWindowOpenNow(permissionService.withinChangeWindow(env));
+    return response;
+  }
+
+  /**
+   * Stored attributes only. Audit before/after snapshots use this so a time-dependent open/closed
+   * flag never shows up as a spurious diff.
+   */
+  private EnvironmentResponse toSnapshot(Environment env) {
     return EnvironmentResponse.builder()
         .id(env.getId())
         .name(env.getName())

@@ -318,10 +318,14 @@ public class PermissionService {
   }
 
   /**
-   * A window [start, end) may wrap past midnight; an absent or zero-width window imposes no
-   * restriction.
+   * Whether {@code env}'s change window is open at the change-window clock's current instant. A
+   * window [start, end) may wrap past midnight; an absent or zero-width ({@code start == end},
+   * D-15) window imposes no restriction and so is open.
+   *
+   * <p>Informational when called outside {@link #check}: it is what the UI shows, but the server
+   * still enforces the window on every write, so a stale answer can never permit a change.
    */
-  private boolean withinChangeWindow(Environment env) {
+  public boolean withinChangeWindow(Environment env) {
     Integer start = env.getChangeWindowStartHour();
     Integer end = env.getChangeWindowEndHour();
     if (start == null || end == null || start.equals(end)) {
@@ -329,6 +333,14 @@ public class PermissionService {
     }
     int hour = LocalTime.now(zonedClock(env)).getHour();
     return start < end ? (hour >= start && hour < end) : (hour >= start || hour < end);
+  }
+
+  /**
+   * The zone {@code env}'s window is evaluated in: its own valid timezone, else the configured
+   * change-window zone (same resolution as {@link #withinChangeWindow}). Informational.
+   */
+  public ZoneId changeWindowZone(Environment env) {
+    return zonedClock(env).getZone();
   }
 
   /**
