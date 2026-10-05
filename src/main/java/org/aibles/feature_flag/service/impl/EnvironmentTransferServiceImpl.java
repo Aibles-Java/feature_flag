@@ -190,9 +190,10 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
 
     boolean changed = result.getSummary().getCreated() > 0 || result.getSummary().getUpdated() > 0;
     if (!dryRun && changed) {
-      // Last write barrier before side effects: any pending write that would lose a @Version
-      // race fails now, so nothing after this line (audit, eviction) exists for a rolled-back
-      // import. Eviction is registered after-commit only.
+      // The ONE write barrier (S-2.13): every pending write is sent now, so a write that lost a
+      // @Version race (or violates a constraint) fails here, before any audit row or cache
+      // eviction exists for an import that is about to be rolled back. Do not remove: without it
+      // the conflict only surfaces at commit, after those side effects are queued.
       flagStateRepository.flush();
       // Every environment, not just the target: a CREATED entry also writes a default state row
       // into each sibling environment, which their cached snapshots would otherwise miss until TTL.
@@ -282,11 +283,11 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
       state.setEnabled(enabled(entry));
       state.setValue(entry.getValue());
       state.setRolloutPercent(rolloutPercent(entry));
-      // S-2.13 (ADR-07, D-17): flush per entry so a lost @Version race surfaces HERE, inside the
-      // transaction and before any audit row or cache eviction is queued. The exception
-      // propagates out of importSnapshot, which rolls back every entry (all-or-nothing); it must
-      // not be left to the commit, where the translated failure would skip the 409 handling.
-      flagStateRepository.saveAndFlush(state);
+      // S-2.13 (ADR-07, D-17): no per-entry flush (each one would flush the whole persistence
+      // context, O(n^2) over a large import and no JDBC batching). A lost @Version race is
+      // detected by the single flush() in importSnapshot, which runs before the audit row and the
+      // cache eviction are queued; the exception rolls back every entry (all-or-nothing).
+      flagStateRepository.save(state);
     }
     return item(entry, ImportOutcome.UPDATED, "state overwritten");
   }
