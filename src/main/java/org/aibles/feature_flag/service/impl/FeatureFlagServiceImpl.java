@@ -216,6 +216,16 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   }
 
   @Override
+  public List<FlagStateResponse> listStates(UUID flagId) {
+    FeatureFlag flag = findById(flagId);
+    UUID projectId = flag.getProject().getId();
+    permissionService.check(Action.FLAG_READ, PermissionService.ResourceRef.project(projectId));
+    return flagStateRepository.findAllByFlagIdAndProjectId(flagId, projectId).stream()
+        .map(this::toStateResponse)
+        .toList();
+  }
+
+  @Override
   public FlagStateResponse getState(UUID flagId, UUID environmentId) {
     FeatureFlag flag = findById(flagId);
     permissionService.check(

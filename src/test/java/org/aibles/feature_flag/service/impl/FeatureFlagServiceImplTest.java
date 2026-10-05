@@ -16,6 +16,7 @@ import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFeatureFlagRequest;
@@ -25,6 +26,7 @@ import org.aibles.feature_flag.dto.response.FlagStateResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
 import org.aibles.feature_flag.exception.InvalidRequestException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
 import org.aibles.feature_flag.notification.event.FlagStateChangedEvent;
@@ -319,6 +321,73 @@ class FeatureFlagServiceImplTest {
 
     assertThat(result.isEnabled()).isTrue();
     assertThat(result.getVersion()).isEqualTo(7L);
+  }
+
+  @Test
+  void listStates_returnsStatesScopedToFlagProject_afterReadCheck() {
+    UUID flagId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("f")
+            .valueType(FlagValueType.BOOLEAN)
+            .archived(false)
+            .build();
+    Environment env = Environment.builder().id(UUID.randomUUID()).project(project).build();
+    FlagEnvironmentState state =
+        FlagEnvironmentState.builder()
+            .id(UUID.randomUUID())
+            .featureFlag(flag)
+            .environment(env)
+            .enabled(true)
+            .rolloutPercent(40)
+            .version(2L)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    when(flagStateRepository.findAllByFlagIdAndProjectId(flagId, projectId))
+        .thenReturn(List.of(state));
+
+    List<FlagStateResponse> result = service.listStates(flagId);
+
+    assertThat(result).hasSize(1);
+    assertThat(result.get(0).getEnvironmentId()).isEqualTo(env.getId());
+    assertThat(result.get(0).getVersion()).isEqualTo(2L);
+    assertThat(result.get(0).getRolloutPercent()).isEqualTo(40);
+    verify(permissionService)
+        .check(Action.FLAG_READ, PermissionService.ResourceRef.project(projectId));
+  }
+
+  @Test
+  void listStates_throwsNotFound_whenFlagDoesNotExist() {
+    UUID flagId = UUID.randomUUID();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.listStates(flagId))
+        .isInstanceOf(ResourceNotFoundException.class);
+    verifyNoInteractions(flagStateRepository);
+  }
+
+  @Test
+  void listStates_doesNotQuery_whenReadPermissionDenied() {
+    UUID flagId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("f")
+            .valueType(FlagValueType.BOOLEAN)
+            .archived(false)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    doThrow(new UnauthorizedException("no"))
+        .when(permissionService)
+        .check(eq(Action.FLAG_READ), any());
+
+    assertThatThrownBy(() -> service.listStates(flagId)).isInstanceOf(UnauthorizedException.class);
+    verifyNoInteractions(flagStateRepository);
   }
 
   @Test

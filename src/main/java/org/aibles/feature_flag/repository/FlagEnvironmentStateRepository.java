@@ -24,6 +24,18 @@ public interface FlagEnvironmentStateRepository extends JpaRepository<FlagEnviro
 
   List<FlagEnvironmentState> findAllByFeatureFlagId(UUID featureFlagId);
 
+  /**
+   * Every state of one flag, restricted to environments of {@code projectId} (the flag's project,
+   * server-derived). The {@code e.project.id} predicate is defence in depth (S-2.6, design 8.1): a
+   * state row linking the flag to another project's environment is never returned.
+   */
+  @Query(
+      "SELECT s FROM FlagEnvironmentState s JOIN FETCH s.environment e "
+          + "WHERE s.featureFlag.id = :flagId AND e.project.id = :projectId "
+          + "ORDER BY e.createdAt, e.id")
+  List<FlagEnvironmentState> findAllByFlagIdAndProjectId(
+      @Param("flagId") UUID flagId, @Param("projectId") UUID projectId);
+
   // --- issue #37: throttled last-evaluated tracking -----------------------------------------
 
   /**

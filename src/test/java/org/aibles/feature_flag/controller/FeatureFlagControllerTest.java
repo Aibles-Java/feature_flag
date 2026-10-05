@@ -379,4 +379,28 @@ class FeatureFlagControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.enabled").value(false));
   }
+
+  @Test
+  void listStates_returns200_withAllStatesOfFlag() throws Exception {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    when(featureFlagService.listStates(flagId))
+        .thenReturn(
+            List.of(
+                FlagStateResponse.builder()
+                    .flagId(flagId)
+                    .environmentId(envId)
+                    .enabled(true)
+                    .rolloutPercent(50)
+                    .version(3L)
+                    .build()));
+
+    mockMvc
+        .perform(get("/api/v1/flags/{flagId}/environments", flagId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(1))
+        .andExpect(jsonPath("$[0].environmentId").value(envId.toString()))
+        .andExpect(jsonPath("$[0].version").value(3))
+        .andExpect(jsonPath("$[0].rolloutPercent").value(50));
+  }
 }
