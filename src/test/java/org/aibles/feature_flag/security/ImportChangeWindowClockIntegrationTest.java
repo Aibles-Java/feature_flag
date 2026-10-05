@@ -7,7 +7,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.UUID;
 import org.aibles.feature_flag.config.AppConfig;
 import org.aibles.feature_flag.domain.entity.User;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
@@ -112,15 +111,18 @@ class ImportChangeWindowClockIntegrationTest {
   }
 
   @Test
-  @DisplayName("window 20-23: change-window clock (21:00) is inside, general clock (10:00) is not -> OWNER allowed")
+  @DisplayName(
+      "window 20-23: change-window clock (21:00) is inside, general clock (10:00) is not -> OWNER allowed")
   void windowClockInside_generalClockOutside_allowed() {
     window(20, 23);
-    assertThat(service.importSnapshot(FixtureIds.ENV_A_PROD, request()).getItems().get(0).getOutcome())
+    assertThat(
+            service.importSnapshot(FixtureIds.ENV_A_PROD, request()).getItems().get(0).getOutcome())
         .isEqualTo(ImportOutcome.UPDATED);
   }
 
   @Test
-  @DisplayName("window 09-17: general clock (10:00) is inside, change-window clock (21:00) is not -> 403")
+  @DisplayName(
+      "window 09-17: general clock (10:00) is inside, change-window clock (21:00) is not -> 403")
   void windowClockOutside_generalClockInside_denied() {
     window(9, 17);
     List<String> before = SyntheticFixture.snapshot(jdbc);

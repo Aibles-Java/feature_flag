@@ -70,8 +70,9 @@ class ImportValueValidationIntegrationTest {
   @AfterEach
   void clear() {
     SecurityContextHolder.clearContext();
-    jdbc.update("delete from flag_environment_states where feature_flag_id in"
-        + " (select id from feature_flags where key = 'qa-new-flag')");
+    jdbc.update(
+        "delete from flag_environment_states where feature_flag_id in"
+            + " (select id from feature_flags where key = 'qa-new-flag')");
     jdbc.update("delete from feature_flags where key = 'qa-new-flag'");
   }
 
@@ -145,7 +146,8 @@ class ImportValueValidationIntegrationTest {
     ImportResultResponse r = service.importSnapshot(ENV, mixed(strategy, false));
 
     assertThat(r.getItems())
-        .extracting(ImportResultResponse.ItemResult::getFlagKey,
+        .extracting(
+            ImportResultResponse.ItemResult::getFlagKey,
             ImportResultResponse.ItemResult::getOutcome)
         .startsWith(
             tuple("tst-flag-page-size", ImportOutcome.SKIPPED),
@@ -162,7 +164,9 @@ class ImportValueValidationIntegrationTest {
     List<String> changed = after.stream().filter(a -> !before.contains(a)).toList();
     if (strategy == ImportConflictStrategy.OVERWRITE) {
       assertThat(changed).hasSize(1);
-      assertThat(changed.get(0)).contains(FixtureIds.FLAG_A1.toString()).containsIgnoringCase("|true|false|70");
+      assertThat(changed.get(0))
+          .contains(FixtureIds.FLAG_A1.toString())
+          .containsIgnoringCase("|true|false|70");
     } else {
       assertThat(changed).isEmpty();
       assertThat(r.getItems().get(4).getOutcome()).isEqualTo(ImportOutcome.SKIPPED);
