@@ -120,7 +120,8 @@ class EnvironmentChangeWindowOpenNowHttpTest {
         "Authorization",
         "Bearer "
             + jwt.generateToken(
-                UserPrincipal.from(User.builder().id(user).email(email).passwordHash("x").build())));
+                UserPrincipal.from(
+                    User.builder().id(user).email(email).passwordHash("x").build())));
     return client.send(b.build(), HttpResponse.BodyHandlers.ofString());
   }
 
@@ -135,7 +136,8 @@ class EnvironmentChangeWindowOpenNowHttpTest {
   }
 
   private JsonNode getEnv(UUID env) throws Exception {
-    HttpResponse<String> r = call("GET", "/api/v1/environments/" + env, FixtureIds.USER_OWNER_X, null);
+    HttpResponse<String> r =
+        call("GET", "/api/v1/environments/" + env, FixtureIds.USER_OWNER_X, null);
     assertThat(r.statusCode()).isEqualTo(200);
     return mapper.readTree(r.body());
   }
@@ -158,8 +160,12 @@ class EnvironmentChangeWindowOpenNowHttpTest {
     assertThat(n.has("changeWindowOpenNow")).isTrue();
     boolean openNow = n.get("changeWindowOpenNow").asBoolean();
     assertThat(prodWriteAllowed(flag, env))
-        .as("parity at %s (window %s-%s tz %s)", at, n.get("changeWindowStartHour"),
-            n.get("changeWindowEndHour"), n.get("changeWindowTimezone"))
+        .as(
+            "parity at %s (window %s-%s tz %s)",
+            at,
+            n.get("changeWindowStartHour"),
+            n.get("changeWindowEndHour"),
+            n.get("changeWindowTimezone"))
         .isEqualTo(openNow);
   }
 
@@ -302,7 +308,9 @@ class EnvironmentChangeWindowOpenNowHttpTest {
           "America/New_York");
       JsonNode n = getEnv(FixtureIds.ENV_A_PROD);
       assertThat(n.get("changeWindowZone").asText()).isEqualTo("America/New_York");
-      assertThat(n.get("changeWindowOpenNow").asBoolean()).as("case %d %s", k, cases[k][0]).isEqualTo(expect[k]);
+      assertThat(n.get("changeWindowOpenNow").asBoolean())
+          .as("case %d %s", k, cases[k][0])
+          .isEqualTo(expect[k]);
       assertParity(FixtureIds.FLAG_A1, FixtureIds.ENV_A_PROD, cases[k][0]);
     }
   }
@@ -384,7 +392,12 @@ class EnvironmentChangeWindowOpenNowHttpTest {
             String.class,
             FixtureIds.ENV_A_DEV);
     assertThat(rows).isNotEmpty();
-    for (String s : new java.util.ArrayList<>(rows) {{ addAll(after); }}) {
+    for (String s :
+        new java.util.ArrayList<>(rows) {
+          {
+            addAll(after);
+          }
+        }) {
       assertThat(s).doesNotContain("changeWindowOpenNow").doesNotContain("changeWindowZone");
     }
   }
@@ -393,29 +406,50 @@ class EnvironmentChangeWindowOpenNowHttpTest {
   @DisplayName("audit before/after for update and delete have the exact stored-attribute key set")
   void auditKeySetExact() throws Exception {
     NOW.set(Instant.parse("2026-01-15T10:00:00Z"));
-    call("PUT", "/api/v1/environments/" + FixtureIds.ENV_A_DEV, FixtureIds.USER_OWNER_X,
+    call(
+        "PUT",
+        "/api/v1/environments/" + FixtureIds.ENV_A_DEV,
+        FixtureIds.USER_OWNER_X,
         "{\"description\":\"x\"}");
     call("DELETE", "/api/v1/environments/" + FixtureIds.ENV_A_STG, FixtureIds.USER_OWNER_X, null);
     HttpResponse<String> created =
-        call("POST", "/api/v1/environments", FixtureIds.USER_OWNER_X,
-            "{\"projectId\":\"" + FixtureIds.PROJECT_A + "\",\"name\":\"qa-new\",\"type\":\"DEVELOPMENT\"}");
+        call(
+            "POST",
+            "/api/v1/environments",
+            FixtureIds.USER_OWNER_X,
+            "{\"projectId\":\""
+                + FixtureIds.PROJECT_A
+                + "\",\"name\":\"qa-new\",\"type\":\"DEVELOPMENT\"}");
     assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
     String newId = mapper.readTree(created.body()).get("id").asText();
     assertThat(created.body()).doesNotContain("changeWindowOpenNow");
     String createAfter =
         jdbc.queryForObject(
-            "select after_state from audit_log where entity_id = '" + newId + "' and action = 'CREATE'",
+            "select after_state from audit_log where entity_id = '"
+                + newId
+                + "' and action = 'CREATE'",
             String.class);
-    assertThat(createAfter).doesNotContain("changeWindowZone").doesNotContain("changeWindowOpenNow");
+    assertThat(createAfter)
+        .doesNotContain("changeWindowZone")
+        .doesNotContain("changeWindowOpenNow");
     for (String sql :
         List.of(
-            "select before_state from audit_log where entity_id = '" + FixtureIds.ENV_A_DEV + "' and action = 'UPDATE'",
-            "select after_state from audit_log where entity_id = '" + FixtureIds.ENV_A_DEV + "' and action = 'UPDATE'",
-            "select before_state from audit_log where entity_id = '" + FixtureIds.ENV_A_STG + "' and action = 'DELETE'")) {
+            "select before_state from audit_log where entity_id = '"
+                + FixtureIds.ENV_A_DEV
+                + "' and action = 'UPDATE'",
+            "select after_state from audit_log where entity_id = '"
+                + FixtureIds.ENV_A_DEV
+                + "' and action = 'UPDATE'",
+            "select before_state from audit_log where entity_id = '"
+                + FixtureIds.ENV_A_STG
+                + "' and action = 'DELETE'")) {
       List<String> payloads = jdbc.queryForList(sql, String.class);
       assertThat(payloads).as(sql).isNotEmpty();
       for (String pl : payloads) {
-        assertThat(pl).as(sql).doesNotContain("changeWindowZone").doesNotContain("changeWindowOpenNow");
+        assertThat(pl)
+            .as(sql)
+            .doesNotContain("changeWindowZone")
+            .doesNotContain("changeWindowOpenNow");
       }
     }
   }

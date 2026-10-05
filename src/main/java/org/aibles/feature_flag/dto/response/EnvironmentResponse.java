@@ -1,8 +1,8 @@
 package org.aibles.feature_flag.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.LocalDateTime;
 import java.util.UUID;
-import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Builder;
 import lombok.Data;
 import org.aibles.feature_flag.domain.enums.EnvType;
