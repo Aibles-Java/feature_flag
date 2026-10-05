@@ -154,7 +154,7 @@ class FlagMatrixIntegrationTest {
 
   @Test
   @DisplayName(
-      "AC3 / T-PAGE-1 + AC4: 100 flags x 20 envs; size=1000 clamps to 100; <= 2 statements")
+      "AC3 / T-PAGE-1 + AC4: 100 flags x 20 envs; size=1000 clamps to 100; data path (excluding authorization) <= 2 statements")
   void clampAndConstantQueryCount() {
     seedBulk(); // project A: 100 flags x 20 envs
     as(FixtureIds.USER_OWNER_X);
@@ -162,6 +162,9 @@ class FlagMatrixIntegrationTest {
 
     // statements issued by the authorization step alone, so they are not counted against the data
     // path
+    // warm any permission cache first so the subtraction cannot over-credit the data path
+    permissionService.check(
+        Action.FLAG_READ, PermissionService.ResourceRef.project(FixtureIds.PROJECT_A));
     stats.clear();
     permissionService.check(
         Action.FLAG_READ, PermissionService.ResourceRef.project(FixtureIds.PROJECT_A));
@@ -169,7 +172,11 @@ class FlagMatrixIntegrationTest {
 
     stats.clear();
     PageResponse<FlagMatrixRowResponse> big = service.getMatrix(FixtureIds.PROJECT_A, 0, 1000);
-    long dataStatements = stats.getPrepareStatementCount() - permissionStatements;
+    long totalStatements = stats.getPrepareStatementCount();
+    long dataStatements = totalStatements - permissionStatements;
+    // honesty guard: the data path really issues the flag page + the states query
+    assertThat(dataStatements).as("raw total %s, perm %s", totalStatements, permissionStatements)
+        .isGreaterThanOrEqualTo(2);
 
     assertThat(big.getSize()).isEqualTo(100);
     assertThat(big.getContent()).hasSize(100);

@@ -41,11 +41,12 @@ public class FlagMatrixServiceImpl implements FlagMatrixService {
   public PageResponse<FlagMatrixRowResponse> getMatrix(UUID projectId, int page, int size) {
     permissionService.check(Action.FLAG_READ, PermissionService.ResourceRef.project(projectId));
 
-    int safePage = Math.max(page, 0);
     int safeSize =
         size < 1
             ? PaginationConfig.MATRIX_DEFAULT_PAGE_SIZE
             : Math.min(size, PaginationConfig.MAX_PAGE_SIZE);
+    // keep page * size within int: the offset is narrowed to int downstream (else a huge page 500s)
+    int safePage = Math.min(Math.max(page, 0), (Integer.MAX_VALUE / safeSize) - 1);
 
     List<Object[]> rows =
         featureFlagRepository.findActivePageWithTotal(
