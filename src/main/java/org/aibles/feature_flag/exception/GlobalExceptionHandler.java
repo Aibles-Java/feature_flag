@@ -13,8 +13,10 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -100,6 +102,28 @@ public class GlobalExceptionHandler {
     problem.setType(URI.create("about:blank"));
     problem.setTitle("Bad Request");
     problem.setDetail(ex.getMessage());
+    problem.setInstance(URI.create(request.getRequestURI()));
+    return withRequestId(problem);
+  }
+
+  /**
+   * A required query parameter is absent or has the wrong type (e.g. a non-UUID projectId): a
+   * client error, 400 — not the catch-all 500. The detail names only the parameter, never the
+   * submitted value.
+   */
+  @ExceptionHandler({
+    MissingServletRequestParameterException.class,
+    MethodArgumentTypeMismatchException.class
+  })
+  public ProblemDetail handleBadParameter(Exception ex, HttpServletRequest request) {
+    String name =
+        ex instanceof MissingServletRequestParameterException m
+            ? m.getParameterName()
+            : ((MethodArgumentTypeMismatchException) ex).getName();
+    ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+    problem.setType(URI.create("about:blank"));
+    problem.setTitle("Bad Request");
+    problem.setDetail("Missing or invalid request parameter: " + name);
     problem.setInstance(URI.create(request.getRequestURI()));
     return withRequestId(problem);
   }
