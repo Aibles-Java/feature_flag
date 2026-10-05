@@ -608,6 +608,89 @@ class EnvironmentTransferServiceImplTest {
     verify(permissionService).check(eq(Action.FLAG_STATE_UPDATE), any());
   }
 
+  // ------------------------------------------- S-0.6 (F23): value/valueType check on import
+
+  /** One mismatching entry per case (a)/(b)/(c) plus one valid entry that must still be applied. */
+  private ImportEnvironmentRequest mismatchingAndValidEntries(boolean dryRun) {
+    // (a) flag has a state in the target env
+    FeatureFlag withState = flag("with-state", "With state", FlagValueType.INTEGER, false);
+    // (b) flag exists but has no state row in the target env
+    FeatureFlag noState = flag("no-state", "No state", FlagValueType.BOOLEAN, false);
+    stubExistingFlags(withState, noState, stringFlag);
+    stubTargetStates(List.of(state(withState, targetEnv, false, "1", 100)));
+    stubTargetStates(List.of(state(stringFlag, targetEnv, false, "old", 100)));
+
+    ImportEnvironmentRequest.FlagEntry a = entry(withState, true, "abc", 100);
+    ImportEnvironmentRequest.FlagEntry b = entry(noState, true, "yes", 100);
+    // (c) new flag: the entry's own valueType decides
+    ImportEnvironmentRequest.FlagEntry c = entry(boolFlag, true, "{bad", 100);
+    c.setKey("brand-new");
+    c.setValueType(FlagValueType.JSON);
+    ImportEnvironmentRequest.FlagEntry valid = entry(stringFlag, true, "fresh", 100);
+
+    ImportEnvironmentRequest req = importRequest(ImportConflictStrategy.OVERWRITE, a, b, c, valid);
+    req.setDryRun(dryRun);
+    return req;
+  }
+
+  @Test
+  void
+      import_overwriteRealRun_valueMismatchingValueType_skipsAllThreeCases_validEntryStillApplied() {
+    ImportResultResponse result =
+        service.importSnapshot(targetEnvId, mismatchingAndValidEntries(false));
+
+    assertThat(result.getItems())
+        .extracting(
+            ImportResultResponse.ItemResult::getFlagKey,
+            ImportResultResponse.ItemResult::getOutcome)
+        .containsExactly(
+            tuple("with-state", ImportOutcome.SKIPPED),
+            tuple("no-state", ImportOutcome.SKIPPED),
+            tuple("brand-new", ImportOutcome.SKIPPED),
+            tuple("banner-text", ImportOutcome.UPDATED));
+    assertThat(result.getItems().subList(0, 3))
+        .allSatisfy(
+            i ->
+                assertThat(i.getDetail())
+                    .startsWith("invalid value")
+                    .doesNotContain("abc", "yes", "{bad"));
+    // Only the valid entry wrote anything; nothing was created for the invalid ones.
+    ArgumentCaptor<FlagEnvironmentState> saved =
+        ArgumentCaptor.forClass(FlagEnvironmentState.class);
+    verify(flagStateRepository, times(1)).save(saved.capture());
+    assertThat(saved.getValue().getFeatureFlag()).isSameAs(stringFlag);
+    assertThat(saved.getValue().getValue()).isEqualTo("fresh");
+    verify(featureFlagRepository, never()).save(any());
+  }
+
+  @Test
+  void import_dryRunReportsTheIdenticalItemListAsTheRealRun() {
+    ImportResultResponse dry =
+        service.importSnapshot(targetEnvId, mismatchingAndValidEntries(true));
+    verify(flagStateRepository, never()).save(any());
+    ImportResultResponse real =
+        service.importSnapshot(targetEnvId, mismatchingAndValidEntries(false));
+
+    assertThat(dry.isDryRun()).isTrue();
+    assertThat(real.isDryRun()).isFalse();
+    assertThat(dry.getItems()).usingRecursiveComparison().isEqualTo(real.getItems());
+    assertThat(dry.getSummary()).usingRecursiveComparison().isEqualTo(real.getSummary());
+  }
+
+  @Test
+  void import_nullValueIsValidForEveryValueType() {
+    FeatureFlag intFlag = flag("int-flag", "Int", FlagValueType.INTEGER, false);
+    stubExistingFlags(intFlag);
+    stubTargetStates(List.of(state(intFlag, targetEnv, false, "1", 100)));
+
+    ImportResultResponse result =
+        service.importSnapshot(
+            targetEnvId,
+            importRequest(ImportConflictStrategy.OVERWRITE, entry(intFlag, true, null, 100)));
+
+    assertThat(result.getItems().get(0).getOutcome()).isEqualTo(ImportOutcome.UPDATED);
+  }
+
   // --------------------------------------------------------------- helpers
 
   private FeatureFlag flag(String key, String name, FlagValueType type, boolean archived) {
