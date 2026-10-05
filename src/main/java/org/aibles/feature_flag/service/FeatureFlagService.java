@@ -1,5 +1,6 @@
 package org.aibles.feature_flag.service;
 
+import java.util.List;
 import java.util.UUID;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFeatureFlagRequest;
@@ -23,6 +24,9 @@ public interface FeatureFlagService {
   void unarchive(UUID id);
 
   Page<FeatureFlagResponse> listArchivedByProject(UUID projectId, Pageable pageable);
+
+  /** All states of one flag (project taken from the flag; needs FLAG_READ on it). */
+  List<FlagStateResponse> listStates(UUID flagId);
 
   FlagStateResponse getState(UUID flagId, UUID environmentId);
 
