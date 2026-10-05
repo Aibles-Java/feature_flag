@@ -178,6 +178,7 @@ class UpdateStateVersionIntegrationTest {
       assertThat(dbValue()).isEqualTo(winnerValue);
       assertThat(dbVersion()).isEqualTo(1L);
       assertThat(auditRows()).isEqualTo(1L);
+      assertThat(events.stream(FlagStateChangedEvent.class)).hasSize(1);
     } finally {
       pool.shutdownNow();
     }
