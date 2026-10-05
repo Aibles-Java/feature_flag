@@ -418,7 +418,7 @@ class FeatureFlagServiceImplTest {
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
         .thenReturn(Optional.of(state));
-    when(flagStateRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    when(flagStateRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
     req.setEnabled(true);
@@ -426,13 +426,13 @@ class FeatureFlagServiceImplTest {
 
     if (accepted) {
       service.updateState(flagId, envId, req);
-      verify(flagStateRepository).save(any());
+      verify(flagStateRepository).saveAndFlush(any());
     } else {
       assertThatThrownBy(() -> service.updateState(flagId, envId, req))
           .isInstanceOf(InvalidRequestException.class)
           .hasMessageContaining("8192")
           .hasMessageNotContaining("aaaa");
-      verify(flagStateRepository, never()).save(any());
+      verify(flagStateRepository, never()).saveAndFlush(any());
       verifyNoInteractions(auditService, eventPublisher, evaluationCacheService);
     }
   }
@@ -470,7 +470,7 @@ class FeatureFlagServiceImplTest {
 
     assertThatThrownBy(() -> service.updateState(flagId, envId, req))
         .isInstanceOf(InvalidRequestException.class);
-    verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAndFlush(any());
     verifyNoInteractions(auditService, eventPublisher, evaluationCacheService);
   }
 
@@ -628,7 +628,7 @@ class FeatureFlagServiceImplTest {
     // (ADR-03: lazy-create would turn F17 into a write IDOR and create implicit PROD state).
     assertThatThrownBy(() -> service.updateState(flagId, envId, req))
         .isInstanceOf(ResourceNotFoundException.class);
-    verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAndFlush(any());
     verify(flagStateRepository, never()).saveAll(any());
   }
 }
