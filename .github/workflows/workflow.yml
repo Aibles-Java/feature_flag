@@ -144,7 +144,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build image (local only, for scanning)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -232,7 +232,7 @@ jobs:
 
       - name: Build image (local only, for scanning)
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -269,7 +269,7 @@ jobs:
       # Re-uses the cache populated above — this is a cache-hit rebuild, not a
       # fresh compile, since context and Dockerfile are unchanged.
       - name: Push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
