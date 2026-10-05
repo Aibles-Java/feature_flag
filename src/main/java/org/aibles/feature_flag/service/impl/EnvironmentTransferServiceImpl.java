@@ -220,8 +220,10 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
       ImportConflictStrategy strategy,
       boolean dryRun) {
 
-    // Per-entry value check, shared by dry run and real run (identical outcome). S-0.6 extends
-    // invalidValueReason with the valueType check; the reason never echoes the value.
+    // Per-entry value check (length, then value vs valueType), run before any lookup or write and
+    // before the dry-run/real-run split, so a dry run reports exactly the SKIPPED a real run would
+    // and the check covers every case: flag with state, flag without state here, and a new flag.
+    // The reason never echoes the value.
     String invalidValue = invalidValueReason(entry);
     if (invalidValue != null) {
       return item(entry, ImportOutcome.SKIPPED, invalidValue);
@@ -277,10 +279,20 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
     return item(entry, ImportOutcome.UPDATED, "state overwritten");
   }
 
-  /** Why this entry's {@code value} is unacceptable, or {@code null} when it is fine (S-0.5). */
+  /**
+   * Why this entry's {@code value} is unacceptable, or {@code null} when it is fine (S-0.5 length,
+   * S-0.6 type). The type is the entry's own {@code valueType}: for a new flag that is the type it
+   * will be created with, and for an existing flag an entry whose type differs from the flag's is
+   * skipped as a "value type mismatch" anyway, so every entry that can be applied has been checked
+   * against the type it is applied under. Length runs first so an oversized JSON document is never
+   * parsed.
+   */
   private String invalidValueReason(ImportEnvironmentRequest.FlagEntry entry) {
     if (!FlagValueValidator.isWithinLength(entry.getValue(), flagValueProperties.maxLength())) {
       return "invalid value: exceeds " + flagValueProperties.maxLength() + " characters";
+    }
+    if (!FlagValueValidator.isValid(entry.getValueType(), entry.getValue())) {
+      return "invalid value: not a valid " + entry.getValueType();
     }
     return null;
   }
