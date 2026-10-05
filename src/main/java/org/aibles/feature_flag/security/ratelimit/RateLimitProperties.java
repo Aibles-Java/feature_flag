@@ -32,6 +32,14 @@ public class RateLimitProperties {
    */
   private Limit sdkIp = new Limit(600, Duration.ofMinutes(1));
 
+  /**
+   * Per-user limit for {@code GET /api/v1/flags/environment-states} (S-2.10, D-12): 60 requests per
+   * minute by default; the response can be large (up to ~16 MB at 100 flags x 20 envs), so this
+   * caps per-user bandwidth/DB amplification. Override with {@code APP_RATELIMIT_MATRIX_CAPACITY} /
+   * {@code APP_RATELIMIT_MATRIX_REFILLPERIOD}.
+   */
+  private Limit matrix = new Limit(60, Duration.ofMinutes(1));
+
   @Data
   public static class Limit {
     /** Max tokens in the bucket (burst size). */
