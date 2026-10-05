@@ -7,7 +7,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
 import org.aibles.feature_flag.controller.admin.FeatureFlagController;
@@ -17,6 +16,7 @@ import org.aibles.feature_flag.exception.GlobalExceptionHandler;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.service.FeatureFlagService;
+import org.aibles.feature_flag.testsupport.FixedClocksTestConfig;
 import org.aibles.feature_flag.testsupport.FixtureIds;
 import org.aibles.feature_flag.testsupport.SyntheticFixture;
 import org.junit.jupiter.api.AfterEach;
@@ -25,9 +25,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -44,21 +42,14 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
  */
 @SpringBootTest(
     properties = {
+      "spring.main.allow-bean-definition-overriding=true",
       "spring.datasource.url=jdbc:h2:mem:idor-adv-testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;"
           + "MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=KEY,VALUE;"
           + "CASE_INSENSITIVE_IDENTIFIERS=TRUE"
     })
 @ActiveProfiles("test")
+@Import(FixedClocksTestConfig.class)
 class FlagStateEnvIsolationAdversarialTest {
-
-  @TestConfiguration
-  static class FixedClockConfig {
-    @Bean
-    @Primary
-    Clock fixedClock() {
-      return SyntheticFixture.CLOCK;
-    }
-  }
 
   @Autowired FeatureFlagService service;
   @Autowired JdbcTemplate jdbc;
