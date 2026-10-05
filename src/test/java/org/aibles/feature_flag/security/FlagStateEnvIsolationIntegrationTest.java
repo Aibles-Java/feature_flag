@@ -3,7 +3,6 @@ package org.aibles.feature_flag.security;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
 import org.aibles.feature_flag.domain.entity.User;
@@ -12,6 +11,7 @@ import org.aibles.feature_flag.dto.response.FlagStateResponse;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
 import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.service.FeatureFlagService;
+import org.aibles.feature_flag.testsupport.FixedClocksTestConfig;
 import org.aibles.feature_flag.testsupport.FixtureIds;
 import org.aibles.feature_flag.testsupport.SyntheticFixture;
 import org.junit.jupiter.api.AfterEach;
@@ -20,9 +20,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -36,21 +34,14 @@ import org.springframework.test.context.ActiveProfiles;
  */
 @SpringBootTest(
     properties = {
+      "spring.main.allow-bean-definition-overriding=true",
       "spring.datasource.url=jdbc:h2:mem:idor-testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;"
           + "MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=KEY,VALUE;"
           + "CASE_INSENSITIVE_IDENTIFIERS=TRUE"
     })
 @ActiveProfiles("test")
+@Import(FixedClocksTestConfig.class)
 class FlagStateEnvIsolationIntegrationTest {
-
-  @TestConfiguration
-  static class FixedClockConfig {
-    @Bean
-    @Primary
-    Clock fixedClock() {
-      return SyntheticFixture.CLOCK;
-    }
-  }
 
   @Autowired FeatureFlagService service;
   @Autowired JdbcTemplate jdbc;
