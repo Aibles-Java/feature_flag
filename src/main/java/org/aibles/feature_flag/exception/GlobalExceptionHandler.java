@@ -140,6 +140,20 @@ public class GlobalExceptionHandler {
     return withRequestId(problem);
   }
 
+  /** A path/query value that does not parse (e.g. a non-UUID id) is the caller's error: 400. */
+  @ExceptionHandler(
+      org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+  public ProblemDetail handleTypeMismatch(
+      org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex,
+      HttpServletRequest request) {
+    ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+    problem.setType(URI.create("about:blank"));
+    problem.setTitle("Bad Request");
+    problem.setDetail("Invalid value for parameter '" + ex.getName() + "'");
+    problem.setInstance(URI.create(request.getRequestURI()));
+    return withRequestId(problem);
+  }
+
   @ExceptionHandler(Exception.class)
   public ProblemDetail handleGeneric(Exception ex, HttpServletRequest request) {
     ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.INTERNAL_SERVER_ERROR);
