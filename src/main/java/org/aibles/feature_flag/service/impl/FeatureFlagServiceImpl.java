@@ -3,6 +3,7 @@ package org.aibles.feature_flag.service.impl;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.aibles.feature_flag.config.FlagValueProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
@@ -31,12 +32,15 @@ import org.aibles.feature_flag.repository.ProjectRepository;
 import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.service.FeatureFlagService;
 import org.aibles.feature_flag.util.FlagValueValidator;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FeatureFlagServiceImpl implements FeatureFlagService {
@@ -51,6 +55,10 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   private final FeatureFlagMetrics metrics;
   private final AuditService auditService;
   private final FlagValueProperties flagValueProperties;
+
+  /** D-05(2) step 2: when true, PUT state without {@code version} is rejected (400). */
+  @Value("${app.flag-state.require-version:false}")
+  private boolean requireVersion;
 
   @Override
   @Transactional
@@ -250,6 +258,21 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
             .orElseThrow(
                 () -> new ResourceNotFoundException("Flag state not found for this environment"));
 
+    // ADR-07 / D-05(2): optimistic concurrency. Checked before any mutation, audit or event; a
+    // concurrent writer that slips past this check is caught by @Version at flush (also 409).
+    if (request.getVersion() == null) {
+      if (requireVersion) {
+        throw new InvalidRequestException("version is required");
+      }
+      // Never log the request body/value.
+      log.warn(
+          "PUT flag state without version (deprecated, will be required): flagId={}, envId={}",
+          flagId,
+          environmentId);
+    } else if (!request.getVersion().equals(state.getVersion())) {
+      throw new ObjectOptimisticLockingFailureException(FlagEnvironmentState.class, state.getId());
+    }
+
     boolean clearValue = Boolean.TRUE.equals(request.getClearValue());
     if (clearValue && request.getValue() != null) {
       throw new InvalidRequestException("clearValue cannot be combined with a non-null value");
@@ -270,7 +293,9 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
       state.setValue(request.getValue());
     }
     if (request.getRolloutPercent() != null) state.setRolloutPercent(request.getRolloutPercent());
-    FlagEnvironmentState saved = flagStateRepository.save(state);
+    // Flush now so the @Version bump is reflected in the response (the client must send it
+    // back) and a lost race fails here, before audit/event, as a 409.
+    FlagEnvironmentState saved = flagStateRepository.saveAndFlush(state);
     FlagStateResponse response = toStateResponse(saved);
     auditService.record(
         AuditEntityType.FLAG_STATE,

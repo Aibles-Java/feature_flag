@@ -24,4 +24,13 @@ public class UpdateFlagStateRequest {
   @jakarta.validation.constraints.Min(0)
   @jakarta.validation.constraints.Max(100)
   private Integer rolloutPercent;
+
+  @Schema(
+      description =
+          "The state's version as last read (FlagStateResponse.version). If it no longer matches"
+              + " the stored version the request is rejected with 409 and nothing is written."
+              + " Optional during the D-05(2) transition (a warning is logged); required (400"
+              + " when missing) once app.flag-state.require-version is enabled.",
+      nullable = true)
+  private Long version;
 }

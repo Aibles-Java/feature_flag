@@ -106,6 +106,7 @@ class EnvironmentDefaultStatesIntegrationTest {
             s -> {
               assertThat(s.isEnabled()).isFalse();
               assertThat(s.getRolloutPercent()).isEqualTo(100);
+              assertThat(s.getVersion()).isZero();
               assertThat(s.getValue()).isNull();
             });
   }
@@ -173,6 +174,7 @@ class EnvironmentDefaultStatesIntegrationTest {
             s -> {
               assertThat(s.isEnabled()).isFalse();
               assertThat(s.getRolloutPercent()).isEqualTo(100);
+              assertThat(s.getVersion()).isZero();
             });
   }
 
