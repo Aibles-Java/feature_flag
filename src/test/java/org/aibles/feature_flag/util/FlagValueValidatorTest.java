@@ -198,4 +198,20 @@ class FlagValueValidatorTest {
     assertThat(FlagValueValidator.isWithinLength(multiByte, 8192)).isTrue();
     assertThat(FlagValueValidator.isWithinLength(multiByte + "x", 8192)).isFalse();
   }
+
+  @Test
+  void length_utf16CodeUnits_surrogatePairCountsAsTwo() {
+    // U+1F600 is one code point but two UTF-16 code units: 4096 of them = 8192 units (accepted),
+    // 4097 = 8194 units (rejected). Documents the chars = String.length() semantics.
+    String emoji = "\uD83D\uDE00";
+    assertThat(FlagValueValidator.isWithinLength(emoji.repeat(4096), 8192)).isTrue();
+    assertThat(FlagValueValidator.isWithinLength(emoji.repeat(4097), 8192)).isFalse();
+  }
+
+  @Test
+  void length_emptyAndNullAccepted() {
+    assertThat(FlagValueValidator.isWithinLength("", 8192)).isTrue();
+    assertThat(FlagValueValidator.isWithinLength(null, 8192)).isTrue();
+    assertThatCode(() -> FlagValueValidator.validateLength("", 8192)).doesNotThrowAnyException();
+  }
 }
