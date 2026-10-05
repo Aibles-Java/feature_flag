@@ -32,6 +32,19 @@ public class RateLimitProperties {
    */
   private Limit sdkIp = new Limit(600, Duration.ofMinutes(1));
 
+  /**
+   * Per-user limit for {@code GET /api/v1/flags/environment-states} (S-2.10, D-12): 60 requests per
+   * minute by default; the response can be large (up to ~16 MB at 100 flags x 20 envs), so this
+   * caps per-user bandwidth/DB amplification. Override with {@code APP_RATELIMIT_MATRIX_CAPACITY} /
+   * {@code APP_RATELIMIT_MATRIX_REFILLPERIOD}.
+   *
+   * <p>Buckets are in-memory and per application instance: with N replicas the effective limit is
+   * up to N x capacity per refill period per user. The bucket cache has no maximumSize on purpose
+   * (like the other scopes): size-based eviction could reset an abuser's bucket under key churn;
+   * idle buckets are already evicted via expireAfterAccess.
+   */
+  private Limit matrix = new Limit(60, Duration.ofMinutes(1));
+
   @Data
   public static class Limit {
     /** Max tokens in the bucket (burst size). */

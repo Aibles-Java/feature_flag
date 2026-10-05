@@ -11,6 +11,7 @@ import org.aibles.feature_flag.security.JwtAuthenticationFilter;
 import org.aibles.feature_flag.security.JwtTokenProvider;
 import org.aibles.feature_flag.security.ProblemDetailAuthenticationEntryPoint;
 import org.aibles.feature_flag.security.ratelimit.AuthRateLimitFilter;
+import org.aibles.feature_flag.security.ratelimit.MatrixRateLimitFilter;
 import org.aibles.feature_flag.security.ratelimit.RateLimitProperties;
 import org.aibles.feature_flag.security.ratelimit.RateLimitService;
 import org.aibles.feature_flag.security.ratelimit.SdkIpRateLimitFilter;
@@ -161,6 +162,7 @@ public class SecurityConfig {
     JwtAuthenticationFilter jwtFilter =
         new JwtAuthenticationFilter(jwtTokenProvider, userDetailsService, metrics);
     AuthRateLimitFilter authRateLimitFilter = new AuthRateLimitFilter(rateLimitService);
+    MatrixRateLimitFilter matrixRateLimitFilter = new MatrixRateLimitFilter(rateLimitService);
 
     http.csrf(AbstractHttpConfigurer::disable)
         .cors(cors -> cors.configurationSource(corsConfigurationSource()))
@@ -187,7 +189,10 @@ public class SecurityConfig {
         // Per-IP throttle on the (permitAll) /api/v1/auth/** endpoints. Anchored on the
         // standard UsernamePasswordAuthenticationFilter (added before jwtFilter so it runs first).
         .addFilterBefore(authRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
-        .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+        .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+        // Per-user throttle on the matrix endpoint only (S-2.10). After jwtFilter so the user
+        // principal is resolved, before AuthorizationFilter/controller so a 429 does no DB work.
+        .addFilterAfter(matrixRateLimitFilter, JwtAuthenticationFilter.class);
 
     return http.build();
   }
