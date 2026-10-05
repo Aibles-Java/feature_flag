@@ -110,7 +110,54 @@ class EnvironmentServiceImplTest {
     env = Environment.builder().id(envId).project(project).name("prod").build();
     // Needed so the real apiKeyService (wired above) can round-trip a saved key back to its
     // caller instead of getting null, the way JPA's save() behaves in practice.
+    when(permissionService.changeWindowZone(any(Environment.class))).thenReturn(ZoneId.of("UTC"));
     when(apiKeyRepository.save(any(EnvironmentApiKey.class))).thenAnswer(inv -> inv.getArgument(0));
+  }
+
+  @Test
+  void get_and_list_fillChangeWindowZoneAndOpenNowFromPermissionService() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    when(permissionService.changeWindowZone(env)).thenReturn(ZoneId.of("Asia/Ho_Chi_Minh"));
+    when(permissionService.withinChangeWindow(env)).thenReturn(false);
+    when(environmentRepository.findAllByProjectId(
+            eq(projectId), any(org.springframework.data.domain.Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(env)));
+
+    EnvironmentResponse got = service.get(envId);
+    assertThat(got.getChangeWindowZone()).isEqualTo("Asia/Ho_Chi_Minh");
+    assertThat(got.getChangeWindowOpenNow()).isFalse();
+
+    EnvironmentResponse listed =
+        service.listByProject(projectId, PageRequest.of(0, 10)).getContent().get(0);
+    assertThat(listed.getChangeWindowZone()).isEqualTo("Asia/Ho_Chi_Minh");
+    assertThat(listed.getChangeWindowOpenNow()).isFalse();
+  }
+
+  @Test
+  void update_returnsFreshWindowStateButAuditSnapshotsCarryNoTimeDependentFields() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(i -> i.getArgument(0));
+    when(permissionService.changeWindowZone(env)).thenReturn(ZoneId.of("UTC"));
+    when(permissionService.withinChangeWindow(env)).thenReturn(true);
+    UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+    req.setDescription("d");
+
+    EnvironmentResponse out = service.update(envId, req);
+
+    assertThat(out.getChangeWindowOpenNow()).isTrue();
+    assertThat(out.getChangeWindowZone()).isEqualTo("UTC");
+    ArgumentCaptor<Object> before = ArgumentCaptor.forClass(Object.class);
+    ArgumentCaptor<Object> after = ArgumentCaptor.forClass(Object.class);
+    verify(auditService)
+        .record(
+            eq(AuditEntityType.ENVIRONMENT),
+            eq(envId),
+            eq(AuditAction.UPDATE),
+            any(),
+            before.capture(),
+            after.capture());
+    assertThat(((EnvironmentResponse) before.getValue()).getChangeWindowOpenNow()).isNull();
+    assertThat(((EnvironmentResponse) after.getValue()).getChangeWindowOpenNow()).isNull();
   }
 
   @Test

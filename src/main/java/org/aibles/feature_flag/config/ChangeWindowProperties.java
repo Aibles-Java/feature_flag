@@ -11,11 +11,11 @@ import org.springframework.validation.annotation.Validated;
  * Production change-window configuration, bound from {@code app.change-window.*} (env: {@code
  * APP_CHANGE_WINDOW_ZONE}).
  *
- * <p>{@code zone} is the IANA zone in which the application {@link java.time.Clock} reads the hour
- * for {@code PermissionService.withinChangeWindow} whenever an environment has no timezone of its
- * own (D-09). It is validated at startup so a missing or invalid value aborts boot with a clear
- * message instead of silently using the JVM's default zone. The value must be confirmed by Ops
- * before deploy.
+ * <p>{@code zone} is the IANA zone in which the dedicated change-window clock reads the hour for
+ * {@code PermissionService.withinChangeWindow} whenever an environment has no timezone of its own
+ * (D-09). It is validated at startup so a missing or invalid value aborts boot with a clear message
+ * instead of silently using the JVM's default zone. The value must be confirmed by Ops before
+ * deploy.
  */
 @ConfigurationProperties(prefix = "app.change-window")
 @Validated
@@ -28,7 +28,7 @@ public record ChangeWindowProperties(
 
   @AssertTrue(
       message =
-          "app.change-window.zone is an unresolved ${...} placeholder — "
+          "app.change-window.zone is an unresolved placeholder — "
               + "the APP_CHANGE_WINDOW_ZONE environment variable is not set")
   public boolean isZoneResolved() {
     // The binder passes unresolvable ${VAR} placeholders through as literals.
