@@ -376,7 +376,7 @@ class FeatureFlagServiceImplTest {
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
         .thenReturn(Optional.of(state));
-    when(flagStateRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(flagStateRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
     req.setEnabled(true);
@@ -452,7 +452,7 @@ class FeatureFlagServiceImplTest {
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
         .thenReturn(Optional.of(state));
-    when(flagStateRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(flagStateRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
     req.setEnabled(true);
@@ -487,7 +487,7 @@ class FeatureFlagServiceImplTest {
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
         .thenReturn(Optional.of(state));
-    when(flagStateRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(flagStateRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
     when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
@@ -535,7 +535,7 @@ class FeatureFlagServiceImplTest {
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
         .thenReturn(Optional.of(state));
-    when(flagStateRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(flagStateRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
     req.setEnabled(true);
