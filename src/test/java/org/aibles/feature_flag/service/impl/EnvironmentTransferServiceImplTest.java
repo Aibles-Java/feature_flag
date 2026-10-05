@@ -341,6 +341,7 @@ class EnvironmentTransferServiceImplTest {
             });
     // Nothing written, and the in-memory entity is left exactly as it was.
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAndFlush(any());
     verify(featureFlagRepository, never()).save(any());
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
     verify(evaluationCacheService, never()).evictAfterCommit(any());
@@ -357,6 +358,7 @@ class EnvironmentTransferServiceImplTest {
         .isInstanceOf(InvalidRequestException.class)
         .hasMessageContaining("99");
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAndFlush(any());
   }
 
   @Test
@@ -397,6 +399,7 @@ class EnvironmentTransferServiceImplTest {
     assertThat(result.getItems().get(0).getDetail()).contains("SKIP");
     assertThat(existing.isEnabled()).isFalse();
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAndFlush(any());
   }
 
   @Test
@@ -414,7 +417,7 @@ class EnvironmentTransferServiceImplTest {
     assertThat(existing.isEnabled()).isTrue();
     assertThat(existing.getValue()).isEqualTo("new");
     assertThat(existing.getRolloutPercent()).isEqualTo(25);
-    verify(flagStateRepository).save(existing);
+    verify(flagStateRepository).saveAndFlush(existing);
     verify(auditService)
         .record(
             eq(AuditEntityType.ENVIRONMENT),
@@ -454,6 +457,7 @@ class EnvironmentTransferServiceImplTest {
 
     assertThat(result.getSummary().getUnchanged()).isEqualTo(1);
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAndFlush(any());
     // Nothing changed, so there is nothing to audit — and no cached snapshot to invalidate.
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
     verify(evaluationCacheService, never()).evictAfterCommit(any());
@@ -538,6 +542,7 @@ class EnvironmentTransferServiceImplTest {
     assertThat(result.getSummary().getSkipped()).isEqualTo(1);
     assertThat(result.getItems().get(0).getDetail()).contains("value type mismatch");
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAndFlush(any());
     assertThat(existing.isEnabled()).isFalse();
   }
 
@@ -574,7 +579,7 @@ class EnvironmentTransferServiceImplTest {
               });
     }
     // Only the two accepted (8192) entries may have been persisted: the real-run one.
-    verify(flagStateRepository, times(1)).save(any());
+    verify(flagStateRepository, times(1)).saveAndFlush(any());
     verify(featureFlagRepository, never()).save(any());
   }
 
@@ -657,7 +662,7 @@ class EnvironmentTransferServiceImplTest {
     // Only the valid entry wrote anything; nothing was created for the invalid ones.
     ArgumentCaptor<FlagEnvironmentState> saved =
         ArgumentCaptor.forClass(FlagEnvironmentState.class);
-    verify(flagStateRepository, times(1)).save(saved.capture());
+    verify(flagStateRepository, times(1)).saveAndFlush(saved.capture());
     assertThat(saved.getValue().getFeatureFlag()).isSameAs(stringFlag);
     assertThat(saved.getValue().getValue()).isEqualTo("fresh");
     verify(featureFlagRepository, never()).save(any());
@@ -668,6 +673,7 @@ class EnvironmentTransferServiceImplTest {
     ImportResultResponse dry =
         service.importSnapshot(targetEnvId, mismatchingAndValidEntries(true));
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAndFlush(any());
     ImportResultResponse real =
         service.importSnapshot(targetEnvId, mismatchingAndValidEntries(false));
 
@@ -791,6 +797,7 @@ class EnvironmentTransferServiceImplTest {
         .isInstanceOf(UnauthorizedException.class);
 
     verify(flagStateRepository, never()).save(any(FlagEnvironmentState.class));
+    verify(flagStateRepository, never()).saveAndFlush(any());
     verify(featureFlagRepository, never()).save(any(FeatureFlag.class));
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
   }

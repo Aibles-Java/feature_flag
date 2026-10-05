@@ -190,6 +190,10 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
 
     boolean changed = result.getSummary().getCreated() > 0 || result.getSummary().getUpdated() > 0;
     if (!dryRun && changed) {
+      // Last write barrier before side effects: any pending write that would lose a @Version
+      // race fails now, so nothing after this line (audit, eviction) exists for a rolled-back
+      // import. Eviction is registered after-commit only.
+      flagStateRepository.flush();
       // Every environment, not just the target: a CREATED entry also writes a default state row
       // into each sibling environment, which their cached snapshots would otherwise miss until TTL.
       environmentRepository
@@ -212,6 +216,10 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
    * existing flag has only its state in <em>this</em> environment touched — name, description,
    * archived and value type are project-wide properties that an environment-scoped import must not
    * rewrite behind the other environments' backs.
+   *
+   * <p>S-2.13: runs inside {@link #importSnapshot}'s single transaction — the read of the current
+   * state and the write that depends on it share one persistence context, so a concurrent writer
+   * that commits in between is detected by {@code @Version} at the flush.
    */
   private ImportResultResponse.ItemResult applyEntry(
       Project project,
@@ -274,7 +282,11 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
       state.setEnabled(enabled(entry));
       state.setValue(entry.getValue());
       state.setRolloutPercent(rolloutPercent(entry));
-      flagStateRepository.save(state);
+      // S-2.13 (ADR-07, D-17): flush per entry so a lost @Version race surfaces HERE, inside the
+      // transaction and before any audit row or cache eviction is queued. The exception
+      // propagates out of importSnapshot, which rolls back every entry (all-or-nothing); it must
+      // not be left to the commit, where the translated failure would skip the 409 handling.
+      flagStateRepository.saveAndFlush(state);
     }
     return item(entry, ImportOutcome.UPDATED, "state overwritten");
   }
