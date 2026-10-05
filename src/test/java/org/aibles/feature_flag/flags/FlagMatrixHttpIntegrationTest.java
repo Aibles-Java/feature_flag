@@ -133,8 +133,15 @@ class FlagMatrixHttpIntegrationTest {
   void edgeValues() throws Exception {
     String p = FixtureIds.PROJECT_A.toString();
     String[][] cases = {
-      {"size", "0"}, {"size", "-1"}, {"size", "1000"}, {"page", "-1"}, {"page", "-999"},
-      {"page", "2147483647"}, {"page", "999999999"}, {"size", "2147483647"}, {"size", "-2147483648"},
+      {"size", "0"},
+      {"size", "-1"},
+      {"size", "1000"},
+      {"page", "-1"},
+      {"page", "-999"},
+      {"page", "2147483647"},
+      {"page", "999999999"},
+      {"size", "2147483647"},
+      {"size", "-2147483648"},
       {"page", "2147483647", "size", "100"}
     };
     for (String[] c : cases) {
@@ -150,11 +157,17 @@ class FlagMatrixHttpIntegrationTest {
       assertThat(b.get("size").asInt()).isBetween(1, 100);
       assertThat(b.get("page").asInt()).isGreaterThanOrEqualTo(0);
     }
-    JsonNode z = om.readTree(call(FixtureIds.USER_OWNER_X, "projectId", p, "size", "0")
-        .getResponse().getContentAsString());
+    JsonNode z =
+        om.readTree(
+            call(FixtureIds.USER_OWNER_X, "projectId", p, "size", "0")
+                .getResponse()
+                .getContentAsString());
     assertThat(z.get("size").asInt()).isEqualTo(50);
-    JsonNode big = om.readTree(call(FixtureIds.USER_OWNER_X, "projectId", p, "size", "1000")
-        .getResponse().getContentAsString());
+    JsonNode big =
+        om.readTree(
+            call(FixtureIds.USER_OWNER_X, "projectId", p, "size", "1000")
+                .getResponse()
+                .getContentAsString());
     assertThat(big.get("size").asInt()).isEqualTo(100);
   }
 
@@ -177,8 +190,14 @@ class FlagMatrixHttpIntegrationTest {
     for (int pg = 0; pg < 4; pg++) {
       JsonNode b =
           om.readTree(
-              call(FixtureIds.USER_OWNER_X, "projectId", FixtureIds.PROJECT_A.toString(),
-                      "page", "" + pg, "size", "1")
+              call(
+                      FixtureIds.USER_OWNER_X,
+                      "projectId",
+                      FixtureIds.PROJECT_A.toString(),
+                      "page",
+                      "" + pg,
+                      "size",
+                      "1")
                   .getResponse()
                   .getContentAsString());
       assertThat(b.get("content")).hasSize(1);
@@ -200,8 +219,7 @@ class FlagMatrixHttpIntegrationTest {
                 .getContentAsString());
     Set<String> page = new HashSet<>();
     b.fieldNames().forEachRemaining(page::add);
-    assertThat(page)
-        .isSubsetOf("content", "page", "size", "totalElements", "totalPages");
+    assertThat(page).isSubsetOf("content", "page", "size", "totalElements", "totalPages");
     JsonNode row = b.get("content").get(0);
     Set<String> rowFields = new HashSet<>();
     row.fieldNames().forEachRemaining(rowFields::add);
@@ -209,12 +227,26 @@ class FlagMatrixHttpIntegrationTest {
     Set<String> flagFields = new HashSet<>();
     row.get("flag").fieldNames().forEachRemaining(flagFields::add);
     assertThat(flagFields)
-        .isSubsetOf("id", "name", "key", "description", "valueType", "archived", "expiresAt",
-            "projectId", "createdAt");
+        .isSubsetOf(
+            "id",
+            "name",
+            "key",
+            "description",
+            "valueType",
+            "archived",
+            "expiresAt",
+            "projectId",
+            "createdAt");
     Set<String> stateFields = new HashSet<>();
     row.get("states").get(0).fieldNames().forEachRemaining(stateFields::add);
     assertThat(stateFields)
-        .isSubsetOf("flagId", "environmentId", "enabled", "value", "rolloutPercent", "version",
+        .isSubsetOf(
+            "flagId",
+            "environmentId",
+            "enabled",
+            "value",
+            "rolloutPercent",
+            "version",
             "lastEvaluatedAt");
   }
 

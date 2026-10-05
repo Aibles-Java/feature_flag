@@ -175,7 +175,8 @@ class FlagMatrixIntegrationTest {
     long totalStatements = stats.getPrepareStatementCount();
     long dataStatements = totalStatements - permissionStatements;
     // honesty guard: the data path really issues the flag page + the states query
-    assertThat(dataStatements).as("raw total %s, perm %s", totalStatements, permissionStatements)
+    assertThat(dataStatements)
+        .as("raw total %s, perm %s", totalStatements, permissionStatements)
         .isGreaterThanOrEqualTo(2);
 
     assertThat(big.getSize()).isEqualTo(100);
