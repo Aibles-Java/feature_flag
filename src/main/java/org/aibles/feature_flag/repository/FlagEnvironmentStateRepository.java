@@ -137,4 +137,16 @@ public interface FlagEnvironmentStateRepository extends JpaRepository<FlagEnviro
       "SELECT s FROM FlagEnvironmentState s JOIN FETCH s.featureFlag f WHERE s.environment.id = :envId ORDER BY f.key")
   List<FlagEnvironmentState> findAllByEnvironmentIdOrderByFlagKey(
       @Param("envId") UUID environmentId);
+
+  /**
+   * Matrix cells for one page of flags (S-2.5, T-IDOR-4). Constrained by BOTH {@code f.project_id}
+   * and {@code e.project_id}, so an anomalous state row linking a flag to another project's
+   * environment is never returned. Environment is fetched to avoid per-row lazy loads.
+   */
+  @Query(
+      "SELECT s FROM FlagEnvironmentState s JOIN FETCH s.environment e JOIN s.featureFlag f "
+          + "WHERE f.id IN :flagIds AND f.project.id = :projectId AND e.project.id = :projectId "
+          + "ORDER BY e.createdAt, e.id")
+  List<FlagEnvironmentState> findMatrixStates(
+      @Param("projectId") UUID projectId, @Param("flagIds") java.util.Collection<UUID> flagIds);
 }
