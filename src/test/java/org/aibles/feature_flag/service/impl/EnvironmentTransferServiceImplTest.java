@@ -341,6 +341,7 @@ class EnvironmentTransferServiceImplTest {
             });
     // Nothing written, and the in-memory entity is left exactly as it was.
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
     verify(featureFlagRepository, never()).save(any());
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
     verify(evaluationCacheService, never()).evictAfterCommit(any());
@@ -357,6 +358,7 @@ class EnvironmentTransferServiceImplTest {
         .isInstanceOf(InvalidRequestException.class)
         .hasMessageContaining("99");
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
   }
 
   @Test
@@ -397,6 +399,7 @@ class EnvironmentTransferServiceImplTest {
     assertThat(result.getItems().get(0).getDetail()).contains("SKIP");
     assertThat(existing.isEnabled()).isFalse();
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
   }
 
   @Test
@@ -415,6 +418,7 @@ class EnvironmentTransferServiceImplTest {
     assertThat(existing.getValue()).isEqualTo("new");
     assertThat(existing.getRolloutPercent()).isEqualTo(25);
     verify(flagStateRepository).save(existing);
+    verify(flagStateRepository).flush(); // the single write barrier, before audit/eviction
     verify(auditService)
         .record(
             eq(AuditEntityType.ENVIRONMENT),
@@ -454,6 +458,7 @@ class EnvironmentTransferServiceImplTest {
 
     assertThat(result.getSummary().getUnchanged()).isEqualTo(1);
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
     // Nothing changed, so there is nothing to audit — and no cached snapshot to invalidate.
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
     verify(evaluationCacheService, never()).evictAfterCommit(any());
@@ -538,6 +543,7 @@ class EnvironmentTransferServiceImplTest {
     assertThat(result.getSummary().getSkipped()).isEqualTo(1);
     assertThat(result.getItems().get(0).getDetail()).contains("value type mismatch");
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
     assertThat(existing.isEnabled()).isFalse();
   }
 
@@ -668,6 +674,7 @@ class EnvironmentTransferServiceImplTest {
     ImportResultResponse dry =
         service.importSnapshot(targetEnvId, mismatchingAndValidEntries(true));
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
     ImportResultResponse real =
         service.importSnapshot(targetEnvId, mismatchingAndValidEntries(false));
 
@@ -791,6 +798,7 @@ class EnvironmentTransferServiceImplTest {
         .isInstanceOf(UnauthorizedException.class);
 
     verify(flagStateRepository, never()).save(any(FlagEnvironmentState.class));
+    verify(flagStateRepository, never()).flush();
     verify(featureFlagRepository, never()).save(any(FeatureFlag.class));
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
   }

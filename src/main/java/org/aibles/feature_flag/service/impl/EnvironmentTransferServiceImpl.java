@@ -190,6 +190,11 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
 
     boolean changed = result.getSummary().getCreated() > 0 || result.getSummary().getUpdated() > 0;
     if (!dryRun && changed) {
+      // The ONE write barrier (S-2.13): every pending write is sent now, so a write that lost a
+      // @Version race (or violates a constraint) fails here, before any audit row or cache
+      // eviction exists for an import that is about to be rolled back. Do not remove: without it
+      // the conflict only surfaces at commit, after those side effects are queued.
+      flagStateRepository.flush();
       // Every environment, not just the target: a CREATED entry also writes a default state row
       // into each sibling environment, which their cached snapshots would otherwise miss until TTL.
       environmentRepository
@@ -212,6 +217,10 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
    * existing flag has only its state in <em>this</em> environment touched — name, description,
    * archived and value type are project-wide properties that an environment-scoped import must not
    * rewrite behind the other environments' backs.
+   *
+   * <p>S-2.13: runs inside {@link #importSnapshot}'s single transaction — the read of the current
+   * state and the write that depends on it share one persistence context, so a concurrent writer
+   * that commits in between is detected by {@code @Version} at the flush.
    */
   private ImportResultResponse.ItemResult applyEntry(
       Project project,
@@ -274,6 +283,10 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
       state.setEnabled(enabled(entry));
       state.setValue(entry.getValue());
       state.setRolloutPercent(rolloutPercent(entry));
+      // S-2.13 (ADR-07, D-17): no per-entry flush (each one would flush the whole persistence
+      // context, O(n^2) over a large import and no JDBC batching). A lost @Version race is
+      // detected by the single flush() in importSnapshot, which runs before the audit row and the
+      // cache eviction are queued; the exception rolls back every entry (all-or-nothing).
       flagStateRepository.save(state);
     }
     return item(entry, ImportOutcome.UPDATED, "state overwritten");
