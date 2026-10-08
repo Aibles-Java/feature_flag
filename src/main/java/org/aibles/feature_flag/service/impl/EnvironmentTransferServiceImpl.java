@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.aibles.feature_flag.config.FlagValueProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
@@ -35,6 +36,7 @@ import org.aibles.feature_flag.service.EnvironmentTransferService;
 import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.aibles.feature_flag.util.EnvironmentApiKeyFactory;
 import org.aibles.feature_flag.util.EnvironmentApiKeyFactory.MintedKey;
+import org.aibles.feature_flag.util.FlagValueValidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +52,7 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
   private final PermissionService permissionService;
   private final AuditService auditService;
   private final EvaluationCacheService evaluationCacheService;
+  private final FlagValueProperties flagValueProperties;
 
   @Override
   @Transactional
@@ -187,6 +190,11 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
 
     boolean changed = result.getSummary().getCreated() > 0 || result.getSummary().getUpdated() > 0;
     if (!dryRun && changed) {
+      // The ONE write barrier (S-2.13): every pending write is sent now, so a write that lost a
+      // @Version race (or violates a constraint) fails here, before any audit row or cache
+      // eviction exists for an import that is about to be rolled back. Do not remove: without it
+      // the conflict only surfaces at commit, after those side effects are queued.
+      flagStateRepository.flush();
       // Every environment, not just the target: a CREATED entry also writes a default state row
       // into each sibling environment, which their cached snapshots would otherwise miss until TTL.
       environmentRepository
@@ -209,6 +217,10 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
    * existing flag has only its state in <em>this</em> environment touched — name, description,
    * archived and value type are project-wide properties that an environment-scoped import must not
    * rewrite behind the other environments' backs.
+   *
+   * <p>S-2.13: runs inside {@link #importSnapshot}'s single transaction — the read of the current
+   * state and the write that depends on it share one persistence context, so a concurrent writer
+   * that commits in between is detected by {@code @Version} at the flush.
    */
   private ImportResultResponse.ItemResult applyEntry(
       Project project,
@@ -216,6 +228,15 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
       ImportEnvironmentRequest.FlagEntry entry,
       ImportConflictStrategy strategy,
       boolean dryRun) {
+
+    // Per-entry value check (length, then value vs valueType), run before any lookup or write and
+    // before the dry-run/real-run split, so a dry run reports exactly the SKIPPED a real run would
+    // and the check covers every case: flag with state, flag without state here, and a new flag.
+    // The reason never echoes the value.
+    String invalidValue = invalidValueReason(entry);
+    if (invalidValue != null) {
+      return item(entry, ImportOutcome.SKIPPED, invalidValue);
+    }
 
     Optional<FeatureFlag> existing =
         featureFlagRepository.findByProjectIdAndKey(project.getId(), entry.getKey());
@@ -262,9 +283,31 @@ public class EnvironmentTransferServiceImpl implements EnvironmentTransferServic
       state.setEnabled(enabled(entry));
       state.setValue(entry.getValue());
       state.setRolloutPercent(rolloutPercent(entry));
+      // S-2.13 (ADR-07, D-17): no per-entry flush (each one would flush the whole persistence
+      // context, O(n^2) over a large import and no JDBC batching). A lost @Version race is
+      // detected by the single flush() in importSnapshot, which runs before the audit row and the
+      // cache eviction are queued; the exception rolls back every entry (all-or-nothing).
       flagStateRepository.save(state);
     }
     return item(entry, ImportOutcome.UPDATED, "state overwritten");
+  }
+
+  /**
+   * Why this entry's {@code value} is unacceptable, or {@code null} when it is fine (S-0.5 length,
+   * S-0.6 type). The type is the entry's own {@code valueType}: for a new flag that is the type it
+   * will be created with, and for an existing flag an entry whose type differs from the flag's is
+   * skipped as a "value type mismatch" anyway, so every entry that can be applied has been checked
+   * against the type it is applied under. Length runs first so an oversized JSON document is never
+   * parsed.
+   */
+  private String invalidValueReason(ImportEnvironmentRequest.FlagEntry entry) {
+    if (!FlagValueValidator.isWithinLength(entry.getValue(), flagValueProperties.maxLength())) {
+      return "invalid value: exceeds " + flagValueProperties.maxLength() + " characters";
+    }
+    if (!FlagValueValidator.isValid(entry.getValueType(), entry.getValue())) {
+      return "invalid value: not a valid " + entry.getValueType();
+    }
+    return null;
   }
 
   private void createFlagWithStates(

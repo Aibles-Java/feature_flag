@@ -10,11 +10,13 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.aibles.feature_flag.config.FlagValueProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
 import org.aibles.feature_flag.domain.entity.FlagEnvironmentState;
 import org.aibles.feature_flag.domain.entity.Organization;
 import org.aibles.feature_flag.domain.entity.Project;
+import org.aibles.feature_flag.domain.enums.Action;
 import org.aibles.feature_flag.domain.enums.FlagValueType;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
 import org.aibles.feature_flag.dto.request.UpdateFeatureFlagRequest;
@@ -22,7 +24,9 @@ import org.aibles.feature_flag.dto.request.UpdateFlagStateRequest;
 import org.aibles.feature_flag.dto.response.FeatureFlagResponse;
 import org.aibles.feature_flag.dto.response.FlagStateResponse;
 import org.aibles.feature_flag.exception.DuplicateResourceException;
+import org.aibles.feature_flag.exception.InvalidRequestException;
 import org.aibles.feature_flag.exception.ResourceNotFoundException;
+import org.aibles.feature_flag.exception.UnauthorizedException;
 import org.aibles.feature_flag.metrics.FeatureFlagMetrics;
 import org.aibles.feature_flag.notification.event.FlagArchivedEvent;
 import org.aibles.feature_flag.notification.event.FlagStateChangedEvent;
@@ -34,6 +38,8 @@ import org.aibles.feature_flag.service.EvaluationCacheService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -74,7 +80,8 @@ class FeatureFlagServiceImplTest {
             eventPublisher,
             evaluationCacheService,
             new FeatureFlagMetrics(new SimpleMeterRegistry()),
-            auditService);
+            auditService,
+            new FlagValueProperties(8192));
     Organization org = Organization.builder().id(UUID.randomUUID()).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
     // updateState resolves the target Environment so the PDP can read its production attributes.
@@ -304,6 +311,7 @@ class FeatureFlagServiceImplTest {
             .environment(env)
             .enabled(true)
             .value("true")
+            .version(7L)
             .build();
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
@@ -312,6 +320,74 @@ class FeatureFlagServiceImplTest {
     FlagStateResponse result = service.getState(flagId, envId);
 
     assertThat(result.isEnabled()).isTrue();
+    assertThat(result.getVersion()).isEqualTo(7L);
+  }
+
+  @Test
+  void listStates_returnsStatesScopedToFlagProject_afterReadCheck() {
+    UUID flagId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("f")
+            .valueType(FlagValueType.BOOLEAN)
+            .archived(false)
+            .build();
+    Environment env = Environment.builder().id(UUID.randomUUID()).project(project).build();
+    FlagEnvironmentState state =
+        FlagEnvironmentState.builder()
+            .id(UUID.randomUUID())
+            .featureFlag(flag)
+            .environment(env)
+            .enabled(true)
+            .rolloutPercent(40)
+            .version(2L)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    when(flagStateRepository.findAllByFlagIdAndProjectId(flagId, projectId))
+        .thenReturn(List.of(state));
+
+    List<FlagStateResponse> result = service.listStates(flagId);
+
+    assertThat(result).hasSize(1);
+    assertThat(result.get(0).getEnvironmentId()).isEqualTo(env.getId());
+    assertThat(result.get(0).getVersion()).isEqualTo(2L);
+    assertThat(result.get(0).getRolloutPercent()).isEqualTo(40);
+    verify(permissionService)
+        .check(Action.FLAG_READ, PermissionService.ResourceRef.project(projectId));
+  }
+
+  @Test
+  void listStates_throwsNotFound_whenFlagDoesNotExist() {
+    UUID flagId = UUID.randomUUID();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.listStates(flagId))
+        .isInstanceOf(ResourceNotFoundException.class);
+    verifyNoInteractions(flagStateRepository);
+  }
+
+  @Test
+  void listStates_doesNotQuery_whenReadPermissionDenied() {
+    UUID flagId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("f")
+            .valueType(FlagValueType.BOOLEAN)
+            .archived(false)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    doThrow(new UnauthorizedException("no"))
+        .when(permissionService)
+        .check(eq(Action.FLAG_READ), any());
+
+    assertThatThrownBy(() -> service.listStates(flagId)).isInstanceOf(UnauthorizedException.class);
+    verifyNoInteractions(flagStateRepository);
   }
 
   @Test
@@ -371,7 +447,7 @@ class FeatureFlagServiceImplTest {
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
         .thenReturn(Optional.of(state));
-    when(flagStateRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(flagStateRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
     req.setEnabled(true);
@@ -383,6 +459,122 @@ class FeatureFlagServiceImplTest {
     assertThat(result.getRolloutPercent())
         .isEqualTo(50); // unchanged since request.rolloutPercent is null
     verify(evaluationCacheService).evictAfterCommit(envId);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"STRING,8192,true", "STRING,8193,false", "JSON,8193,false", "INTEGER,8193,false"})
+  void updateState_valueLengthBoundary_8192Accepted_8193Rejected(
+      FlagValueType type, int length, boolean accepted) {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("f")
+            .valueType(type)
+            .archived(false)
+            .build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
+    FlagEnvironmentState state =
+        FlagEnvironmentState.builder()
+            .id(UUID.randomUUID())
+            .featureFlag(flag)
+            .environment(env)
+            .enabled(false)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
+        .thenReturn(Optional.of(state));
+    when(flagStateRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    UpdateFlagStateRequest req = new UpdateFlagStateRequest();
+    req.setEnabled(true);
+    req.setValue("a".repeat(length));
+
+    if (accepted) {
+      service.updateState(flagId, envId, req);
+      verify(flagStateRepository).saveAndFlush(any());
+    } else {
+      assertThatThrownBy(() -> service.updateState(flagId, envId, req))
+          .isInstanceOf(InvalidRequestException.class)
+          .hasMessageContaining("8192")
+          .hasMessageNotContaining("aaaa");
+      verify(flagStateRepository, never()).saveAndFlush(any());
+      verifyNoInteractions(auditService, eventPublisher, evaluationCacheService);
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"INTEGER,abc", "JSON,{bad", "BOOLEAN,yes"})
+  void updateState_rejectsValueNotMatchingValueType_withNoWriteAuditOrEvent(
+      FlagValueType type, String badValue) {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("f")
+            .valueType(type)
+            .archived(false)
+            .build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
+    FlagEnvironmentState state =
+        FlagEnvironmentState.builder()
+            .id(UUID.randomUUID())
+            .featureFlag(flag)
+            .environment(env)
+            .enabled(false)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
+        .thenReturn(Optional.of(state));
+
+    UpdateFlagStateRequest req = new UpdateFlagStateRequest();
+    req.setEnabled(true);
+    req.setValue(badValue);
+
+    assertThatThrownBy(() -> service.updateState(flagId, envId, req))
+        .isInstanceOf(InvalidRequestException.class);
+    verify(flagStateRepository, never()).saveAndFlush(any());
+    verifyNoInteractions(auditService, eventPublisher, evaluationCacheService);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"INTEGER,42", "JSON,'{\"a\":1}'", "BOOLEAN,false", "STRING,anything"})
+  void updateState_acceptsValueMatchingValueType(FlagValueType type, String goodValue) {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    FeatureFlag flag =
+        FeatureFlag.builder()
+            .id(flagId)
+            .project(project)
+            .name("F")
+            .key("f")
+            .valueType(type)
+            .archived(false)
+            .build();
+    Environment env = Environment.builder().id(envId).name("prod").build();
+    FlagEnvironmentState state =
+        FlagEnvironmentState.builder()
+            .id(UUID.randomUUID())
+            .featureFlag(flag)
+            .environment(env)
+            .enabled(false)
+            .build();
+    when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
+    when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
+        .thenReturn(Optional.of(state));
+    when(flagStateRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+
+    UpdateFlagStateRequest req = new UpdateFlagStateRequest();
+    req.setEnabled(true);
+    req.setValue(goodValue);
+
+    assertThat(service.updateState(flagId, envId, req).getValue()).isEqualTo(goodValue);
   }
 
   @Test
@@ -411,7 +603,7 @@ class FeatureFlagServiceImplTest {
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
         .thenReturn(Optional.of(state));
-    when(flagStateRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(flagStateRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
     when(permissionService.currentUserEmail()).thenReturn("actor@example.com");
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
@@ -459,7 +651,7 @@ class FeatureFlagServiceImplTest {
     when(featureFlagRepository.findById(flagId)).thenReturn(Optional.of(flag));
     when(flagStateRepository.findByFeatureFlagIdAndEnvironmentId(flagId, envId))
         .thenReturn(Optional.of(state));
-    when(flagStateRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(flagStateRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
     req.setEnabled(true);
@@ -501,7 +693,11 @@ class FeatureFlagServiceImplTest {
 
     UpdateFlagStateRequest req = new UpdateFlagStateRequest();
     req.setEnabled(true);
+    // S-2.8: PUT for a missing (flag, env) pair is 404 and must NOT lazy-create the state
+    // (ADR-03: lazy-create would turn F17 into a write IDOR and create implicit PROD state).
     assertThatThrownBy(() -> service.updateState(flagId, envId, req))
         .isInstanceOf(ResourceNotFoundException.class);
+    verify(flagStateRepository, never()).saveAndFlush(any());
+    verify(flagStateRepository, never()).saveAll(any());
   }
 }

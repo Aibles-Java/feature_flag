@@ -1,6 +1,7 @@
 package org.aibles.feature_flag.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -12,6 +13,7 @@ import org.aibles.feature_flag.domain.enums.MemberRole;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Transactional;
@@ -91,6 +93,43 @@ class FlagEnvironmentStateRepositoryTest {
 
     assertThat(result).isPresent();
     assertThat(result.get().getFeatureFlag().getKey()).isEqualTo("lookup-flag");
+  }
+
+  @Test
+  void version_startsAtZeroAndIncrementsOnEachUpdate() {
+    TestFixtures fix = new TestFixtures();
+    FlagEnvironmentState state = fix.state(fix.flag("v-flag", false), fix.env);
+    em.flush();
+    assertThat(state.getVersion()).isEqualTo(0L);
+
+    state.setEnabled(true);
+    em.flush();
+
+    assertThat(state.getVersion()).isEqualTo(1L);
+  }
+
+  @Test
+  void staleVersionWrite_isRejectedWithOptimisticLockFailure() {
+    TestFixtures fix = new TestFixtures();
+    FlagEnvironmentState state = fix.state(fix.flag("stale-flag", false), fix.env);
+    em.flush();
+    em.clear();
+
+    // A concurrent writer (separate statement, bypassing the cached entity) bumps the version.
+    em.createNativeQuery("UPDATE flag_environment_states SET version = version + 1 WHERE id = :id")
+        .setParameter("id", state.getId())
+        .executeUpdate();
+
+    // The caller still holds a detached copy at version 0.
+    state.setEnabled(true);
+    assertThatThrownBy(
+            () -> {
+              em.merge(state);
+              em.flush();
+            })
+        .isInstanceOfAny(
+            ObjectOptimisticLockingFailureException.class,
+            jakarta.persistence.OptimisticLockException.class);
   }
 
   class TestFixtures {

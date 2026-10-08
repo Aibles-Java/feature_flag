@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+      Optimistic-lock version for flag state (ADR-07, F18). Backs @Version on FlagEnvironmentState.
+
+      NOT NULL DEFAULT 0: existing rows read as version 0 and the column is added in a single
+      PostgreSQL ALTER TABLE (a constant default is a metadata-only change on PostgreSQL 11+, no
+      table rewrite). Additive, so no schema rollback is needed (solution design section 10): an
+      older app version simply ignores the column.
+
+      File number 019 is dictated by the solution design; 019-create-environment-api-keys.xml
+      already uses that prefix. That is harmless: Liquibase identifies a changeset by
+      id/author/file path, never by the number, and the ids differ.
+    -->
+    <changeSet id="019-add-flag-state-version" author="dev">
+        <addColumn tableName="flag_environment_states">
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <!-- Dropping the column would discard concurrency state only, but the app never needs it
+             removed: left in place on rollback, per the design (section 10). -->
+        <rollback/>
+    </changeSet>
+
+</databaseChangeLog>

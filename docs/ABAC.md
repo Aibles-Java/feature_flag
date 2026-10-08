@@ -256,6 +256,11 @@ Windows may wrap past midnight (`start > end`, e.g. `22–06`). `start == end` (
 window) means **no restriction** — never a permanent lock-out. Time comes from an injectable
 `Clock` bean, so it is unit-testable.
 
+Environment import (`POST /environments/{id}/import`, real run) is such an elevated action: into
+a production environment it is OWNER-only and window-guarded like a state `PUT`; with
+`start == end` (D-15) an OWNER may import at any hour while an ADMIN still gets 403. Covered by
+`ImportProductionAccessIntegrationTest`.
+
 #### The one exception: revoking a production key skips the window
 
 `PermissionService.WINDOW_EXEMPT` is a `Set<Action>` containing exactly one member,

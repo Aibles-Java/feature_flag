@@ -4,9 +4,11 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
+import io.github.bucket4j.TimeMeter;
 import java.time.Duration;
 import java.util.EnumMap;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -32,13 +34,20 @@ public class RateLimitService {
     /** Per-environment, on {@code /api/v1/sdk/**} once the API key has authenticated. */
     SDK,
     /** Per-IP, on {@code /api/v1/sdk/**} before the API key is authenticated. */
-    SDK_IP
+    SDK_IP,
+    /**
+     * Per-user (JWT principal id), on {@code GET /api/v1/flags/environment-states} (S-2.10, D-12).
+     */
+    MATRIX
   }
 
   /** Idle buckets are kept for this multiple of the refill period before eviction. */
   private static final int IDLE_EVICTION_FACTOR = 2;
 
   private final RateLimitProperties properties;
+
+  /** Time source for bucket refill and cache expiry; a manual meter in tests (no sleeps). */
+  private final TimeMeter timeMeter;
 
   /**
    * One bucket cache and one limit per scope. Keyed by scope rather than held in named fields so
@@ -50,10 +59,17 @@ public class RateLimitService {
   private final Map<Scope, Cache<String, Bucket>> buckets = new EnumMap<>(Scope.class);
 
   public RateLimitService(RateLimitProperties properties) {
+    this(properties, TimeMeter.SYSTEM_MILLISECONDS);
+  }
+
+  @Autowired
+  public RateLimitService(RateLimitProperties properties, TimeMeter timeMeter) {
     this.properties = properties;
+    this.timeMeter = timeMeter;
     limits.put(Scope.AUTH, properties.getAuth());
     limits.put(Scope.SDK, properties.getSdk());
     limits.put(Scope.SDK_IP, properties.getSdkIp());
+    limits.put(Scope.MATRIX, properties.getMatrix());
     limits.forEach((scope, limit) -> buckets.put(scope, buildCache(limit)));
   }
 
@@ -70,13 +86,24 @@ public class RateLimitService {
     return bucket.tryConsumeAndReturnRemaining(1);
   }
 
+  /** Live bucket count for a scope (after pending expirations); for tests and diagnostics. */
+  long estimatedBucketCount(Scope scope) {
+    Cache<String, Bucket> cache = buckets.get(scope);
+    cache.cleanUp();
+    return cache.estimatedSize();
+  }
+
   private Cache<String, Bucket> buildCache(RateLimitProperties.Limit limit) {
     Duration idleTtl = limit.getRefillPeriod().multipliedBy(IDLE_EVICTION_FACTOR);
-    return Caffeine.newBuilder().expireAfterAccess(idleTtl).build();
+    return Caffeine.newBuilder()
+        .ticker(timeMeter::currentTimeNanos)
+        .expireAfterAccess(idleTtl)
+        .build();
   }
 
   private Bucket newBucket(RateLimitProperties.Limit limit) {
     return Bucket.builder()
+        .withCustomTimePrecision(timeMeter)
         .addLimit(
             b ->
                 b.capacity(limit.getCapacity())

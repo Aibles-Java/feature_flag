@@ -10,10 +10,13 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -103,6 +106,28 @@ public class GlobalExceptionHandler {
     return withRequestId(problem);
   }
 
+  /**
+   * A required query parameter is absent or has the wrong type (e.g. a non-UUID projectId): a
+   * client error, 400 — not the catch-all 500. The detail names only the parameter, never the
+   * submitted value.
+   */
+  @ExceptionHandler({
+    MissingServletRequestParameterException.class,
+    MethodArgumentTypeMismatchException.class
+  })
+  public ProblemDetail handleBadParameter(Exception ex, HttpServletRequest request) {
+    String name =
+        ex instanceof MissingServletRequestParameterException m
+            ? m.getParameterName()
+            : ((MethodArgumentTypeMismatchException) ex).getName();
+    ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+    problem.setType(URI.create("about:blank"));
+    problem.setTitle("Bad Request");
+    problem.setDetail("Missing or invalid request parameter: " + name);
+    problem.setInstance(URI.create(request.getRequestURI()));
+    return withRequestId(problem);
+  }
+
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ProblemDetail handleValidation(
       MethodArgumentNotValidException ex, HttpServletRequest request) {
@@ -119,6 +144,23 @@ public class GlobalExceptionHandler {
     problem.setDetail("One or more fields are invalid");
     problem.setInstance(URI.create(request.getRequestURI()));
     problem.setProperty("errors", errors);
+    return withRequestId(problem);
+  }
+
+  /**
+   * A concurrent edit won the race (ADR-07, F18): the row's {@code @Version} no longer matches.
+   * This is a client-visible conflict, so 409 — not the catch-all 500. The detail is deliberately
+   * generic: the exception message names the entity and row id, which are internals.
+   */
+  @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+  public ProblemDetail handleOptimisticLock(
+      ObjectOptimisticLockingFailureException ex, HttpServletRequest request) {
+    log.warn("Optimistic lock conflict on {}", request.getRequestURI());
+    ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+    problem.setType(URI.create("about:blank"));
+    problem.setTitle("Conflict");
+    problem.setDetail("The resource was modified by someone else. Reload and try again.");
+    problem.setInstance(URI.create(request.getRequestURI()));
     return withRequestId(problem);
   }
 

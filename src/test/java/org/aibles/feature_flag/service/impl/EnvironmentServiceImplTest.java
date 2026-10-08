@@ -110,7 +110,54 @@ class EnvironmentServiceImplTest {
     env = Environment.builder().id(envId).project(project).name("prod").build();
     // Needed so the real apiKeyService (wired above) can round-trip a saved key back to its
     // caller instead of getting null, the way JPA's save() behaves in practice.
+    when(permissionService.changeWindowZone(any(Environment.class))).thenReturn(ZoneId.of("UTC"));
     when(apiKeyRepository.save(any(EnvironmentApiKey.class))).thenAnswer(inv -> inv.getArgument(0));
+  }
+
+  @Test
+  void get_and_list_fillChangeWindowZoneAndOpenNowFromPermissionService() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    when(permissionService.changeWindowZone(env)).thenReturn(ZoneId.of("Asia/Ho_Chi_Minh"));
+    when(permissionService.withinChangeWindow(env)).thenReturn(false);
+    when(environmentRepository.findAllByProjectId(
+            eq(projectId), any(org.springframework.data.domain.Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(env)));
+
+    EnvironmentResponse got = service.get(envId);
+    assertThat(got.getChangeWindowZone()).isEqualTo("Asia/Ho_Chi_Minh");
+    assertThat(got.getChangeWindowOpenNow()).isFalse();
+
+    EnvironmentResponse listed =
+        service.listByProject(projectId, PageRequest.of(0, 10)).getContent().get(0);
+    assertThat(listed.getChangeWindowZone()).isEqualTo("Asia/Ho_Chi_Minh");
+    assertThat(listed.getChangeWindowOpenNow()).isFalse();
+  }
+
+  @Test
+  void update_returnsFreshWindowStateButAuditSnapshotsCarryNoTimeDependentFields() {
+    when(environmentRepository.findById(envId)).thenReturn(Optional.of(env));
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(i -> i.getArgument(0));
+    when(permissionService.changeWindowZone(env)).thenReturn(ZoneId.of("UTC"));
+    when(permissionService.withinChangeWindow(env)).thenReturn(true);
+    UpdateEnvironmentRequest req = new UpdateEnvironmentRequest();
+    req.setDescription("d");
+
+    EnvironmentResponse out = service.update(envId, req);
+
+    assertThat(out.getChangeWindowOpenNow()).isTrue();
+    assertThat(out.getChangeWindowZone()).isEqualTo("UTC");
+    ArgumentCaptor<Object> before = ArgumentCaptor.forClass(Object.class);
+    ArgumentCaptor<Object> after = ArgumentCaptor.forClass(Object.class);
+    verify(auditService)
+        .record(
+            eq(AuditEntityType.ENVIRONMENT),
+            eq(envId),
+            eq(AuditAction.UPDATE),
+            any(),
+            before.capture(),
+            after.capture());
+    assertThat(((EnvironmentResponse) before.getValue()).getChangeWindowOpenNow()).isNull();
+    assertThat(((EnvironmentResponse) after.getValue()).getChangeWindowOpenNow()).isNull();
   }
 
   @Test
@@ -138,17 +185,18 @@ class EnvironmentServiceImplTest {
 
     service.create(req);
 
-    ArgumentCaptor<FlagEnvironmentState> saved =
-        ArgumentCaptor.forClass(FlagEnvironmentState.class);
-    verify(flagStateRepository, times(2)).save(saved.capture());
-    assertThat(saved.getAllValues())
+    List<FlagEnvironmentState> saved = capturedBulkSave();
+    assertThat(saved)
         .extracting(s -> s.getFeatureFlag().getKey())
         // Archived flags get a row too: unarchiving one later must not resurrect the gap.
         .containsExactlyInAnyOrder("checkout-v2", "legacy-banner");
-    assertThat(saved.getAllValues())
+    assertThat(saved)
         .allSatisfy(
             s -> {
               assertThat(s.getEnvironment().getName()).isEqualTo("staging");
+              // S-2.8 / ADR-03: explicit defaults, never inherited (version is S-2.1's column).
+              assertThat(s.getRolloutPercent()).isEqualTo(100);
+              assertThat(s.getValue()).isNull();
               // A brand new environment starts with everything off, never inheriting another
               // environment's state — that is what clone() is for.
               assertThat(s.isEnabled()).isFalse();
@@ -169,6 +217,49 @@ class EnvironmentServiceImplTest {
     service.create(req);
 
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).saveAll(anyIterable());
+  }
+
+  @Test
+  void create_createsExactlyOneStatePerFlag_inOneBulkSave_forA1000FlagProject() {
+    // S-2.8 AC (T-F11-1): 1 000-flag project -> exactly 1 000 rows, one saveAll call (one
+    // transaction, no per-row save loop). Synthetic flag keys only.
+    List<FeatureFlag> flags =
+        java.util.stream.IntStream.range(0, 1000)
+            .mapToObj(
+                i ->
+                    FeatureFlag.builder()
+                        .id(UUID.randomUUID())
+                        .project(project)
+                        .key("synthetic-flag-" + i)
+                        .build())
+            .toList();
+    when(featureFlagRepository.findAllByProjectId(projectId)).thenReturn(flags);
+    when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+    when(environmentRepository.existsByProjectIdAndName(projectId, "staging")).thenReturn(false);
+    when(environmentRepository.save(any(Environment.class))).thenAnswer(i -> i.getArgument(0));
+
+    CreateEnvironmentRequest req = new CreateEnvironmentRequest();
+    req.setProjectId(projectId);
+    req.setName("staging");
+
+    service.create(req);
+
+    List<FlagEnvironmentState> saved = capturedBulkSave();
+    assertThat(saved).hasSize(1000);
+    assertThat(saved.stream().map(s -> s.getFeatureFlag().getId()).distinct().count())
+        .isEqualTo(1000);
+    assertThat(saved).noneMatch(FlagEnvironmentState::isEnabled);
+    verify(flagStateRepository, never()).save(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  private List<FlagEnvironmentState> capturedBulkSave() {
+    ArgumentCaptor<Iterable<FlagEnvironmentState>> captor = ArgumentCaptor.forClass(Iterable.class);
+    verify(flagStateRepository, times(1)).saveAll(captor.capture());
+    List<FlagEnvironmentState> out = new java.util.ArrayList<>();
+    captor.getValue().forEach(out::add);
+    return out;
   }
 
   @Test

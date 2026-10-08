@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                       http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+    <!--
+      Used ONLY by FlagStateVersionMigrationTest, never by db.changelog-master.xml. Every
+      production include in master order, with a seed of one pre-existing flag state row placed
+      immediately BEFORE 019-add-flag-state-version, so the test proves 019 on a populated table.
+      Keep the include order in step with db.changelog-master.xml.
+    -->
+    <include file="db/changelog/db.changelog-core.xml"/>
+    <include file="db/changelog/migrations/020-migrate-api-keys-to-key-table.xml"/>
+    <include file="db/changelog/migrations/021-allow-member-role.xml"/>
+    <include file="db/changelog/migrations/022-add-change-window-timezone.xml"/>
+    <include file="db/changelog/migrations/024-backfill-missing-flag-environment-states.xml"/>
+    <include file="db/changelog/migrations/023-add-api-key-expiry-notice.xml"/>
+    <include file="db/changelog/migrations/025-add-api-key-rotated-at.xml"/>
+
+    <changeSet id="019-test-seed-existing-flag-state" author="test">
+        <sql>
+            INSERT INTO organizations (id, name, slug) VALUES
+              ('00000000-0000-0000-0000-0000000000a2', 'Org', 'org-pre019');
+            INSERT INTO projects (id, organization_id, name) VALUES
+              ('00000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000a2', 'P');
+            INSERT INTO environments (id, project_id, name, type) VALUES
+              ('00000000-0000-0000-0000-0000000000c2', '00000000-0000-0000-0000-0000000000b2',
+               'dev', 'DEVELOPMENT');
+            INSERT INTO feature_flags (id, project_id, name, "KEY", value_type) VALUES
+              ('00000000-0000-0000-0000-0000000000d2', '00000000-0000-0000-0000-0000000000b2',
+               'F', 'f-key', 'BOOLEAN');
+            INSERT INTO flag_environment_states (id, feature_flag_id, environment_id, enabled) VALUES
+              ('00000000-0000-0000-0000-0000000000e2', '00000000-0000-0000-0000-0000000000d2',
+               '00000000-0000-0000-0000-0000000000c2', true);
+        </sql>
+    </changeSet>
+
+    <include file="db/changelog/migrations/019-add-flag-state-version.xml"/>
+</databaseChangeLog>
