@@ -28,6 +28,9 @@
              gate. -->
         <jackson-2-bom.version>2.21.7</jackson-2-bom.version>
         <jackson-bom.version>3.1.7</jackson-bom.version>
+        <!-- Override Spring Boot 4.1.0 managed Spring Framework 7.0.8 → 7.0.9: patches
+             CVE-2026-47884 (CRITICAL, spring-webmvc) flagged by the Trivy image-scan gate. -->
+        <spring-framework.version>7.0.9</spring-framework.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.8.9</springdoc.version>
