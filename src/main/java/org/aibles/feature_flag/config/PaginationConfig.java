@@ -21,6 +21,9 @@ public class PaginationConfig {
   public static final int DEFAULT_PAGE_SIZE = 20;
   public static final int MAX_PAGE_SIZE = 100;
 
+  /** Default page size of the flag x environment matrix (S-2.5). */
+  public static final int MATRIX_DEFAULT_PAGE_SIZE = 50;
+
   @Bean
   public PageableHandlerMethodArgumentResolverCustomizer pageableCustomizer() {
     return resolver -> {

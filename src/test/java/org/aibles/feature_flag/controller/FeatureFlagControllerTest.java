@@ -182,6 +182,44 @@ class FeatureFlagControllerTest {
   }
 
   @Test
+  void updateState_deserializesClearValueAndPassesItToService() throws Exception {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    when(featureFlagService.updateState(eq(flagId), eq(envId), any()))
+        .thenReturn(FlagStateResponse.builder().flagId(flagId).environmentId(envId).build());
+
+    mockMvc
+        .perform(
+            put("/api/v1/flags/{flagId}/environments/{envId}", flagId, envId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":true,\"clearValue\":true}"))
+        .andExpect(status().isOk());
+
+    org.mockito.ArgumentCaptor<UpdateFlagStateRequest> captor =
+        org.mockito.ArgumentCaptor.forClass(UpdateFlagStateRequest.class);
+    verify(featureFlagService).updateState(eq(flagId), eq(envId), captor.capture());
+    org.assertj.core.api.Assertions.assertThat(captor.getValue().getClearValue()).isTrue();
+    org.assertj.core.api.Assertions.assertThat(captor.getValue().getValue()).isNull();
+  }
+
+  @Test
+  void updateState_returns400_whenServiceRejectsClearValueWithValue() throws Exception {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    when(featureFlagService.updateState(eq(flagId), eq(envId), any()))
+        .thenThrow(
+            new org.aibles.feature_flag.exception.InvalidRequestException(
+                "clearValue cannot be combined with value"));
+
+    mockMvc
+        .perform(
+            put("/api/v1/flags/{flagId}/environments/{envId}", flagId, envId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":true,\"clearValue\":true,\"value\":\"y\"}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void updateState_acceptsRolloutPercentAtBothBounds() throws Exception {
     for (int percent : new int[] {0, 100}) {
       UUID flagId = UUID.randomUUID();
@@ -231,6 +269,37 @@ class FeatureFlagControllerTest {
     }
 
     verify(featureFlagService, never()).updateState(any(), any(), any());
+  }
+
+  /**
+   * S-0.4 AC1 at the HTTP layer: the shared validator's InvalidRequestException, raised from the
+   * service on PUT state, must surface as 400 ProblemDetail via GlobalExceptionHandler, and the
+   * rejected value must not be echoed back.
+   */
+  @Test
+  void updateState_returns400_whenValueDoesNotMatchValueType() throws Exception {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    when(featureFlagService.updateState(eq(flagId), eq(envId), any()))
+        .thenAnswer(
+            inv -> {
+              UpdateFlagStateRequest r = inv.getArgument(2);
+              org.aibles.feature_flag.util.FlagValueValidator.validate(
+                  FlagValueType.INTEGER, r.getValue());
+              return null;
+            });
+
+    mockMvc
+        .perform(
+            put("/api/v1/flags/{flagId}/environments/{envId}", flagId, envId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":true,\"value\":\"s3cr3t-abc\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(
+            jsonPath("$.detail")
+                .value(
+                    org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("s3cr3t-abc"))));
   }
 
   @Test
@@ -309,5 +378,29 @@ class FeatureFlagControllerTest {
         .perform(get("/api/v1/flags/{flagId}/environments/{envId}", flagId, envId))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.enabled").value(false));
+  }
+
+  @Test
+  void listStates_returns200_withAllStatesOfFlag() throws Exception {
+    UUID flagId = UUID.randomUUID();
+    UUID envId = UUID.randomUUID();
+    when(featureFlagService.listStates(flagId))
+        .thenReturn(
+            List.of(
+                FlagStateResponse.builder()
+                    .flagId(flagId)
+                    .environmentId(envId)
+                    .enabled(true)
+                    .rolloutPercent(50)
+                    .version(3L)
+                    .build()));
+
+    mockMvc
+        .perform(get("/api/v1/flags/{flagId}/environments", flagId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(1))
+        .andExpect(jsonPath("$[0].environmentId").value(envId.toString()))
+        .andExpect(jsonPath("$[0].version").value(3))
+        .andExpect(jsonPath("$[0].rolloutPercent").value(50));
   }
 }

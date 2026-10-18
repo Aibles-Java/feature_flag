@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.aibles.feature_flag.config.FlagValueProperties;
 import org.aibles.feature_flag.domain.entity.Environment;
 import org.aibles.feature_flag.domain.entity.EnvironmentApiKey;
 import org.aibles.feature_flag.domain.entity.FeatureFlag;
@@ -92,7 +93,8 @@ class EnvironmentTransferServiceImplTest {
             flagStateRepository,
             permissionService,
             auditService,
-            evaluationCacheService);
+            evaluationCacheService,
+            new FlagValueProperties(8192));
 
     Organization org = Organization.builder().id(orgId).name("org").build();
     project = Project.builder().id(projectId).organization(org).name("proj").build();
@@ -339,6 +341,7 @@ class EnvironmentTransferServiceImplTest {
             });
     // Nothing written, and the in-memory entity is left exactly as it was.
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
     verify(featureFlagRepository, never()).save(any());
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
     verify(evaluationCacheService, never()).evictAfterCommit(any());
@@ -355,6 +358,7 @@ class EnvironmentTransferServiceImplTest {
         .isInstanceOf(InvalidRequestException.class)
         .hasMessageContaining("99");
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
   }
 
   @Test
@@ -395,6 +399,7 @@ class EnvironmentTransferServiceImplTest {
     assertThat(result.getItems().get(0).getDetail()).contains("SKIP");
     assertThat(existing.isEnabled()).isFalse();
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
   }
 
   @Test
@@ -413,6 +418,7 @@ class EnvironmentTransferServiceImplTest {
     assertThat(existing.getValue()).isEqualTo("new");
     assertThat(existing.getRolloutPercent()).isEqualTo(25);
     verify(flagStateRepository).save(existing);
+    verify(flagStateRepository).flush(); // the single write barrier, before audit/eviction
     verify(auditService)
         .record(
             eq(AuditEntityType.ENVIRONMENT),
@@ -452,6 +458,7 @@ class EnvironmentTransferServiceImplTest {
 
     assertThat(result.getSummary().getUnchanged()).isEqualTo(1);
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
     // Nothing changed, so there is nothing to audit — and no cached snapshot to invalidate.
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
     verify(evaluationCacheService, never()).evictAfterCommit(any());
@@ -536,7 +543,45 @@ class EnvironmentTransferServiceImplTest {
     assertThat(result.getSummary().getSkipped()).isEqualTo(1);
     assertThat(result.getItems().get(0).getDetail()).contains("value type mismatch");
     verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
     assertThat(existing.isEnabled()).isFalse();
+  }
+
+  @Test
+  void import_valueLength_8192Accepted_8193SkippedForNewAndExistingFlags_dryAndRealRun() {
+    FlagEnvironmentState existing = state(stringFlag, targetEnv, false, "old", 100);
+    stubExistingFlags(stringFlag);
+    stubTargetStates(List.of(existing));
+
+    for (boolean dryRun : new boolean[] {true, false}) {
+      ImportEnvironmentRequest.FlagEntry okExisting =
+          entry(stringFlag, true, "a".repeat(8192), 100);
+      ImportEnvironmentRequest.FlagEntry tooLongExisting =
+          entry(stringFlag, true, "a".repeat(8193), 100);
+      ImportEnvironmentRequest.FlagEntry tooLongNew = entry(boolFlag, true, "a".repeat(8193), 100);
+      tooLongNew.setKey("brand-new");
+      tooLongNew.setValueType(FlagValueType.STRING);
+
+      ImportEnvironmentRequest ok = importRequest(ImportConflictStrategy.OVERWRITE, okExisting);
+      ok.setDryRun(dryRun);
+      assertThat(service.importSnapshot(targetEnvId, ok).getItems().get(0).getOutcome())
+          .isEqualTo(ImportOutcome.UPDATED);
+
+      ImportEnvironmentRequest bad =
+          importRequest(ImportConflictStrategy.OVERWRITE, tooLongExisting, tooLongNew);
+      bad.setDryRun(dryRun);
+      ImportResultResponse result = service.importSnapshot(targetEnvId, bad);
+      assertThat(result.getSummary().getSkipped()).isEqualTo(2);
+      assertThat(result.getItems())
+          .allSatisfy(
+              i -> {
+                assertThat(i.getOutcome()).isEqualTo(ImportOutcome.SKIPPED);
+                assertThat(i.getDetail()).contains("invalid value").doesNotContain("aaaa");
+              });
+    }
+    // Only the two accepted (8192) entries may have been persisted: the real-run one.
+    verify(flagStateRepository, times(1)).save(any());
+    verify(featureFlagRepository, never()).save(any());
   }
 
   @Test
@@ -567,6 +612,90 @@ class EnvironmentTransferServiceImplTest {
     // The adapter this used to assert against no longer exists.
     verify(permissionService).check(eq(Action.FLAG_CREATE), any());
     verify(permissionService).check(eq(Action.FLAG_STATE_UPDATE), any());
+  }
+
+  // ------------------------------------------- S-0.6 (F23): value/valueType check on import
+
+  /** One mismatching entry per case (a)/(b)/(c) plus one valid entry that must still be applied. */
+  private ImportEnvironmentRequest mismatchingAndValidEntries(boolean dryRun) {
+    // (a) flag has a state in the target env
+    FeatureFlag withState = flag("with-state", "With state", FlagValueType.INTEGER, false);
+    // (b) flag exists but has no state row in the target env
+    FeatureFlag noState = flag("no-state", "No state", FlagValueType.BOOLEAN, false);
+    stubExistingFlags(withState, noState, stringFlag);
+    stubTargetStates(List.of(state(withState, targetEnv, false, "1", 100)));
+    stubTargetStates(List.of(state(stringFlag, targetEnv, false, "old", 100)));
+
+    ImportEnvironmentRequest.FlagEntry a = entry(withState, true, "abc", 100);
+    ImportEnvironmentRequest.FlagEntry b = entry(noState, true, "yes", 100);
+    // (c) new flag: the entry's own valueType decides
+    ImportEnvironmentRequest.FlagEntry c = entry(boolFlag, true, "{bad", 100);
+    c.setKey("brand-new");
+    c.setValueType(FlagValueType.JSON);
+    ImportEnvironmentRequest.FlagEntry valid = entry(stringFlag, true, "fresh", 100);
+
+    ImportEnvironmentRequest req = importRequest(ImportConflictStrategy.OVERWRITE, a, b, c, valid);
+    req.setDryRun(dryRun);
+    return req;
+  }
+
+  @Test
+  void
+      import_overwriteRealRun_valueMismatchingValueType_skipsAllThreeCases_validEntryStillApplied() {
+    ImportResultResponse result =
+        service.importSnapshot(targetEnvId, mismatchingAndValidEntries(false));
+
+    assertThat(result.getItems())
+        .extracting(
+            ImportResultResponse.ItemResult::getFlagKey,
+            ImportResultResponse.ItemResult::getOutcome)
+        .containsExactly(
+            tuple("with-state", ImportOutcome.SKIPPED),
+            tuple("no-state", ImportOutcome.SKIPPED),
+            tuple("brand-new", ImportOutcome.SKIPPED),
+            tuple("banner-text", ImportOutcome.UPDATED));
+    assertThat(result.getItems().subList(0, 3))
+        .allSatisfy(
+            i ->
+                assertThat(i.getDetail())
+                    .startsWith("invalid value")
+                    .doesNotContain("abc", "yes", "{bad"));
+    // Only the valid entry wrote anything; nothing was created for the invalid ones.
+    ArgumentCaptor<FlagEnvironmentState> saved =
+        ArgumentCaptor.forClass(FlagEnvironmentState.class);
+    verify(flagStateRepository, times(1)).save(saved.capture());
+    assertThat(saved.getValue().getFeatureFlag()).isSameAs(stringFlag);
+    assertThat(saved.getValue().getValue()).isEqualTo("fresh");
+    verify(featureFlagRepository, never()).save(any());
+  }
+
+  @Test
+  void import_dryRunReportsTheIdenticalItemListAsTheRealRun() {
+    ImportResultResponse dry =
+        service.importSnapshot(targetEnvId, mismatchingAndValidEntries(true));
+    verify(flagStateRepository, never()).save(any());
+    verify(flagStateRepository, never()).flush();
+    ImportResultResponse real =
+        service.importSnapshot(targetEnvId, mismatchingAndValidEntries(false));
+
+    assertThat(dry.isDryRun()).isTrue();
+    assertThat(real.isDryRun()).isFalse();
+    assertThat(dry.getItems()).usingRecursiveComparison().isEqualTo(real.getItems());
+    assertThat(dry.getSummary()).usingRecursiveComparison().isEqualTo(real.getSummary());
+  }
+
+  @Test
+  void import_nullValueIsValidForEveryValueType() {
+    FeatureFlag intFlag = flag("int-flag", "Int", FlagValueType.INTEGER, false);
+    stubExistingFlags(intFlag);
+    stubTargetStates(List.of(state(intFlag, targetEnv, false, "1", 100)));
+
+    ImportResultResponse result =
+        service.importSnapshot(
+            targetEnvId,
+            importRequest(ImportConflictStrategy.OVERWRITE, entry(intFlag, true, null, 100)));
+
+    assertThat(result.getItems().get(0).getOutcome()).isEqualTo(ImportOutcome.UPDATED);
   }
 
   // --------------------------------------------------------------- helpers
@@ -669,6 +798,7 @@ class EnvironmentTransferServiceImplTest {
         .isInstanceOf(UnauthorizedException.class);
 
     verify(flagStateRepository, never()).save(any(FlagEnvironmentState.class));
+    verify(flagStateRepository, never()).flush();
     verify(featureFlagRepository, never()).save(any(FeatureFlag.class));
     verify(auditService, never()).record(any(), any(), any(), any(), any(), any());
   }

@@ -119,7 +119,7 @@ class AuthServiceImplTest {
   @Test
   void refreshRotatesAndMintsNewAccessToken() {
     UUID userId = UUID.randomUUID();
-    User user = User.builder().id(userId).email("a@ex.com").passwordHash("x").build();
+    User user = User.builder().id(userId).email("a@example.test").passwordHash("x").build();
     when(refreshTokenService.rotate("old-refresh"))
         .thenReturn(new RefreshTokenService.RotationResult(userId, "new-refresh"));
     when(userRepository.findById(userId)).thenReturn(Optional.of(user));
@@ -134,7 +134,7 @@ class AuthServiceImplTest {
     assertThat(res.getAccessToken()).isEqualTo("new-jwt");
     assertThat(res.getRefreshToken()).isEqualTo("new-refresh");
     assertThat(res.getUserId()).isEqualTo(userId);
-    assertThat(res.getEmail()).isEqualTo("a@ex.com");
+    assertThat(res.getEmail()).isEqualTo("a@example.test");
     assertThat(res.getExpiresIn()).isEqualTo(900L);
   }
 

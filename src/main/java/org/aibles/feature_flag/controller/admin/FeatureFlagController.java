@@ -1,6 +1,7 @@
 package org.aibles.feature_flag.controller.admin;
 
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.aibles.feature_flag.dto.request.CreateFeatureFlagRequest;
@@ -75,6 +76,11 @@ public class FeatureFlagController {
               direction = Sort.Direction.ASC)
           Pageable pageable) {
     return PageResponse.from(featureFlagService.listArchivedByProject(projectId, pageable));
+  }
+
+  @GetMapping("/{flagId}/environments")
+  public List<FlagStateResponse> listStates(@PathVariable UUID flagId) {
+    return featureFlagService.listStates(flagId);
   }
 
   @GetMapping("/{flagId}/environments/{envId}")

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
@@ -220,6 +221,26 @@ class PermissionServiceTest {
         .containsExactlyInAnyOrder(Action.FLAG_STATE_UPDATE, Action.FLAG_READ, Action.PROJECT_READ);
   }
 
+  @Test
+  void checkScopeIgnoresProductionElevationButStillRequiresTheBaseAction() {
+    stubProject();
+    // ADMIN lacks FLAG_STATE_UPDATE_PRODUCTION: check() on the project ref would demand it for the
+    // PROD envs under the project; checkScope() must only require the base action.
+    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
+        .thenReturn(Optional.of(member(MemberRole.ADMIN)));
+    permissionService.checkScope(
+        Action.FLAG_STATE_UPDATE, PermissionService.ResourceRef.project(projectId));
+
+    when(memberRepository.findByOrganizationIdAndUserId(orgId, userId))
+        .thenReturn(Optional.of(member(MemberRole.VIEWER)));
+    assertThatThrownBy(
+            () ->
+                permissionService.checkScope(
+                    Action.FLAG_STATE_UPDATE, PermissionService.ResourceRef.project(projectId)))
+        .isInstanceOf(UnauthorizedException.class)
+        .hasMessage("Insufficient permissions for action: FLAG_STATE_UPDATE");
+  }
+
   // ── check(): action gate ────────────────────────────────────────────────────────────
 
   @Test
@@ -338,6 +359,138 @@ class PermissionServiceTest {
             () ->
                 permissionService.check(Action.FLAG_STATE_UPDATE, env(EnvType.PRODUCTION, 10, 10)))
         .doesNotThrowAnyException();
+  }
+
+  // ── S-2.12 / D-09 / D-15: window boundaries, read in the explicitly configured zone ──
+
+  /** A service whose clock is fixed at {@code instant} in {@code zone} (as AppConfig builds it). */
+  private void givenClockAt(String instant, String zone) {
+    Clock zoned = Clock.fixed(Instant.parse(instant), ZoneId.of(zone));
+    permissionService =
+        new PermissionService(
+            memberRepository, projectRepository, environmentRepository, grantRepository, zoned);
+  }
+
+  private boolean windowOpen(Integer start, Integer end) {
+    try {
+      permissionService.check(Action.FLAG_STATE_UPDATE, env(EnvType.PRODUCTION, start, end));
+      return true;
+    } catch (UnauthorizedException e) {
+      return false;
+    }
+  }
+
+  @Test
+  void windowIsInclusiveAtStartHourAndExclusiveAtEndHourInTheConfiguredZone() {
+    stubProjectRole(MemberRole.OWNER);
+    String zone = "Asia/Ho_Chi_Minh"; // UTC+7
+    // Window 9-17 local.
+    givenClockAt("2026-07-02T01:59:59Z", zone); // 08:59:59 local -> before start
+    assertThat(windowOpen(9, 17)).isFalse();
+    givenClockAt("2026-07-02T02:00:00Z", zone); // 09:00:00 local -> start (inclusive)
+    assertThat(windowOpen(9, 17)).isTrue();
+    givenClockAt("2026-07-02T09:59:59Z", zone); // 16:59:59 local -> last open second
+    assertThat(windowOpen(9, 17)).isTrue();
+    givenClockAt("2026-07-02T10:00:00Z", zone); // 17:00:00 local -> end (exclusive)
+    assertThat(windowOpen(9, 17)).isFalse();
+  }
+
+  @Test
+  void midnightWrappingWindowIsOpenFromStartThroughMidnightUntilEnd() {
+    stubProjectRole(MemberRole.OWNER);
+    String zone = "Asia/Ho_Chi_Minh";
+    // Window 22-6 local (wraps).
+    givenClockAt("2026-07-02T14:59:59Z", zone); // 21:59:59 local
+    assertThat(windowOpen(22, 6)).isFalse();
+    givenClockAt("2026-07-02T15:00:00Z", zone); // 22:00 local (start, inclusive)
+    assertThat(windowOpen(22, 6)).isTrue();
+    givenClockAt("2026-07-02T17:00:00Z", zone); // 00:00 next day local
+    assertThat(windowOpen(22, 6)).isTrue();
+    givenClockAt("2026-07-02T22:59:59Z", zone); // 05:59:59 local
+    assertThat(windowOpen(22, 6)).isTrue();
+    givenClockAt("2026-07-02T23:00:00Z", zone); // 06:00 local (end, exclusive)
+    assertThat(windowOpen(22, 6)).isFalse();
+    givenClockAt("2026-07-02T05:00:00Z", zone); // 12:00 local, mid-day
+    assertThat(windowOpen(22, 6)).isFalse();
+  }
+
+  @Test
+  void sameInstantGivesOppositeAnswersInDifferentConfiguredZones() {
+    stubProjectRole(MemberRole.OWNER);
+    // 2026-07-02T10:30Z: 10:30 in UTC, 17:30 in Ho Chi Minh. Window 9-12.
+    givenClockAt("2026-07-02T10:30:00Z", "UTC");
+    assertThat(windowOpen(9, 12)).isTrue();
+    givenClockAt("2026-07-02T10:30:00Z", "Asia/Ho_Chi_Minh");
+    assertThat(windowOpen(9, 12)).isFalse();
+  }
+
+  @Test
+  void startEqualsEndMeansUnlimitedAtEveryHour_D15() {
+    stubProjectRole(MemberRole.OWNER);
+    for (int h = 0; h < 24; h++) {
+      givenClockAt(String.format("2026-07-02T%02d:00:00Z", h), "Asia/Ho_Chi_Minh");
+      assertThat(windowOpen(9, 9)).as("start==end at UTC hour %d", h).isTrue();
+      assertThat(windowOpen(0, 0)).as("0==0 at UTC hour %d", h).isTrue();
+    }
+  }
+
+  // ── S-2.11 / D-09 / D-15: informational window state must equal what check() enforces ──
+
+  @Test
+  void withinChangeWindowAgreesWithCheckForEveryHourAndWindowShape() {
+    stubProjectRole(MemberRole.OWNER);
+    Integer[][] windows = {{9, 17}, {22, 6}, {0, 24}, {9, 9}, {0, 0}, {null, null}, {9, null}};
+    for (Integer[] w : windows) {
+      for (int h = 0; h < 24; h++) {
+        givenClockAt(String.format("2026-07-02T%02d:15:00Z", h), "UTC");
+        assertThat(
+                permissionService.withinChangeWindow(
+                    env(EnvType.PRODUCTION, w[0], w[1]).environment()))
+            .as("window %s-%s at hour %d", w[0], w[1], h)
+            .isEqualTo(windowOpen(w[0], w[1]));
+      }
+    }
+  }
+
+  @Test
+  void withinChangeWindowCoversMidnightWrapStartEqualsEndAndNoWindow() {
+    givenClockAt("2026-07-02T23:30:00Z", "UTC");
+    assertThat(permissionService.withinChangeWindow(env(EnvType.PRODUCTION, 22, 6).environment()))
+        .isTrue();
+    givenClockAt("2026-07-02T12:00:00Z", "UTC");
+    assertThat(permissionService.withinChangeWindow(env(EnvType.PRODUCTION, 22, 6).environment()))
+        .isFalse();
+    // D-15: start == end is unrestricted, open at every hour
+    assertThat(permissionService.withinChangeWindow(env(EnvType.PRODUCTION, 5, 5).environment()))
+        .isTrue();
+    // No window configured follows withinChangeWindow: unrestricted, so open
+    assertThat(
+            permissionService.withinChangeWindow(env(EnvType.PRODUCTION, null, null).environment()))
+        .isTrue();
+  }
+
+  @Test
+  void withinChangeWindowUsesTheEnvironmentsOwnZoneElseTheConfiguredZone() {
+    givenClockAt("2026-07-02T10:30:00Z", "UTC"); // 17:30 in Ho Chi Minh
+    assertThat(permissionService.withinChangeWindow(envInZone(9, 12, null).environment())).isTrue();
+    assertThat(
+            permissionService.withinChangeWindow(
+                envInZone(9, 12, "Asia/Ho_Chi_Minh").environment()))
+        .isFalse();
+  }
+
+  @Test
+  void changeWindowZoneIsTheEnvironmentZoneWhenValidElseTheConfiguredZone() {
+    givenClockAt("2026-07-02T10:30:00Z", "America/New_York");
+    assertThat(
+            permissionService.changeWindowZone(envInZone(9, 12, "Asia/Ho_Chi_Minh").environment()))
+        .isEqualTo(ZoneId.of("Asia/Ho_Chi_Minh"));
+    assertThat(permissionService.changeWindowZone(envInZone(9, 12, null).environment()))
+        .isEqualTo(ZoneId.of("America/New_York"));
+    assertThat(permissionService.changeWindowZone(envInZone(9, 12, "  ").environment()))
+        .isEqualTo(ZoneId.of("America/New_York"));
+    assertThat(permissionService.changeWindowZone(envInZone(9, 12, "Not/AZone").environment()))
+        .isEqualTo(ZoneId.of("America/New_York"));
   }
 
   // ── check(): production protection beyond flag state (B/D on every prod-reaching action) ──

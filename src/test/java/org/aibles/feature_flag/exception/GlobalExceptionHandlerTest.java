@@ -6,8 +6,10 @@ import org.aibles.feature_flag.logging.MdcKeys;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 /**
  * Verifies {@link GlobalExceptionHandler} stamps the current request-correlation id onto error
@@ -47,5 +49,46 @@ class GlobalExceptionHandlerTest {
             problem.getProperties() == null
                 || !problem.getProperties().containsKey(MdcKeys.REQUEST_ID))
         .isTrue();
+  }
+
+  @Test
+  void optimisticLockFailureMapsTo409WithoutLeakingInternals() {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRequestURI("/api/v1/flags/f/environments/e");
+
+    ProblemDetail problem =
+        handler.handleOptimisticLock(
+            new ObjectOptimisticLockingFailureException("FlagEnvironmentState", "some-id"),
+            request);
+
+    assertThat(problem.getStatus()).isEqualTo(HttpStatus.CONFLICT.value());
+    assertThat(problem.getTitle()).isEqualTo("Conflict");
+    assertThat(problem.getDetail())
+        .doesNotContain("FlagEnvironmentState")
+        .doesNotContain("some-id");
+    assertThat(problem.getInstance()).hasToString("/api/v1/flags/f/environments/e");
+  }
+
+  /** Resolves through Spring's real @ExceptionHandler dispatch, so removing the mapping fails. */
+  @Test
+  void optimisticLockFailureThrownFromControllerIsServedAs409NotCatchAll500() throws Exception {
+    org.springframework.test.web.servlet.MockMvc mvc =
+        org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(
+                new ThrowingController())
+            .setControllerAdvice(handler)
+            .build();
+
+    mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/boom"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status()
+                .isConflict());
+  }
+
+  @org.springframework.web.bind.annotation.RestController
+  static class ThrowingController {
+    @org.springframework.web.bind.annotation.GetMapping("/boom")
+    String boom() {
+      throw new ObjectOptimisticLockingFailureException("FlagEnvironmentState", "some-id");
+    }
   }
 }
