@@ -21,9 +21,10 @@ WORKDIR /app
 # a since-published fix — which is exactly why libexpat 2.8.4-r0
 # (CVE-2026-66046, CVE-2026-76641, both HIGH) failed to land and tripped the gate.
 # Naming the fixed package forces a cache miss now and asserts the version floor,
-# failing the build loudly if it ever regresses. Bump the floor when a newer
+# failing the build loudly if it ever regresses. Bumped to 2.9.0-r0 for
+# CVE-2026-77214 (HIGH). Bump the floor again when a newer
 # base-package CVE needs the same treatment.
-RUN apk upgrade --no-cache && apk add --no-cache --upgrade "libexpat>=2.8.4-r0"
+RUN apk upgrade --no-cache && apk add --no-cache --upgrade "libexpat>=2.9.0-r0"
 COPY --from=build /app/target/*.jar app.jar
 # Run as a non-root user (defense in depth: a container breakout can't land as root).
 RUN addgroup -S spring && adduser -S spring -G spring \
