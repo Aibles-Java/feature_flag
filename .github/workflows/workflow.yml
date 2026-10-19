@@ -371,6 +371,8 @@ jobs:
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          # Not a secret: the zone production change windows are read in (D-09).
+          APP_CHANGE_WINDOW_ZONE: ${{ vars.APP_CHANGE_WINDOW_ZONE }}
         run: |
           docker compose -f docker-compose.prod.yml pull
           docker compose -f docker-compose.prod.yml up -d
@@ -413,6 +415,8 @@ jobs:
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          # Not a secret: the zone production change windows are read in (D-09).
+          APP_CHANGE_WINDOW_ZONE: ${{ vars.APP_CHANGE_WINDOW_ZONE }}
         run: |
           if [ -z "${APP_IMAGE}" ]; then
             echo "No previous image recorded (first deploy) — nothing to roll back to."
